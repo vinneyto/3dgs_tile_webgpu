@@ -52,8 +52,16 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
     let load_index = batch_start + local_index;
     if (load_index < end) {
       let gaussian_id = (*records)[load_index].y;
-      (*shared_mean)[local_index] = (*projected_mean)[gaussian_id];
-      (*shared_conic)[local_index] = (*projected_conic)[gaussian_id];
+      let mean = (*projected_mean)[gaussian_id];
+      let conic = (*projected_conic)[gaussian_id];
+      (*shared_mean)[local_index] = mean;
+      // Rasterization does not use the projected x radius in conic.w.
+      // Cache the alpha cutoff in its place once per splat/tile so every
+      // pixel can reject insignificant contributions before calling exp().
+      (*shared_conic)[local_index] = vec4<f32>(
+        conic.xyz,
+        log(mean.w * 255.0)
+      );
       (*shared_color)[local_index] = (*projected_color)[gaussian_id];
     }
     if (local_index == 0u) {
@@ -70,14 +78,16 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
       for (var batch_index = 0u; batch_index < batch_count; batch_index++) {
         let mean = (*shared_mean)[batch_index];
         let delta = pixel_center - mean.xy;
-        let conic = (*shared_conic)[batch_index].xyz;
+        let conic_and_threshold = (*shared_conic)[batch_index];
+        let conic = conic_and_threshold.xyz;
         let power = -0.5 * (
           conic.x * delta.x * delta.x +
           2.0 * conic.y * delta.x * delta.y +
           conic.z * delta.y * delta.y
         );
-        if (power > 0.0) { continue; }
+        if (power > 0.0 || power < -conic_and_threshold.w) { continue; }
         let alpha = min(0.99, mean.w * exp(power));
+        // Keep the original test as a defensive guard for exp/log rounding.
         if (alpha < (1.0 / 255.0)) { continue; }
 
         if (!depth_written) {
