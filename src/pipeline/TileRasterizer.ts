@@ -75,6 +75,7 @@ export class TileRasterizer {
       shared_mean: workgroupArray("vec4", WORKGROUP_SIZE),
       shared_conic: workgroupArray("vec4", WORKGROUP_SIZE),
       shared_color: workgroupArray("vec4", WORKGROUP_SIZE),
+      shared_active: workgroupArray("uint", WORKGROUP_SIZE),
       color_output: storageTexture(colorTexture),
     };
     if (depthTexture !== null) {

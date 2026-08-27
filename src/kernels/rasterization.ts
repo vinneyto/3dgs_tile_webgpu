@@ -32,6 +32,7 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
   shared_mean: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
   shared_conic: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
   shared_color: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
+  shared_active: ptr<workgroup, array<u32, ${WORKGROUP_SIZE}>>,
   color_output: texture_storage_2d<rgba16float, write>${depthParameter}
 ) -> u32 {
   let local_x = local_index % ${TILE_SIZE}u;
@@ -60,7 +61,14 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
       (*shared_conic)[local_index] = (*projected_conic)[gaussian_id];
       (*shared_color)[local_index] = (*projected_color)[gaussian_id];
     }
-    workgroupBarrier();
+    if (local_index == 0u) {
+      (*shared_active)[0] = select(
+        0u,
+        1u,
+        batch_start + ${WORKGROUP_SIZE}u < end
+      );
+    }
+    let has_next_batch = workgroupUniformLoad(&(*shared_active)[0]);
 
     let batch_count = min(${WORKGROUP_SIZE}u, end - batch_start);
     if (active_pixel && !done) {
@@ -96,7 +104,34 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
         }
       }
     }
+    if (has_next_batch == 0u) { break; }
+
+    (*shared_active)[local_index] = select(
+      0u,
+      1u,
+      active_pixel && !done
+    );
     workgroupBarrier();
+
+    if (local_index < 8u) {
+      let first_lane = local_index * 32u;
+      var subgroup_active = 0u;
+      for (var lane_offset = 0u; lane_offset < 32u; lane_offset++) {
+        subgroup_active |= (*shared_active)[first_lane + lane_offset];
+      }
+      (*shared_active)[local_index] = subgroup_active;
+    }
+    workgroupBarrier();
+
+    if (local_index == 0u) {
+      var tile_active = 0u;
+      for (var subgroup = 0u; subgroup < 8u; subgroup++) {
+        tile_active |= (*shared_active)[subgroup];
+      }
+      (*shared_active)[0] = tile_active;
+    }
+    let tile_active = workgroupUniformLoad(&(*shared_active)[0]);
+    if (tile_active == 0u) { break; }
   }
 
   if (active_pixel) {
