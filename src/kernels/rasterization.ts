@@ -27,8 +27,7 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
   shared_mean: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
   shared_conic: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
   shared_color: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
-  shared_control: ptr<workgroup, array<u32, 2>>,
-  shared_done: ptr<workgroup, array<atomic<u32>, 1>>,
+  shared_active: ptr<workgroup, array<u32, ${WORKGROUP_SIZE}>>,
   color_output: texture_storage_2d<rgba16float, write>${depthParameter}
 ) -> u32 {
   // Morton order keeps each subgroup spatially compact inside the tile,
@@ -42,17 +41,8 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
   let active_pixel = pixel.x < u32(viewport.x) && pixel.y < u32(viewport.y);
 
   let tile = group_id.y * tiles.x + group_id.x;
-  if (local_index == 0u) {
-    (*shared_control)[0] = (*tile_offsets)[tile];
-    (*shared_control)[1] = (*tile_offsets)[tile + 1u];
-    atomicStore(&(*shared_done)[0], 0u);
-  }
-  let begin = workgroupUniformLoad(&(*shared_control)[0]);
-  let end = workgroupUniformLoad(&(*shared_control)[1]);
-  if (!active_pixel) {
-    atomicAdd(&(*shared_done)[0], 1u);
-  }
-
+  let begin = (*tile_offsets)[tile];
+  let end = (*tile_offsets)[tile + 1u];
   let pixel_center = vec2<f32>(pixel) + vec2<f32>(0.5);
   var accumulated = vec3<f32>(0.0);
   var transmittance = 1.0;
@@ -76,7 +66,14 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
       );
       (*shared_color)[local_index] = (*projected_color)[gaussian_id];
     }
-    workgroupBarrier();
+    if (local_index == 0u) {
+      (*shared_active)[0] = select(
+        0u,
+        1u,
+        batch_start + ${WORKGROUP_SIZE}u < end
+      );
+    }
+    let has_next_batch = workgroupUniformLoad(&(*shared_active)[0]);
 
     let batch_count = min(${WORKGROUP_SIZE}u, end - batch_start);
     if (active_pixel && !done) {
@@ -110,22 +107,38 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
         transmittance *= 1.0 - alpha;
         if (transmittance < 1e-4) {
           done = true;
-          atomicAdd(&(*shared_done)[0], 1u);
           break;
         }
       }
     }
-    if (batch_start + ${WORKGROUP_SIZE}u >= end) { break; }
+    if (has_next_batch == 0u) { break; }
 
-    // All atomic increments must be visible before lane 0 snapshots the
-    // counter. The following uniform load both broadcasts that snapshot and
-    // keeps the next batch (and its workgroup barrier) in uniform control flow.
+    (*shared_active)[local_index] = select(
+      0u,
+      1u,
+      active_pixel && !done
+    );
     workgroupBarrier();
-    if (local_index == 0u) {
-      (*shared_control)[0] = atomicLoad(&(*shared_done)[0]);
+
+    if (local_index < 8u) {
+      let first_lane = local_index * 32u;
+      var subgroup_active = 0u;
+      for (var lane_offset = 0u; lane_offset < 32u; lane_offset++) {
+        subgroup_active |= (*shared_active)[first_lane + lane_offset];
+      }
+      (*shared_active)[local_index] = subgroup_active;
     }
-    let done_count = workgroupUniformLoad(&(*shared_control)[0]);
-    if (done_count == ${WORKGROUP_SIZE}u) { break; }
+    workgroupBarrier();
+
+    if (local_index == 0u) {
+      var tile_active = 0u;
+      for (var subgroup = 0u; subgroup < 8u; subgroup++) {
+        tile_active |= (*shared_active)[subgroup];
+      }
+      (*shared_active)[0] = tile_active;
+    }
+    let tile_active = workgroupUniformLoad(&(*shared_active)[0]);
+    if (tile_active == 0u) { break; }
   }
 
   if (active_pixel) {
