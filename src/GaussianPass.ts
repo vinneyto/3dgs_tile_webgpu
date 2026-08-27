@@ -23,6 +23,7 @@ import { GaussianData } from "./GaussianData";
 import { TiledGaussianPipeline } from "./pipeline/TiledGaussianPipeline";
 import { WORKGROUP_SIZE } from "./pipeline/constants";
 import type {
+  AntialiasMode,
   DepthSortMode,
   GaussianPassDebugInfo,
   GaussianPassOptions,
@@ -40,6 +41,7 @@ export class GaussianPass extends PassNode {
   readonly gaussianData: GaussianData;
   readonly anchor: Object3D;
   readonly depthSortMode: DepthSortMode;
+  readonly antialiasMode: AntialiasMode;
   readonly intersectionCapacity: number;
   readonly background: readonly [number, number, number, number];
   readonly outputDepth: boolean;
@@ -68,6 +70,12 @@ export class GaussianPass extends PassNode {
     });
 
     const depthSortMode = options.depthSortMode ?? "float32";
+    const antialiasMode = options.antialiasMode ?? "compensated";
+    if (antialiasMode !== "compensated" && antialiasMode !== "classic") {
+      throw new RangeError(
+        'antialiasMode must be either "compensated" or "classic"',
+      );
+    }
     const intersectionCapacity =
       options.intersectionCapacity ?? gaussianData.count * 16;
     if (!Number.isInteger(intersectionCapacity) || intersectionCapacity <= 0) {
@@ -89,6 +97,7 @@ export class GaussianPass extends PassNode {
     this.gaussianData = gaussianData;
     this.anchor = anchor;
     this.depthSortMode = depthSortMode;
+    this.antialiasMode = antialiasMode;
     this.intersectionCapacity = intersectionCapacity;
     this.background = options.background ?? [0, 0, 0, 0];
     this.outputDepth = options.outputDepth ?? false;
@@ -191,6 +200,7 @@ export class GaussianPass extends PassNode {
       this.gaussianData,
       this.anchor,
       this.depthSortMode,
+      this.antialiasMode,
       this.intersectionCapacity,
       this.background,
       this.profileKernels,
@@ -248,6 +258,7 @@ export class GaussianPass extends PassNode {
 }
 
 export type {
+  AntialiasMode,
   DepthSortMode,
   GaussianPassDebugInfo,
   GaussianPassOptions,

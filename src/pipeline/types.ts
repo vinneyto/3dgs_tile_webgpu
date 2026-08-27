@@ -5,10 +5,13 @@ import type {
 } from "three/webgpu";
 
 export type DepthSortMode = "float32" | "packed16";
+export type AntialiasMode = "compensated" | "classic";
 
 export interface GaussianPassOptions {
   /** Exact float32 depth, or a packed 16-bit tile + 16-bit quantized depth key. */
   depthSortMode?: DepthSortMode;
+  /** Preserve subpixel Gaussian energy, or retain the original fixed-footprint 3DGS low-pass behavior. */
+  antialiasMode?: AntialiasMode;
   /** Maximum emitted tile/Gaussian intersections. Buffers are allocated once at this capacity. */
   intersectionCapacity?: number;
   /** RGBA clear color composited behind the cloud. Defaults to transparent black. */

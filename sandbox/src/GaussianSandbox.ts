@@ -139,6 +139,10 @@ export class GaussianSandbox {
         new URLSearchParams(location.search).get("sort") === "packed16"
           ? "packed16"
           : "float32",
+      antialiasMode:
+        new URLSearchParams(location.search).get("aa") === "classic"
+          ? "classic"
+          : "compensated",
       intersectionCapacity,
       background: [0.018, 0.022, 0.032, 1],
       profileKernels:

@@ -1,6 +1,28 @@
 import { TILE_SIZE } from "../pipeline/constants";
+import type { AntialiasMode } from "../pipeline/types";
 
-export const projectionWGSL = /* wgsl */ `
+export function projectionWGSL(antialiasMode: AntialiasMode): string {
+  const originalDeterminant =
+    antialiasMode === "compensated"
+      ? /* wgsl */ `
+  let original_determinant = max(
+    sigma00_unfiltered * sigma11_unfiltered - sigma01 * sigma01,
+    0.0
+  );`
+      : "";
+  const opacity =
+    antialiasMode === "compensated"
+      ? /* wgsl */ `
+  let opacity_compensation = sqrt(clamp(
+    original_determinant / determinant,
+    0.0,
+    1.0
+  ));
+  let opacity = clamp(scale_opacity.w, 0.0, 1.0) * opacity_compensation;`
+      : /* wgsl */ `
+  let opacity = clamp(scale_opacity.w, 0.0, 1.0);`;
+
+  return /* wgsl */ `
 fn project_gaussians(
   gid: u32,
   gaussian_count: u32,
@@ -63,9 +85,12 @@ fn project_gaussians(
   let j1 = vec3<f32>(0.0, -fy * inverse_depth, -fy * view.y * inverse_depth * inverse_depth);
   let covariance_j0 = covariance_view * j0;
   let covariance_j1 = covariance_view * j1;
-  var sigma00 = dot(j0, covariance_j0) + 0.3;
+  let sigma00_unfiltered = dot(j0, covariance_j0);
   var sigma01 = dot(j0, covariance_j1);
-  var sigma11 = dot(j1, covariance_j1) + 0.3;
+  let sigma11_unfiltered = dot(j1, covariance_j1);
+  ${originalDeterminant}
+  var sigma00 = sigma00_unfiltered + 0.3;
+  var sigma11 = sigma11_unfiltered + 0.3;
   let max_f32 = 3.402823e+38;
   let covariance_is_finite =
     sigma00 == sigma00 && abs(sigma00) <= max_f32 &&
@@ -90,6 +115,8 @@ fn project_gaussians(
   sigma11 = lambda_min * cs * cs + lambda_max * sn * sn;
   let determinant = sigma00 * sigma11 - sigma01 * sigma01;
   if (determinant <= 1e-8) { return 0u; }
+  ${opacity}
+  if (opacity < (1.0 / 255.0)) { return 0u; }
   let radius_x = ceil(3.0 * sqrt(clamp(sigma00, 1e-12, 1e4)));
   let radius_y = ceil(3.0 * sqrt(clamp(sigma11, 1e-12, 1e4)));
   if (radius_x <= 0.0 || radius_y <= 0.0) { return 0u; }
@@ -150,7 +177,7 @@ fn project_gaussians(
   }
 
   let inverse_determinant = 1.0 / determinant;
-  (*projected_mean)[gid] = vec4<f32>(center, depth, clamp(scale_opacity.w, 0.0, 1.0));
+  (*projected_mean)[gid] = vec4<f32>(center, depth, opacity);
   (*projected_conic)[gid] = vec4<f32>(
     sigma11 * inverse_determinant,
     -sigma01 * inverse_determinant,
@@ -165,3 +192,4 @@ fn project_gaussians(
   return 0u;
 }
 `;
+}

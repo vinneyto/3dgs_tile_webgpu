@@ -14,6 +14,7 @@ import { TileOffsetBuilder } from "./TileOffsetBuilder";
 import { TileRasterizer } from "./TileRasterizer";
 import { TILE_SIZE } from "./constants";
 import type {
+  AntialiasMode,
   DepthSortMode,
   GaussianPassDebugInfo,
   GaussianPassResources,
@@ -41,12 +42,13 @@ export class TiledGaussianPipeline {
     private readonly data: GaussianData,
     anchor: Object3D,
     private readonly mode: DepthSortMode,
+    antialiasMode: AntialiasMode,
     private readonly capacity: number,
     background: readonly [number, number, number, number],
     private readonly profileKernels: boolean,
   ) {
     this.frame = new FrameUniforms(camera, data, anchor, background);
-    this.projection = new ProjectionStage(data, this.frame);
+    this.projection = new ProjectionStage(data, this.frame, antialiasMode);
     this.scan = new ExclusiveScanStage(this.projection.tileCounts, data.count);
     this.intersections = new IntersectionStage(
       renderer,

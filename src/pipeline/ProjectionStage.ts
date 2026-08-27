@@ -10,6 +10,7 @@ import { projectionWGSL } from "../kernels/projection";
 import { AttributePool } from "./AttributePool";
 import { WORKGROUP_SIZE } from "./constants";
 import type { FrameUniforms } from "./FrameUniforms";
+import type { AntialiasMode } from "./types";
 
 export class ProjectionStage {
   readonly projectedMean: StorageBufferAttribute;
@@ -20,7 +21,11 @@ export class ProjectionStage {
   private readonly attributes = new AttributePool();
   private readonly computeNode: ComputeNode;
 
-  constructor(data: GaussianData, frame: FrameUniforms) {
+  constructor(
+    data: GaussianData,
+    frame: FrameUniforms,
+    antialiasMode: AntialiasMode,
+  ) {
     this.projectedMean = this.attributes.createFloat(
       "3dgs.projected-mean",
       data.count,
@@ -38,7 +43,7 @@ export class ProjectionStage {
       data.count,
     );
 
-    const kernel = wgslFn<Record<string, Node>>(projectionWGSL);
+    const kernel = wgslFn<Record<string, Node>>(projectionWGSL(antialiasMode));
     this.computeNode = kernel({
       gid: instanceIndex,
       gaussian_count: uint(data.count),
@@ -66,7 +71,7 @@ export class ProjectionStage {
       tile_counts: storage(this.tileCounts, "uint", data.count),
     })
       .compute(data.count, [WORKGROUP_SIZE])
-      .setName("3DGS projection WGSL");
+      .setName(`3DGS projection WGSL (${antialiasMode})`);
   }
 
   encode(renderer: WebGPURenderer): void {

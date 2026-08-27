@@ -91,6 +91,7 @@ scene.add(cloudTransform); // an empty positioning object; it has no geometry
 
 const pass = gaussianPass(renderer, camera, data, cloudTransform, {
   depthSortMode: "float32",
+  antialiasMode: "compensated",
   intersectionCapacity: 4_000_000,
   background: [0, 0, 0, 0],
   outputDepth: true,
@@ -144,6 +145,17 @@ The parser is responsible for applying source-format activations such as `exp(lo
 The empty `Object3D` passed to the pass supplies the cloud's full local-to-world transform. Translation,
 rotation, and non-uniform scale are included in projected covariance; the source Gaussian buffers remain in
 local space.
+
+## Antialiasing
+
+`antialiasMode: "compensated"` is the default. The projection kernel retains the classic 3DGS `0.3 px²`
+low-pass covariance so subpixel splats do not flicker, but scales peak opacity by
+`sqrt(det(originalCovariance) / det(filteredCovariance))`. A Gaussian therefore fades as its projected area
+shrinks instead of remaining an opaque, approximately 4×4-pixel dot. Splats whose compensated peak alpha is
+below `1/255` are culled before intersection emission and sorting.
+
+Use `antialiasMode: "classic"` to reproduce the former fixed-footprint behavior. In the sandbox, append
+`?aa=classic` for an immediate comparison.
 
 ## Sort modes
 
