@@ -1,21 +1,165 @@
-import { RADIX_BLOCK_ITEMS, RADIX_SIZE } from "../pipeline/constants";
+import {
+  RADIX_BLOCK_ITEMS,
+  RADIX_SCAN_CHUNK_ITEMS,
+  RADIX_SIZE,
+  WORKGROUP_SIZE,
+} from "../pipeline/constants";
 import type { DepthSortMode } from "../pipeline/types";
 
-export const scanBlockHistogramsWGSL = /* wgsl */ `
-fn scan_block_histograms(
-  digit: u32,
+export const scanRadixHistogramChunksWGSL = /* wgsl */ `
+fn scan_radix_histogram_chunks(
+  lane: u32,
+  group_id: vec3<u32>,
+  chunk_stride: u32,
   state: ptr<storage, array<vec4<u32>>, read>,
   block_histograms: ptr<storage, array<u32>, read>,
   block_prefixes: ptr<storage, array<u32>, read_write>,
-  digit_totals: ptr<storage, array<u32>, read_write>
+  chunk_sums: ptr<storage, array<u32>, read_write>,
+  scratch: ptr<workgroup, array<u32, ${RADIX_SCAN_CHUNK_ITEMS}>, read_write>
 ) -> u32 {
-  var running = 0u;
-  for (var block_index = 0u; block_index < (*state)[0].z; block_index++) {
-    let address = block_index * ${RADIX_SIZE}u + digit;
-    (*block_prefixes)[address] = running;
-    running += (*block_histograms)[address];
+  let chunk = group_id.x;
+  let digit = group_id.y;
+  let block_count = (*state)[0].z;
+  let chunk_start = chunk * ${RADIX_SCAN_CHUNK_ITEMS}u;
+  let first = chunk_start + lane;
+  let second = first + ${WORKGROUP_SIZE}u;
+
+  (*scratch)[lane] = 0u;
+  (*scratch)[lane + ${WORKGROUP_SIZE}u] = 0u;
+  if (first < block_count) {
+    (*scratch)[lane] = (*block_histograms)[first * ${RADIX_SIZE}u + digit];
   }
-  (*digit_totals)[digit] = running;
+  if (second < block_count) {
+    (*scratch)[lane + ${WORKGROUP_SIZE}u] =
+      (*block_histograms)[second * ${RADIX_SIZE}u + digit];
+  }
+  workgroupBarrier();
+
+  var offset = 1u;
+  for (var active = ${RADIX_SCAN_CHUNK_ITEMS >> 1}u; active > 0u; active >>= 1u) {
+    if (lane < active) {
+      let right = offset * (2u * lane + 2u) - 1u;
+      let left = right - offset;
+      (*scratch)[right] += (*scratch)[left];
+    }
+    offset <<= 1u;
+    workgroupBarrier();
+  }
+
+  if (lane == 0u) {
+    (*chunk_sums)[digit * chunk_stride + chunk] =
+      (*scratch)[${RADIX_SCAN_CHUNK_ITEMS - 1}u];
+    (*scratch)[${RADIX_SCAN_CHUNK_ITEMS - 1}u] = 0u;
+  }
+  workgroupBarrier();
+
+  for (var active = 1u; active < ${RADIX_SCAN_CHUNK_ITEMS}u; active <<= 1u) {
+    offset >>= 1u;
+    if (lane < active) {
+      let right = offset * (2u * lane + 2u) - 1u;
+      let left = right - offset;
+      let value = (*scratch)[left];
+      (*scratch)[left] = (*scratch)[right];
+      (*scratch)[right] += value;
+    }
+    workgroupBarrier();
+  }
+
+  if (first < block_count) {
+    (*block_prefixes)[first * ${RADIX_SIZE}u + digit] = (*scratch)[lane];
+  }
+  if (second < block_count) {
+    (*block_prefixes)[second * ${RADIX_SIZE}u + digit] =
+      (*scratch)[lane + ${WORKGROUP_SIZE}u];
+  }
+  return 0u;
+}
+`;
+
+export const scanRadixChunkSumsWGSL = /* wgsl */ `
+fn scan_radix_chunk_sums(
+  lane: u32,
+  digit: u32,
+  chunk_stride: u32,
+  state: ptr<storage, array<vec4<u32>>, read>,
+  chunk_sums: ptr<storage, array<u32>, read>,
+  chunk_offsets: ptr<storage, array<u32>, read_write>,
+  digit_totals: ptr<storage, array<u32>, read_write>,
+  scratch: ptr<workgroup, array<u32, ${RADIX_SCAN_CHUNK_ITEMS}>, read_write>
+) -> u32 {
+  let chunk_count = ((*state)[0].z + ${RADIX_SCAN_CHUNK_ITEMS - 1}u) /
+    ${RADIX_SCAN_CHUNK_ITEMS}u;
+  let first = lane;
+  let second = lane + ${WORKGROUP_SIZE}u;
+  (*scratch)[first] = 0u;
+  (*scratch)[second] = 0u;
+  if (first < chunk_count) {
+    (*scratch)[first] = (*chunk_sums)[digit * chunk_stride + first];
+  }
+  if (second < chunk_count) {
+    (*scratch)[second] = (*chunk_sums)[digit * chunk_stride + second];
+  }
+  workgroupBarrier();
+
+  var offset = 1u;
+  for (var active = ${RADIX_SCAN_CHUNK_ITEMS >> 1}u; active > 0u; active >>= 1u) {
+    if (lane < active) {
+      let right = offset * (2u * lane + 2u) - 1u;
+      let left = right - offset;
+      (*scratch)[right] += (*scratch)[left];
+    }
+    offset <<= 1u;
+    workgroupBarrier();
+  }
+  if (lane == 0u) {
+    (*digit_totals)[digit] = (*scratch)[${RADIX_SCAN_CHUNK_ITEMS - 1}u];
+    (*scratch)[${RADIX_SCAN_CHUNK_ITEMS - 1}u] = 0u;
+  }
+  workgroupBarrier();
+
+  for (var active = 1u; active < ${RADIX_SCAN_CHUNK_ITEMS}u; active <<= 1u) {
+    offset >>= 1u;
+    if (lane < active) {
+      let right = offset * (2u * lane + 2u) - 1u;
+      let left = right - offset;
+      let value = (*scratch)[left];
+      (*scratch)[left] = (*scratch)[right];
+      (*scratch)[right] += value;
+    }
+    workgroupBarrier();
+  }
+  if (first < chunk_count) {
+    (*chunk_offsets)[digit * chunk_stride + first] = (*scratch)[first];
+  }
+  if (second < chunk_count) {
+    (*chunk_offsets)[digit * chunk_stride + second] = (*scratch)[second];
+  }
+  return 0u;
+}
+`;
+
+export const addRadixChunkOffsetsWGSL = /* wgsl */ `
+fn add_radix_chunk_offsets(
+  lane: u32,
+  group_id: vec3<u32>,
+  chunk_stride: u32,
+  state: ptr<storage, array<vec4<u32>>, read>,
+  block_prefixes: ptr<storage, array<u32>, read_write>,
+  chunk_offsets: ptr<storage, array<u32>, read>
+) -> u32 {
+  let chunk = group_id.x;
+  let digit = group_id.y;
+  let block_count = (*state)[0].z;
+  let chunk_start = chunk * ${RADIX_SCAN_CHUNK_ITEMS}u;
+  let first = chunk_start + lane;
+  let second = first + ${WORKGROUP_SIZE}u;
+  let chunk_offset = (*chunk_offsets)[digit * chunk_stride + chunk];
+  if (first < block_count) {
+    (*block_prefixes)[first * ${RADIX_SIZE}u + digit] += chunk_offset;
+  }
+  if (second < block_count) {
+    (*block_prefixes)[second * ${RADIX_SIZE}u + digit] += chunk_offset;
+  }
   return 0u;
 }
 `;

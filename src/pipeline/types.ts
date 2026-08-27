@@ -71,5 +71,6 @@ export type IntersectionBuffers =
 export interface DispatchResources {
   state: StorageBufferAttribute;
   radix: IndirectStorageBufferAttribute;
+  radixScan: IndirectStorageBufferAttribute;
   linear: IndirectStorageBufferAttribute;
 }

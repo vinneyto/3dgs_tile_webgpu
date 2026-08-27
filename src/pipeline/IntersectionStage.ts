@@ -43,6 +43,7 @@ export class IntersectionStage {
     this.dispatch = {
       state: this.attributes.createUint("3dgs.dispatch-state", 1, 4),
       radix: this.attributes.createIndirect("3dgs.radix-dispatch"),
+      radixScan: this.attributes.createIndirect("3dgs.radix-scan-dispatch"),
       linear: this.attributes.createIndirect("3dgs.linear-dispatch"),
     };
     this.buffers = this.createIntersectionBuffers(mode);
@@ -65,6 +66,7 @@ export class IntersectionStage {
       intersection_offsets: intersectionOffsets,
       state: storage(this.dispatch.state, "uvec4", 1),
       radix_dispatch: storage(this.dispatch.radix, "uvec4", 1),
+      radix_scan_dispatch: storage(this.dispatch.radixScan, "uvec4", 1),
       linear_dispatch: storage(this.dispatch.linear, "uvec4", 1),
     })
       .compute(1)
