@@ -74,7 +74,9 @@ export class TileRasterizer {
       shared_mean: workgroupArray("vec4", WORKGROUP_SIZE),
       shared_conic: workgroupArray("vec4", WORKGROUP_SIZE),
       shared_color: workgroupArray("vec4", WORKGROUP_SIZE),
-      shared_active: workgroupArray("uint", WORKGROUP_SIZE),
+      shared_control: workgroupArray("uint", 2),
+      // Nested scalar aliases are not expanded by WGSLNodeBuilder.getType().
+      shared_done: workgroupArray("atomic<u32>", 1),
       color_output: storageTexture(colorTexture),
     };
     if (depthTexture !== null) {

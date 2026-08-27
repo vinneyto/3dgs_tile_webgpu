@@ -45,4 +45,20 @@ describe("rasterizationWGSL", () => {
     expect(exponential).toBeGreaterThan(rejection);
     expect(source).toContain("if (alpha < (1.0 / 255.0))");
   });
+
+  it("uses one atomic counter for whole-tile completion", () => {
+    const source = rasterizationWGSL("float32", false);
+
+    expect(source).toContain(
+      "shared_done: ptr<workgroup, array<atomic<u32>, 1>>",
+    );
+    expect(source).toContain("atomicStore(&(*shared_done)[0], 0u)");
+    expect(source).toContain("atomicAdd(&(*shared_done)[0], 1u)");
+    expect(source).toContain("atomicLoad(&(*shared_done)[0])");
+    expect(source).toContain("if (done_count == 256u) { break; }");
+    expect(source).toContain("if (batch_start + 256u >= end) { break; }");
+    expect(source).not.toContain("shared_active");
+    expect(source).not.toContain("lane_offset");
+    expect(source).not.toContain("subgroup_active");
+  });
 });
