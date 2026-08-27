@@ -5,8 +5,8 @@ export {
 } from "./GaussianData";
 export {
   GaussianPass,
-  gaussianPass,
   type DepthSortMode,
   type GaussianPassOptions,
   type GaussianPassStats,
 } from "./GaussianPass";
+export { gaussianPass } from "./createGaussianPass";

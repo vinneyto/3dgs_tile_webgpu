@@ -19,6 +19,28 @@ project Gaussians
 `K` never has to cross to JavaScript. Kernels whose useful work is proportional to `K` are launched with
 `dispatchWorkgroupsIndirect()`; only buffers with a fixed `intersectionCapacity` are allocated on the CPU.
 
+## Project structure
+
+The source tree follows the render pipeline. Each stateful component has one class per file, while small shared
+types and GPU binding helpers stay grouped:
+
+```text
+src/
+├── GaussianData.ts                 external Gaussian buffer contract
+├── GaussianPass.ts                 Three.js PassNode integration
+├── createGaussianPass.ts           public pass factory
+├── pipeline/
+│   ├── TiledGaussianPipeline.ts    stage orchestration
+│   ├── FrameUniformBuffer.ts       camera and cloud transforms
+│   ├── ProjectionStage.ts          projection and tile coverage
+│   ├── ExclusiveScanStage.ts       hierarchical tile-count scan
+│   ├── IntersectionStage.ts        GPU count, indirect args, emission
+│   ├── RadixSorter.ts              float32 and packed16 sorting
+│   ├── TileOffsetBuilder.ts        per-tile sorted ranges
+│   └── TileRasterizer.ts           front-to-back compositing
+└── shaders/                        WGSL grouped by matching stage
+```
+
 ## Usage
 
 ```ts
