@@ -17,4 +17,11 @@ describe("projectionWGSL antialias specialization", () => {
     expect(source).not.toContain("opacity_compensation");
     expect(source).toContain("let opacity = clamp(scale_opacity.w, 0.0, 1.0);");
   });
+
+  it("uses projected opacity as the visibility predicate", () => {
+    const source = projectionWGSL("compensated");
+
+    expect(source).toContain("(*projected_mean)[gid] = vec4<f32>(0.0);");
+    expect(source).not.toContain("visible_flags");
+  });
 });

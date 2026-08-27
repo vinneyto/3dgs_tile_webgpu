@@ -224,6 +224,7 @@ export class GaussianPass extends PassNode {
   readStats(): Promise<GaussianPassStats> {
     if (this.pipeline !== null) return this.pipeline.readStats();
     return Promise.resolve({
+      visibleGaussianCount: 0,
       intersectionCount: 0,
       requestedIntersections: 0,
       intersectionCapacity: this.intersectionCapacity,
@@ -242,6 +243,8 @@ export class GaussianPass extends PassNode {
         tilesY: 0,
         tileStageRebuilds: 0,
         radixPasses: 0,
+        depthRadixPasses: 0,
+        tileRadixPasses: 0,
         profileKernels: this.profileKernels,
       }
     );

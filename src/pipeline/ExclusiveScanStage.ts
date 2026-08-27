@@ -13,7 +13,11 @@ import {
   workgroupArray,
   workgroupId,
 } from "three/tsl";
-import { addScanOffsetsWGSL, scanBlocksWGSL } from "../kernels/scan";
+import {
+  addScanOffsetsWGSL,
+  scanBlocksWGSL,
+  scanVisibilityBlocksWGSL,
+} from "../kernels/scan";
 import { AttributePool } from "./AttributePool";
 import { SCAN_BLOCK_ITEMS, WORKGROUP_SIZE } from "./constants";
 
@@ -31,12 +35,17 @@ export class ExclusiveScanStage {
   private readonly attributes = new AttributePool();
   private readonly levels: ScanLevel[] = [];
 
-  constructor(input: StorageBufferAttribute, length: number) {
-    this.output = this.attributes.createUint(
-      "3dgs.intersection-offsets",
-      length,
+  constructor(
+    input: StorageBufferAttribute,
+    length: number,
+    label = "intersections",
+    inputMode: "uint" | "projectedVisibility" = "uint",
+  ) {
+    this.output = this.attributes.createUint(`3dgs.${label}-offsets`, length);
+    const uintScanKernel = wgslFn<Record<string, Node>>(scanBlocksWGSL);
+    const visibilityScanKernel = wgslFn<Record<string, Node>>(
+      scanVisibilityBlocksWGSL,
     );
-    const scanKernel = wgslFn<Record<string, Node>>(scanBlocksWGSL);
     const addKernel = wgslFn<Record<string, Node>>(addScanOffsetsWGSL);
 
     let scanInput = input;
@@ -45,21 +54,29 @@ export class ExclusiveScanStage {
     while (true) {
       const blockCount = Math.ceil(scanLength / SCAN_BLOCK_ITEMS);
       const blockSums = this.attributes.createUint(
-        `3dgs.scan-sums-${this.levels.length}`,
+        `3dgs.${label}-scan-sums-${this.levels.length}`,
         blockCount,
       );
       const scratch = workgroupArray("uint", SCAN_BLOCK_ITEMS);
-      const scanNode = scanKernel({
+      const firstLevelVisibility =
+        this.levels.length === 0 && inputMode === "projectedVisibility";
+      const scanNode = (
+        firstLevelVisibility ? visibilityScanKernel : uintScanKernel
+      )({
         lane: invocationLocalIndex,
         group_id: workgroupId.x,
         length: uint(scanLength),
-        input_values: storage(scanInput, "uint", scanLength).toReadOnly(),
+        input_values: storage(
+          scanInput,
+          firstLevelVisibility ? "vec4" : "uint",
+          scanLength,
+        ).toReadOnly(),
         output_values: storage(scanOutput, "uint", scanLength),
         block_sums: storage(blockSums, "uint", blockCount),
         scratch,
       })
         .computeKernel([WORKGROUP_SIZE])
-        .setName(`3DGS scan WGSL level ${this.levels.length}`);
+        .setName(`3DGS ${label} scan WGSL level ${this.levels.length}`);
       this.levels.push({
         length: scanLength,
         blockCount,
@@ -70,7 +87,7 @@ export class ExclusiveScanStage {
       scanInput = blockSums;
       scanLength = blockCount;
       scanOutput = this.attributes.createUint(
-        `3dgs.scan-offsets-${this.levels.length}`,
+        `3dgs.${label}-scan-offsets-${this.levels.length}`,
         scanLength,
       );
     }
@@ -89,7 +106,7 @@ export class ExclusiveScanStage {
         ).toReadOnly(),
       })
         .compute(current.length, [WORKGROUP_SIZE])
-        .setName(`3DGS add scan offsets WGSL ${level}`);
+        .setName(`3DGS ${label} add scan offsets WGSL ${level}`);
     }
   }
 

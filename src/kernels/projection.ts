@@ -1,7 +1,16 @@
 import { TILE_SIZE } from "../pipeline/constants";
 import type { AntialiasMode } from "../pipeline/types";
+import { tileContributionWGSL } from "./tileContribution";
 
 export function projectionWGSL(antialiasMode: AntialiasMode): string {
+  const countContributingTile = tileContributionWGSL({
+    center: "center",
+    conic: "conic",
+    powerThreshold: "power_threshold",
+    tileX: "tile_x",
+    tileY: "tile_y",
+    onHit: "count++;",
+  });
   const originalDeterminant =
     antialiasMode === "compensated"
       ? /* wgsl */ `
@@ -43,6 +52,8 @@ fn project_gaussians(
 ) -> u32 {
   if (gid >= gaussian_count) { return 0u; }
   (*tile_counts)[gid] = 0u;
+  // Opacity zero is also the visibility predicate consumed by the compact scan.
+  (*projected_mean)[gid] = vec4<f32>(0.0);
   let mean_local = (*means)[gid].xyz;
   let view = model_view * vec4<f32>(mean_local, 1.0);
   let depth = -view.z;
@@ -117,8 +128,9 @@ fn project_gaussians(
   if (determinant <= 1e-8) { return 0u; }
   ${opacity}
   if (opacity < (1.0 / 255.0)) { return 0u; }
-  let radius_x = ceil(3.0 * sqrt(clamp(sigma00, 1e-12, 1e4)));
-  let radius_y = ceil(3.0 * sqrt(clamp(sigma11, 1e-12, 1e4)));
+  let power_threshold = log(opacity * 255.0);
+  let radius_x = ceil(sqrt(2.0 * power_threshold * clamp(sigma00, 1e-12, 1e4)));
+  let radius_y = ceil(sqrt(2.0 * power_threshold * clamp(sigma11, 1e-12, 1e4)));
   if (radius_x <= 0.0 || radius_y <= 0.0) { return 0u; }
 
   // Axis-specific radii avoid the square major-eigenvalue AABB, which can
@@ -136,8 +148,18 @@ fn project_gaussians(
     clamp(i32(floor(max_pixel.x / ${TILE_SIZE}.0)), 0, max_tile_x),
     clamp(i32(floor(max_pixel.y / ${TILE_SIZE}.0)), 0, max_tile_y)
   );
-  let tile_extent = tile_max - tile_min + vec2<i32>(1);
-  let count = u32(tile_extent.x * tile_extent.y);
+  let inverse_determinant = 1.0 / determinant;
+  let conic = vec3<f32>(
+    sigma11 * inverse_determinant,
+    -sigma01 * inverse_determinant,
+    sigma00 * inverse_determinant
+  );
+  var count = 0u;
+  for (var tile_y = tile_min.y; tile_y <= tile_max.y; tile_y++) {
+    for (var tile_x = tile_min.x; tile_x <= tile_max.x; tile_x++) {
+${countContributingTile}
+    }
+  }
   if (count == 0u) { return 0u; }
 
   // Canonical 3DGS evaluates SH in the camera-to-point direction.
@@ -176,12 +198,9 @@ fn project_gaussians(
     color += (-0.5900435899266435 * x * (xx - 3.0 * yy)) * (*sh_coefficients)[base + 15u].xyz;
   }
 
-  let inverse_determinant = 1.0 / determinant;
   (*projected_mean)[gid] = vec4<f32>(center, depth, opacity);
   (*projected_conic)[gid] = vec4<f32>(
-    sigma11 * inverse_determinant,
-    -sigma01 * inverse_determinant,
-    sigma00 * inverse_determinant,
+    conic,
     radius_x
   );
   (*projected_color)[gid] = vec4<f32>(

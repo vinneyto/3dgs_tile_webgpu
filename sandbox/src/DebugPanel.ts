@@ -105,6 +105,10 @@ export class DebugPanel {
       this.stats === null
         ? "intersections  waiting for GPU readback"
         : `intersections  ${formatInteger(this.stats.intersectionCount)} / ${formatInteger(this.stats.intersectionCapacity)}`;
+    const visibleLine =
+      this.stats === null
+        ? "visible        —"
+        : `visible        ${formatInteger(this.stats.visibleGaussianCount)} Gaussians`;
     const requestedLine =
       this.stats === null
         ? "requested      —"
@@ -121,13 +125,14 @@ export class DebugPanel {
     const stagesLine =
       debug === null
         ? "stages         —"
-        : `stages         rebuilds ${debug.tileStageRebuilds}  radix ${debug.radixPasses}`;
+        : `stages         rebuilds ${debug.tileStageRebuilds}  radix depth ${debug.depthRadixPasses} + tile ${debug.tileRadixPasses}`;
 
     this.element.textContent = [
       `FPS ${fps.toFixed(1).padStart(5)}  frame ${formatMs(this.averageFrameMs)}`,
       `CPU encode     ${formatMs(this.cpuEncodeMs)}  compute calls ${this.computeCalls}`,
       timestampLine,
       "",
+      visibleLine,
       intersectionLine,
       requestedLine,
       pipelineLine,

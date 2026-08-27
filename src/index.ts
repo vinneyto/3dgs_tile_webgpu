@@ -9,6 +9,7 @@ export {
   type DepthSortMode,
   type GaussianPassDebugInfo,
   type GaussianPassOptions,
+  type GaussianPassResources,
   type GaussianPassStats,
 } from "./GaussianPass";
 export { gaussianPass } from "./createGaussianPass";

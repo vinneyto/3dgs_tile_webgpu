@@ -1,11 +1,18 @@
 import { SCAN_BLOCK_ITEMS, WORKGROUP_SIZE } from "../pipeline/constants";
 
-export const scanBlocksWGSL = /* wgsl */ `
-fn scan_blocks(
+interface ScanBlocksWGSLConfig {
+  functionName: string;
+  inputType: "u32" | "vec4<f32>";
+  readValue(index: string): string;
+}
+
+function buildScanBlocksWGSL(config: ScanBlocksWGSLConfig): string {
+  return /* wgsl */ `
+fn ${config.functionName}(
   lane: u32,
   group_id: u32,
   length: u32,
-  input_values: ptr<storage, array<u32>, read>,
+  input_values: ptr<storage, array<${config.inputType}>, read>,
   output_values: ptr<storage, array<u32>, read_write>,
   block_sums: ptr<storage, array<u32>, read_write>,
   scratch: ptr<workgroup, array<u32, ${SCAN_BLOCK_ITEMS}>>
@@ -13,8 +20,8 @@ fn scan_blocks(
   let base = group_id * ${SCAN_BLOCK_ITEMS}u;
   let first = base + lane;
   let second = first + ${WORKGROUP_SIZE}u;
-  (*scratch)[lane] = select(0u, (*input_values)[first], first < length);
-  (*scratch)[lane + ${WORKGROUP_SIZE}u] = select(0u, (*input_values)[second], second < length);
+  (*scratch)[lane] = ${config.readValue("first")};
+  (*scratch)[lane + ${WORKGROUP_SIZE}u] = ${config.readValue("second")};
   workgroupBarrier();
 
   var offset = 1u;
@@ -56,6 +63,21 @@ fn scan_blocks(
   return 0u;
 }
 `;
+}
+
+export const scanBlocksWGSL = buildScanBlocksWGSL({
+  functionName: "scan_blocks",
+  inputType: "u32",
+  readValue: (index) =>
+    `select(0u, (*input_values)[${index}], ${index} < length)`,
+});
+
+export const scanVisibilityBlocksWGSL = buildScanBlocksWGSL({
+  functionName: "scan_visibility_blocks",
+  inputType: "vec4<f32>",
+  readValue: (index) =>
+    `select(0u, 1u, ${index} < length && (*input_values)[${index}].w > 0.0)`,
+});
 
 export const addScanOffsetsWGSL = /* wgsl */ `
 fn add_scan_offsets(

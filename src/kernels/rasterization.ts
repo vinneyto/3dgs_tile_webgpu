@@ -5,11 +5,6 @@ export function rasterizationWGSL(
   mode: DepthSortMode,
   outputDepth: boolean,
 ): string {
-  const recordType = mode === "float32" ? "vec4<u32>" : "vec2<u32>";
-  const gaussianId =
-    mode === "float32"
-      ? "(*records)[intersection].z"
-      : "(*records)[intersection].y";
   const depthParameter = outputDepth
     ? ",\n  depth_output: texture_storage_2d<r32float, write>"
     : "";
@@ -27,7 +22,7 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
   projected_mean: ptr<storage, array<vec4<f32>>, read>,
   projected_conic: ptr<storage, array<vec4<f32>>, read>,
   projected_color: ptr<storage, array<vec4<f32>>, read>,
-  records: ptr<storage, array<${recordType}>, read>,
+  records: ptr<storage, array<vec2<u32>>, read>,
   tile_offsets: ptr<storage, array<u32>, read>,
   shared_mean: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
   shared_conic: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
@@ -35,8 +30,10 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
   shared_active: ptr<workgroup, array<u32, ${WORKGROUP_SIZE}>>,
   color_output: texture_storage_2d<rgba16float, write>${depthParameter}
 ) -> u32 {
-  let local_x = local_index % ${TILE_SIZE}u;
-  let local_y = local_index / ${TILE_SIZE}u;
+  // Morton order keeps each subgroup spatially compact inside the tile,
+  // reducing divergence for ellipse coverage and transmittance early-out.
+  let local_x = compact_morton_bits_16(local_index);
+  let local_y = compact_morton_bits_16(local_index >> 1u);
   let pixel = vec2<u32>(
     group_id.x * ${TILE_SIZE}u + local_x,
     group_id.y * ${TILE_SIZE}u + local_y
@@ -56,9 +53,17 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
   for (var batch_start = begin; batch_start < end; batch_start += ${WORKGROUP_SIZE}u) {
     let load_index = batch_start + local_index;
     if (load_index < end) {
-      let gaussian_id = ${gaussianId.replaceAll("intersection", "load_index")};
-      (*shared_mean)[local_index] = (*projected_mean)[gaussian_id];
-      (*shared_conic)[local_index] = (*projected_conic)[gaussian_id];
+      let gaussian_id = (*records)[load_index].y;
+      let mean = (*projected_mean)[gaussian_id];
+      let conic = (*projected_conic)[gaussian_id];
+      (*shared_mean)[local_index] = mean;
+      // Rasterization does not use the projected x radius in conic.w.
+      // Cache the alpha cutoff in its place once per splat/tile so every
+      // pixel can reject insignificant contributions before calling exp().
+      (*shared_conic)[local_index] = vec4<f32>(
+        conic.xyz,
+        log(mean.w * 255.0)
+      );
       (*shared_color)[local_index] = (*projected_color)[gaussian_id];
     }
     if (local_index == 0u) {
@@ -75,14 +80,16 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
       for (var batch_index = 0u; batch_index < batch_count; batch_index++) {
         let mean = (*shared_mean)[batch_index];
         let delta = pixel_center - mean.xy;
-        let conic = (*shared_conic)[batch_index].xyz;
+        let conic_and_threshold = (*shared_conic)[batch_index];
+        let conic = conic_and_threshold.xyz;
         let power = -0.5 * (
           conic.x * delta.x * delta.x +
           2.0 * conic.y * delta.x * delta.y +
           conic.z * delta.y * delta.y
         );
-        if (power > 0.0) { continue; }
+        if (power > 0.0 || power < -conic_and_threshold.w) { continue; }
         let alpha = min(0.99, mean.w * exp(power));
+        // Keep the original test as a defensive guard for exp/log rounding.
         if (alpha < (1.0 / 255.0)) { continue; }
 
         if (!depth_written) {
@@ -146,6 +153,15 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
     ${depthStore}
   }
   return 0u;
+}
+
+fn compact_morton_bits_16(value: u32) -> u32 {
+  var result = value & 0x55555555u;
+  result = (result | (result >> 1u)) & 0x33333333u;
+  result = (result | (result >> 2u)) & 0x0f0f0f0fu;
+  result = (result | (result >> 4u)) & 0x00ff00ffu;
+  result = (result | (result >> 8u)) & 0x0000ffffu;
+  return result;
 }
 `;
 }
