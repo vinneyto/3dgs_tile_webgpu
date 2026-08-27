@@ -8,7 +8,7 @@ import {
 } from "../src/kernels/radix";
 import { emitIntersectionsWGSL } from "../src/kernels/intersections";
 import { projectionWGSL } from "../src/kernels/projection";
-import { scanVisibilityBlocksWGSL } from "../src/kernels/scan";
+import { scanBlocksWGSL, scanVisibilityBlocksWGSL } from "../src/kernels/scan";
 import {
   RADIX_BLOCK_ITEMS,
   RADIX_ELEMENTS_PER_THREAD,
@@ -43,11 +43,21 @@ describe("hybrid depth/tile radix pipeline", () => {
   });
 
   it("scans projected opacity into compact visibility offsets", () => {
+    expect(scanBlocksWGSL).toContain("fn scan_blocks(");
+    expect(scanBlocksWGSL).toContain(
+      "input_values: ptr<storage, array<u32>, read>",
+    );
+    expect(scanBlocksWGSL).toContain(
+      "select(0u, (*input_values)[first], first < length)",
+    );
+
+    expect(scanVisibilityBlocksWGSL).toContain("fn scan_visibility_blocks(");
     expect(scanVisibilityBlocksWGSL).toContain(
       "input_values: ptr<storage, array<vec4<f32>>, read>",
     );
     expect(scanVisibilityBlocksWGSL).toContain(
       "(*input_values)[first].w > 0.0",
     );
+    expect(scanVisibilityBlocksWGSL).not.toContain("array<u32>, read>");
   });
 });
