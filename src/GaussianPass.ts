@@ -2,6 +2,7 @@ import {
   FloatType,
   HalfFloatType,
   NearestFilter,
+  NoColorSpace,
   Object3D,
   PassNode,
   PerspectiveCamera,
@@ -10,11 +11,14 @@ import {
   SRGBColorSpace,
   StorageTexture,
   Vector2,
+  type Node,
+  type NodeBuilder,
   type NodeFrame,
   type ColorSpace,
   type Texture,
   type WebGPURenderer,
 } from "three/webgpu";
+import { colorSpaceToWorking } from "three/tsl";
 import { GaussianData } from "./GaussianData";
 import { TiledGaussianPipeline } from "./pipeline/TiledGaussianPipeline";
 import { WORKGROUP_SIZE } from "./pipeline/constants";
@@ -45,6 +49,7 @@ export class GaussianPass extends PassNode {
   readonly depthTexture: StorageTexture | null;
 
   private readonly ownerRenderer: WebGPURenderer;
+  private workingColorNode: Node | null = null;
   private pipeline: TiledGaussianPipeline | null = null;
   private disposed = false;
 
@@ -94,7 +99,9 @@ export class GaussianPass extends PassNode {
     this.colorTexture = new StorageTexture(1, 1);
     this.colorTexture.name = "GaussianPass.output";
     this.colorTexture.type = HalfFloatType;
-    this.colorTexture.colorSpace = this.colorSpace;
+    // rgba16float has no hardware sRGB sampling variant. Keep the storage
+    // texture raw and decode its declared color space explicitly in setup().
+    this.colorTexture.colorSpace = NoColorSpace;
     this.colorTexture.generateMipmaps = false;
     Object.assign(this.colorTexture, { mipmapsAutoUpdate: false });
     this.colorTexture.isRenderTargetTexture = true;
@@ -131,6 +138,23 @@ export class GaussianPass extends PassNode {
   override setSize(width: number, height: number): void {
     super.setSize(width, height);
     this.depthTexture?.setSize(width, height, 1);
+  }
+
+  /** Color-managed output in Three.js' linear working color space. */
+  getColorNode(): Node {
+    this.workingColorNode ??= colorSpaceToWorking(
+      this.getTextureNode("output"),
+      this.colorSpace,
+    );
+    return this.workingColorNode;
+  }
+
+  override setup(builder: NodeBuilder): Node {
+    const rawOutput = super.setup(builder);
+    if (rawOutput === null || rawOutput === undefined) {
+      throw new Error("GaussianPass color output node is unavailable");
+    }
+    return this.getColorNode();
   }
 
   override updateBefore(frame: NodeFrame): boolean | undefined {

@@ -15,7 +15,7 @@ export interface GaussianPassOptions {
   background?: readonly [number, number, number, number];
   /** Create a standard perspective-depth texture exposed as pass.getTextureNode("depth"). */
   outputDepth?: boolean;
-  /** Color space represented by the reconstructed SH colors. Canonical 3DGS PLY is sRGB. */
+  /** Encoding of reconstructed SH RGB values. The pass converts it to Three.js working-linear; canonical 3DGS PLY is sRGB. */
   colorSpace?: ColorSpace;
   /** Split normally batched compute groups so timestamp tools can measure every kernel. */
   profileKernels?: boolean;

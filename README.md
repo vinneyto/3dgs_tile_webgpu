@@ -110,10 +110,13 @@ const bloomNode = bloom(pass, 0.25);
 pipeline.outputNode = pass.add(bloomNode);
 ```
 
-The named texture outputs are normal Three.js texture nodes:
+The pass itself and `getColorNode()` expose color-managed working-linear RGB for composition with other
+Three.js nodes. `getTextureNode("output")` is the raw encoded `rgba16float` storage texture, which is useful for
+custom WGSL consumers that want to perform their own color conversion:
 
 ```ts
-const colorNode = pass.getTextureNode("output");
+const colorNode = pass.getColorNode();
+const rawColorNode = pass.getTextureNode("output");
 const depthNode = pass.getTextureNode("depth"); // requires outputDepth: true
 ```
 
@@ -250,10 +253,11 @@ retaining GPU timestamps. Append `?debug=0` to disable all diagnostics when meas
 The demo defaults to `dpr=1`; raising it to `dpr=2` quadruples the number of rasterized pixels and is therefore
 an explicit quality/performance choice rather than an automatic use of the display pixel ratio.
 
-Canonical 3DGS SH coefficients reconstruct sRGB values. `GaussianPass` therefore marks its output texture as
-`SRGBColorSpace` by default so Three.js decodes it into the working space before later passes and performs only
-one working-space-to-display transform. Pass `colorSpace` explicitly when supplying coefficients trained in a
-different color space.
+Canonical 3DGS SH coefficients reconstruct sRGB values. The output is an `rgba16float` storage texture, for
+which WebGPU has no hardware sRGB sampling format. `GaussianPass` therefore keeps the physical texture raw and
+explicitly decodes the configured `colorSpace` when exposing the pass/getColorNode output to Three.js. Later
+passes receive working-linear RGB and `RenderPipeline` performs exactly one display transform. Pass
+`colorSpace` explicitly when supplying coefficients trained in a different color space.
 
 ## Current scope
 
