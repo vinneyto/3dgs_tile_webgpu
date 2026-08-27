@@ -197,6 +197,11 @@ function selectedKey(mode: DepthSortMode, keyKind: number): string {
   return keyKind === 0 ? "(*records)[position].y" : "(*records)[position].x";
 }
 
+function selectedRecordKey(mode: DepthSortMode, keyKind: number): string {
+  if (mode === "packed16") return "record.x";
+  return keyKind === 0 ? "record.y" : "record.x";
+}
+
 export function radixHistogramWGSL(
   mode: DepthSortMode,
   shift: number,
@@ -237,30 +242,64 @@ export function radixScatterWGSL(
 ): string {
   return /* wgsl */ `
 fn radix_scatter_${mode}_${shift}_${keyKind}(
+  lane: u32,
   block_index: u32,
   state: ptr<storage, array<vec4<u32>>, read>,
   records_in: ptr<storage, array<${recordType(mode)}>, read>,
   records_out: ptr<storage, array<${recordType(mode)}>, read_write>,
   block_prefixes: ptr<storage, array<u32>, read>,
-  digit_offsets: ptr<storage, array<u32>, read>
+  digit_offsets: ptr<storage, array<u32>, read>,
+  shared_digits: ptr<workgroup, array<u32, ${WORKGROUP_SIZE}>>,
+  shared_digit_masks: ptr<workgroup, array<u32, ${RADIX_SIZE * (WORKGROUP_SIZE / 32)}>>
 ) -> u32 {
   let block_start = block_index * ${RADIX_BLOCK_ITEMS}u;
-  if (block_start >= (*state)[0].x) { return 0u; }
-  var local_counts: array<u32, ${RADIX_SIZE}>;
-  for (var digit = 0u; digit < ${RADIX_SIZE}u; digit++) {
-    local_counts[digit] = 0u;
+  let position = block_start + lane;
+  let valid = position < (*state)[0].x;
+  var record = ${recordType(mode)}(0u);
+  var digit = ${RADIX_SIZE}u;
+  if (valid) {
+    record = (*records_in)[position];
+    let key = ${selectedRecordKey(mode, keyKind)};
+    digit = (key >> ${shift}u) & ${RADIX_SIZE - 1}u;
   }
-  let block_end = min(block_start + ${RADIX_BLOCK_ITEMS}u, (*state)[0].x);
-  let prefix_start = block_index * ${RADIX_SIZE}u;
-  for (var position = block_start; position < block_end; position++) {
-    let key = ${selectedKey(mode, keyKind).replaceAll("records", "records_in")};
-    let digit = (key >> ${shift}u) & ${RADIX_SIZE - 1}u;
-    let destination = (*digit_offsets)[digit]
-      + (*block_prefixes)[prefix_start + digit]
-      + local_counts[digit];
-    local_counts[digit]++;
-    (*records_out)[destination] = (*records_in)[position];
+  (*shared_digits)[lane] = digit;
+  workgroupBarrier();
+
+  let words_per_digit = ${WORKGROUP_SIZE / 32}u;
+  if (lane < ${RADIX_SIZE * (WORKGROUP_SIZE / 32)}u) {
+    let mask_digit = lane / words_per_digit;
+    let word = lane % words_per_digit;
+    let first_lane = word * 32u;
+    var mask = 0u;
+    for (var bit_index = 0u; bit_index < 32u; bit_index++) {
+      if ((*shared_digits)[first_lane + bit_index] == mask_digit) {
+        mask |= 1u << bit_index;
+      }
+    }
+    (*shared_digit_masks)[lane] = mask;
   }
+  workgroupBarrier();
+
+  if (!valid) { return 0u; }
+
+  let word = lane / 32u;
+  let bit_index = lane % 32u;
+  let mask_start = digit * words_per_digit;
+  var local_rank = 0u;
+  for (var previous_word = 0u; previous_word < word; previous_word++) {
+    local_rank += countOneBits(
+      (*shared_digit_masks)[mask_start + previous_word]
+    );
+  }
+  let preceding_bits = (1u << bit_index) - 1u;
+  local_rank += countOneBits(
+    (*shared_digit_masks)[mask_start + word] & preceding_bits
+  );
+
+  let destination = (*digit_offsets)[digit]
+    + (*block_prefixes)[block_index * ${RADIX_SIZE}u + digit]
+    + local_rank;
+  (*records_out)[destination] = record;
   return 0u;
 }
 `;

@@ -210,7 +210,7 @@ export class RadixSorter {
       this.renderer.compute(this.scanChunkSumsNode, [RADIX_SIZE, 1, 1]);
       this.renderer.compute(this.addChunkOffsetsNode, this.dispatch.radixScan);
       this.renderer.compute(this.scanDigitTotalsNode);
-      this.renderer.compute(pass.scatter, this.dispatch.radix);
+      this.renderer.compute(pass.scatter, this.dispatch.radixBlock);
     }
   }
 
@@ -263,7 +263,8 @@ export class RadixSorter {
       radixScatterWGSL(this.mode, shift, keyKind),
     );
     const scatter = scatterKernel({
-      block_index: instanceIndex,
+      lane: invocationLocalIndex,
+      block_index: workgroupId.x,
       state,
       records_in: recordsInput,
       records_out: storage(recordsOut, recordType, this.capacity),
@@ -277,6 +278,11 @@ export class RadixSorter {
         "uint",
         RADIX_SIZE,
       ).toReadOnly(),
+      shared_digits: workgroupArray("uint", WORKGROUP_SIZE),
+      shared_digit_masks: workgroupArray(
+        "uint",
+        RADIX_SIZE * (WORKGROUP_SIZE / 32),
+      ),
     })
       .computeKernel([WORKGROUP_SIZE])
       .setName(`3DGS radix scatter WGSL ${passIndex}`);

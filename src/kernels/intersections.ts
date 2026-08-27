@@ -15,6 +15,7 @@ fn prepare_dispatch(
   intersection_offsets: ptr<storage, array<u32>, read>,
   state: ptr<storage, array<vec4<u32>>, read_write>,
   radix_dispatch: ptr<storage, array<vec4<u32>>, read_write>,
+  radix_block_dispatch: ptr<storage, array<vec4<u32>>, read_write>,
   radix_scan_dispatch: ptr<storage, array<vec4<u32>>, read_write>,
   linear_dispatch: ptr<storage, array<vec4<u32>>, read_write>
 ) -> u32 {
@@ -26,6 +27,7 @@ fn prepare_dispatch(
     (radix_blocks + ${WORKGROUP_SIZE - 1}u) / ${WORKGROUP_SIZE}u,
     1u, 1u, 0u
   );
+  (*radix_block_dispatch)[0] = vec4<u32>(radix_blocks, 1u, 1u, 0u);
   (*radix_scan_dispatch)[0] = vec4<u32>(
     (radix_blocks + ${RADIX_SCAN_CHUNK_ITEMS - 1}u) / ${RADIX_SCAN_CHUNK_ITEMS}u,
     ${RADIX_SIZE}u, 1u, 0u
