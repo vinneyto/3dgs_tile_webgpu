@@ -130,13 +130,18 @@ export class RadixSorter {
     return this.passes.length;
   }
 
-  encode(): void {
+  encode(profileKernels = false): void {
     for (const pass of this.passes) {
       this.renderer.compute(pass.histogram, this.dispatch.radix);
-      this.renderer.compute([
-        this.scanBlockHistogramsNode,
-        this.scanDigitTotalsNode,
-      ]);
+      if (profileKernels) {
+        this.renderer.compute(this.scanBlockHistogramsNode);
+        this.renderer.compute(this.scanDigitTotalsNode);
+      } else {
+        this.renderer.compute([
+          this.scanBlockHistogramsNode,
+          this.scanDigitTotalsNode,
+        ]);
+      }
       this.renderer.compute(pass.scatter, this.dispatch.radix);
     }
   }

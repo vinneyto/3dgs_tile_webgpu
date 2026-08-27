@@ -1,4 +1,5 @@
 import type {
+  ColorSpace,
   IndirectStorageBufferAttribute,
   StorageBufferAttribute,
 } from "three/webgpu";
@@ -14,6 +15,10 @@ export interface GaussianPassOptions {
   background?: readonly [number, number, number, number];
   /** Create a standard perspective-depth texture exposed as pass.getTextureNode("depth"). */
   outputDepth?: boolean;
+  /** Color space represented by the reconstructed SH colors. Canonical 3DGS PLY is sRGB. */
+  colorSpace?: ColorSpace;
+  /** Split normally batched compute groups so timestamp tools can measure every kernel. */
+  profileKernels?: boolean;
 }
 
 export interface GaussianPassStats {
@@ -32,6 +37,7 @@ export interface GaussianPassDebugInfo {
   tilesY: number;
   tileStageRebuilds: number;
   radixPasses: number;
+  profileKernels: boolean;
 }
 
 /** Three.js-owned intermediate attributes reusable by other node code or wgslFn kernels. */

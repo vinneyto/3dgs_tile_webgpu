@@ -103,8 +103,13 @@ export class IntersectionStage {
       .setName(`3DGS emit intersections WGSL (${mode})`);
   }
 
-  encode(): void {
-    this.renderer.compute([this.prepareNode, this.emitNode]);
+  encode(profileKernels = false): void {
+    if (profileKernels) {
+      this.renderer.compute(this.prepareNode);
+      this.renderer.compute(this.emitNode);
+    } else {
+      this.renderer.compute([this.prepareNode, this.emitNode]);
+    }
   }
 
   async readStats(): Promise<GaussianPassStats> {

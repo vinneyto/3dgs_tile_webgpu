@@ -1,7 +1,7 @@
-import { TimestampQuery, type WebGPURenderer } from "three/webgpu";
+import type { WebGPURenderer } from "three/webgpu";
 import type { GaussianPass, GaussianPassStats } from "../../src/index";
+import type { KernelTimingInspector } from "./KernelTimingInspector";
 
-const TIMESTAMP_INTERVAL_FRAMES = 10;
 const STATS_INTERVAL_MS = 1_500;
 const DISPLAY_INTERVAL_MS = 250;
 const MEMORY_WARMUP_FRAMES = 30;
@@ -14,10 +14,6 @@ export class DebugPanel {
   private averageFrameMs = 0;
   private cpuEncodeMs = 0;
   private computeCalls = 0;
-  private gpuComputeMs: number | null = null;
-  private gpuRenderMs: number | null = null;
-  private timestampPending = false;
-  private timestampAvailable = true;
   private statsPending = false;
   private lastStatsTime = -Infinity;
   private lastDisplayTime = -Infinity;
@@ -26,9 +22,13 @@ export class DebugPanel {
   constructor(
     private readonly renderer: WebGPURenderer,
     private readonly element: HTMLElement,
+    private readonly kernelElement: HTMLElement,
+    private readonly timingInspector: KernelTimingInspector | null,
     private readonly enabled: boolean,
+    private readonly statsEnabled: boolean,
   ) {
     this.element.hidden = !enabled;
+    this.kernelElement.hidden = !enabled;
   }
 
   setPass(pass: GaussianPass | null): void {
@@ -63,14 +63,8 @@ export class DebugPanel {
     }
 
     if (
-      this.timestampAvailable &&
-      !this.timestampPending &&
-      this.frameCount % TIMESTAMP_INTERVAL_FRAMES === 0
-    ) {
-      this.resolveTimestamps();
-    }
-    if (
       this.pass !== null &&
+      this.statsEnabled &&
       !this.statsPending &&
       time - this.lastStatsTime >= STATS_INTERVAL_MS
     ) {
@@ -80,29 +74,6 @@ export class DebugPanel {
       this.lastDisplayTime = time;
       this.render();
     }
-  }
-
-  private resolveTimestamps(): void {
-    this.timestampPending = true;
-    void Promise.all([
-      this.renderer.resolveTimestampsAsync(TimestampQuery.COMPUTE),
-      this.renderer.resolveTimestampsAsync(TimestampQuery.RENDER),
-    ])
-      .then(([computeMs, renderMs]) => {
-        if (computeMs === undefined && renderMs === undefined) {
-          this.timestampAvailable = false;
-          return;
-        }
-        if (computeMs !== undefined) this.gpuComputeMs = computeMs;
-        if (renderMs !== undefined) this.gpuRenderMs = renderMs;
-      })
-      .catch((error: unknown) => {
-        this.timestampAvailable = false;
-        console.warn("WebGPU timestamp query failed", error);
-      })
-      .finally(() => {
-        this.timestampPending = false;
-      });
   }
 
   private readIntersectionStats(time: number): void {
@@ -138,9 +109,11 @@ export class DebugPanel {
       this.stats === null
         ? "requested      —"
         : `requested      ${formatInteger(this.stats.requestedIntersections)}  overflow ${this.stats.overflow ? "YES" : "no"}`;
-    const timestampLine = this.timestampAvailable
-      ? `GPU compute    ${formatMs(this.gpuComputeMs)}  present ${formatMs(this.gpuRenderMs)}`
-      : "GPU timestamp  unavailable on this adapter";
+    const timings = this.timingInspector?.latest ?? null;
+    const timestampLine =
+      this.timingInspector === null
+        ? "GPU timestamp  unavailable on this adapter"
+        : `GPU compute    ${formatMs(timings?.computeMs ?? null)}  present ${formatMs(timings?.renderMs ?? null)}`;
     const pipelineLine =
       debug === null || !debug.initialized
         ? "pipeline       waiting for first frame"
@@ -165,7 +138,37 @@ export class DebugPanel {
       `indirect       ${memory.indirectStorageAttributes} / ${formatBytes(memory.indirectStorageAttributesSize)}`,
       `textures       ${memory.textures} / ${formatBytes(memory.texturesSize)}`,
       `programs       ${memory.programs} / ${formatBytes(memory.programsSize)}`,
-      "stats readback every 1.5 s · ?debug=0 disables diagnostics",
+      this.statsEnabled
+        ? "stats readback every 1.5 s · ?stats=0 disables it"
+        : "stats readback disabled · ?debug=0 disables diagnostics",
+    ].join("\n");
+
+    this.renderKernelTimings(debug?.profileKernels ?? false);
+  }
+
+  private renderKernelTimings(profileKernels: boolean): void {
+    const timings = this.timingInspector?.latest ?? null;
+    if (this.timingInspector === null) {
+      this.kernelElement.textContent = "Timestamp queries are unavailable.";
+      return;
+    }
+    if (timings === null) {
+      this.kernelElement.textContent =
+        "Waiting for the first resolved GPU frame…";
+      return;
+    }
+
+    const rows = timings.kernels.map((kernel) => {
+      const calls = kernel.calls > 1 ? ` ×${kernel.calls}` : "";
+      return `${kernel.name.padEnd(42)} ${formatMs(kernel.gpuMs)}${calls}`;
+    });
+    this.kernelElement.textContent = [
+      `${profileKernels ? "individual kernels" : "batched groups"} · GPU frame ${timings.frameId}`,
+      ...rows,
+      "",
+      profileKernels
+        ? "?profile=kernels adds compute-pass boundaries for exact kernel timings"
+        : "Use ?profile=kernels to split batched prepare/emit and radix scans",
     ].join("\n");
   }
 }

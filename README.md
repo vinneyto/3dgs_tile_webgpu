@@ -239,11 +239,21 @@ vertex data. Matching `lidar_sim`, it performs these boundary conversions:
 
 The HUD also reports CPU encoding time, Three.js compute-call count, GPU compute/present time (when the adapter
 supports timestamp queries), requested/emitted intersection counts, capacity overflow, tile-stage rebuilds and
-Three.js-tracked GPU memory. The memory delta is captured after a 30-frame warm-up, making accidental per-frame
-resource growth visible. Diagnostic intersection readback runs asynchronously every 1.5 seconds. Append
-`?debug=0` to disable timestamp queries and all diagnostic readbacks when measuring the undisturbed renderer.
+Three.js-tracked GPU memory. Expand **Kernel timings** for timestamp-query timings of every named compute group.
+Append `?profile=kernels` to split the normally batched prepare/emit and radix scan groups into separate compute
+passes and measure every WGSL kernel independently. This profiling mode adds pass boundaries and should not be
+used as the final production-performance number.
+
+The memory delta is captured after a 30-frame warm-up, making accidental per-frame resource growth visible.
+Diagnostic intersection readback runs asynchronously every 1.5 seconds; `?stats=0` disables that readback while
+retaining GPU timestamps. Append `?debug=0` to disable all diagnostics when measuring the undisturbed renderer.
 The demo defaults to `dpr=1`; raising it to `dpr=2` quadruples the number of rasterized pixels and is therefore
 an explicit quality/performance choice rather than an automatic use of the display pixel ratio.
+
+Canonical 3DGS SH coefficients reconstruct sRGB values. `GaussianPass` therefore marks its output texture as
+`SRGBColorSpace` by default so Three.js decodes it into the working space before later passes and performs only
+one working-space-to-display transform. Pass `colorSpace` explicitly when supplying coefficients trained in a
+different color space.
 
 ## Current scope
 

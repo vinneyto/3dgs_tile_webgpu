@@ -7,9 +7,11 @@ import {
   PerspectiveCamera,
   RedFormat,
   Scene,
+  SRGBColorSpace,
   StorageTexture,
   Vector2,
   type NodeFrame,
+  type ColorSpace,
   type Texture,
   type WebGPURenderer,
 } from "three/webgpu";
@@ -37,6 +39,8 @@ export class GaussianPass extends PassNode {
   readonly intersectionCapacity: number;
   readonly background: readonly [number, number, number, number];
   readonly outputDepth: boolean;
+  readonly colorSpace: ColorSpace;
+  readonly profileKernels: boolean;
   readonly colorTexture: StorageTexture;
   readonly depthTexture: StorageTexture | null;
 
@@ -83,11 +87,14 @@ export class GaussianPass extends PassNode {
     this.intersectionCapacity = intersectionCapacity;
     this.background = options.background ?? [0, 0, 0, 0];
     this.outputDepth = options.outputDepth ?? false;
+    this.colorSpace = options.colorSpace ?? SRGBColorSpace;
+    this.profileKernels = options.profileKernels ?? false;
 
     this.renderTarget.texture.dispose();
     this.colorTexture = new StorageTexture(1, 1);
     this.colorTexture.name = "GaussianPass.output";
     this.colorTexture.type = HalfFloatType;
+    this.colorTexture.colorSpace = this.colorSpace;
     this.colorTexture.generateMipmaps = false;
     Object.assign(this.colorTexture, { mipmapsAutoUpdate: false });
     this.colorTexture.isRenderTargetTexture = true;
@@ -162,6 +169,7 @@ export class GaussianPass extends PassNode {
       this.depthSortMode,
       this.intersectionCapacity,
       this.background,
+      this.profileKernels,
     );
     this.pipeline.prepareFrame(
       width,
@@ -200,6 +208,7 @@ export class GaussianPass extends PassNode {
         tilesY: 0,
         tileStageRebuilds: 0,
         radixPasses: 0,
+        profileKernels: this.profileKernels,
       }
     );
   }

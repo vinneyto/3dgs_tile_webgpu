@@ -43,6 +43,7 @@ export class TiledGaussianPipeline {
     private readonly mode: DepthSortMode,
     private readonly capacity: number,
     background: readonly [number, number, number, number],
+    private readonly profileKernels: boolean,
   ) {
     this.frame = new FrameUniforms(camera, data, anchor, background);
     this.projection = new ProjectionStage(data, this.frame);
@@ -88,8 +89,8 @@ export class TiledGaussianPipeline {
     }
     this.projection.encode(this.renderer);
     this.scan.encode(this.renderer);
-    this.intersections.encode();
-    this.sorter.encode();
+    this.intersections.encode(this.profileKernels);
+    this.sorter.encode(this.profileKernels);
     this.tileOffsets.encode();
     this.rasterizer.encode(this.tilesX, this.tilesY);
   }
@@ -107,6 +108,7 @@ export class TiledGaussianPipeline {
       tilesY: this.tilesY,
       tileStageRebuilds: this.tileStageRebuilds,
       radixPasses: this.sorter.passCount,
+      profileKernels: this.profileKernels,
     };
   }
 
