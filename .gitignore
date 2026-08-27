@@ -1,5 +1,6 @@
 node_modules/
 dist/
+sandbox-dist/
 .vite/
 coverage/
 *.log

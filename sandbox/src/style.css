@@ -1,0 +1,77 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  color: #eef2ff;
+  background: #07090e;
+  font-synthesis: none;
+}
+
+html,
+body,
+#viewport {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#hud {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  display: grid;
+  max-width: min(420px, calc(100vw - 64px));
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 12px;
+  background: rgb(13 17 26 / 82%);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 28%);
+  backdrop-filter: blur(12px);
+}
+
+#status {
+  color: #b9c3d8;
+  line-height: 1.35;
+}
+
+#status[data-error="true"] {
+  color: #ff9f9f;
+}
+
+#open-ply {
+  width: max-content;
+  padding: 7px 12px;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 8px;
+  color: inherit;
+  background: #283754;
+  cursor: pointer;
+}
+
+#open-ply:hover {
+  background: #354a70;
+}
+
+small {
+  color: #8792a8;
+}
+
+body[data-dragging="true"]::after {
+  position: fixed;
+  inset: 20px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed #83aaff;
+  border-radius: 18px;
+  color: #dce7ff;
+  background: rgb(22 31 49 / 78%);
+  content: "Drop PLY to load";
+  font-size: 20px;
+  pointer-events: none;
+}

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>3DGS WebGPU sandbox</title>
+  </head>
+  <body>
+    <main id="viewport"></main>
+    <section id="hud">
+      <strong>3DGS WebGPU sandbox</strong>
+      <span id="status">Starting WebGPU…</span>
+      <button id="open-ply" type="button">Open PLY</button>
+      <input id="ply-file" type="file" accept=".ply" hidden />
+      <small>Orbit: drag · Zoom: wheel · Drop a canonical 3DGS PLY</small>
+    </section>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
