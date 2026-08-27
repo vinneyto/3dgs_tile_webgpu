@@ -36,13 +36,15 @@ fn scan_radix_histogram_chunks(
   workgroupBarrier();
 
   var offset = 1u;
-  for (var active = ${RADIX_SCAN_CHUNK_ITEMS >> 1}u; active > 0u; active >>= 1u) {
-    if (lane < active) {
+  var active_count = ${RADIX_SCAN_CHUNK_ITEMS / 2}u;
+  for (var step = 0u; step < 9u; step++) {
+    if (lane < active_count) {
+      let left = offset * (2u * lane + 1u) - 1u;
       let right = offset * (2u * lane + 2u) - 1u;
-      let left = right - offset;
       (*scratch)[right] += (*scratch)[left];
     }
-    offset <<= 1u;
+    offset *= 2u;
+    active_count /= 2u;
     workgroupBarrier();
   }
 
@@ -53,15 +55,18 @@ fn scan_radix_histogram_chunks(
   }
   workgroupBarrier();
 
-  for (var active = 1u; active < ${RADIX_SCAN_CHUNK_ITEMS}u; active <<= 1u) {
-    offset >>= 1u;
-    if (lane < active) {
+  active_count = 1u;
+  offset = ${RADIX_SCAN_CHUNK_ITEMS / 2}u;
+  for (var step = 0u; step < 9u; step++) {
+    if (lane < active_count) {
+      let left = offset * (2u * lane + 1u) - 1u;
       let right = offset * (2u * lane + 2u) - 1u;
-      let left = right - offset;
       let value = (*scratch)[left];
       (*scratch)[left] = (*scratch)[right];
       (*scratch)[right] += value;
     }
+    active_count *= 2u;
+    offset /= 2u;
     workgroupBarrier();
   }
 
@@ -102,13 +107,15 @@ fn scan_radix_chunk_sums(
   workgroupBarrier();
 
   var offset = 1u;
-  for (var active = ${RADIX_SCAN_CHUNK_ITEMS >> 1}u; active > 0u; active >>= 1u) {
-    if (lane < active) {
+  var active_count = ${RADIX_SCAN_CHUNK_ITEMS / 2}u;
+  for (var step = 0u; step < 9u; step++) {
+    if (lane < active_count) {
+      let left = offset * (2u * lane + 1u) - 1u;
       let right = offset * (2u * lane + 2u) - 1u;
-      let left = right - offset;
       (*scratch)[right] += (*scratch)[left];
     }
-    offset <<= 1u;
+    offset *= 2u;
+    active_count /= 2u;
     workgroupBarrier();
   }
   if (lane == 0u) {
@@ -117,15 +124,18 @@ fn scan_radix_chunk_sums(
   }
   workgroupBarrier();
 
-  for (var active = 1u; active < ${RADIX_SCAN_CHUNK_ITEMS}u; active <<= 1u) {
-    offset >>= 1u;
-    if (lane < active) {
+  active_count = 1u;
+  offset = ${RADIX_SCAN_CHUNK_ITEMS / 2}u;
+  for (var step = 0u; step < 9u; step++) {
+    if (lane < active_count) {
+      let left = offset * (2u * lane + 1u) - 1u;
       let right = offset * (2u * lane + 2u) - 1u;
-      let left = right - offset;
       let value = (*scratch)[left];
       (*scratch)[left] = (*scratch)[right];
       (*scratch)[right] += value;
     }
+    active_count *= 2u;
+    offset /= 2u;
     workgroupBarrier();
   }
   if (first < chunk_count) {
