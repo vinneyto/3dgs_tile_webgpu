@@ -13,7 +13,11 @@ import {
   workgroupArray,
   workgroupId,
 } from "three/tsl";
-import { addScanOffsetsWGSL, scanBlocksWGSL } from "../kernels/scan";
+import {
+  addScanOffsetsWGSL,
+  scanBlocksWGSL,
+  scanVisibilityBlocksWGSL,
+} from "../kernels/scan";
 import { AttributePool } from "./AttributePool";
 import { SCAN_BLOCK_ITEMS, WORKGROUP_SIZE } from "./constants";
 
@@ -35,9 +39,13 @@ export class ExclusiveScanStage {
     input: StorageBufferAttribute,
     length: number,
     label = "intersections",
+    inputMode: "uint" | "projectedVisibility" = "uint",
   ) {
     this.output = this.attributes.createUint(`3dgs.${label}-offsets`, length);
-    const scanKernel = wgslFn<Record<string, Node>>(scanBlocksWGSL);
+    const uintScanKernel = wgslFn<Record<string, Node>>(scanBlocksWGSL);
+    const visibilityScanKernel = wgslFn<Record<string, Node>>(
+      scanVisibilityBlocksWGSL,
+    );
     const addKernel = wgslFn<Record<string, Node>>(addScanOffsetsWGSL);
 
     let scanInput = input;
@@ -50,11 +58,19 @@ export class ExclusiveScanStage {
         blockCount,
       );
       const scratch = workgroupArray("uint", SCAN_BLOCK_ITEMS);
-      const scanNode = scanKernel({
+      const firstLevelVisibility =
+        this.levels.length === 0 && inputMode === "projectedVisibility";
+      const scanNode = (
+        firstLevelVisibility ? visibilityScanKernel : uintScanKernel
+      )({
         lane: invocationLocalIndex,
         group_id: workgroupId.x,
         length: uint(scanLength),
-        input_values: storage(scanInput, "uint", scanLength).toReadOnly(),
+        input_values: storage(
+          scanInput,
+          firstLevelVisibility ? "vec4" : "uint",
+          scanLength,
+        ).toReadOnly(),
         output_values: storage(scanOutput, "uint", scanLength),
         block_sums: storage(blockSums, "uint", blockCount),
         scratch,

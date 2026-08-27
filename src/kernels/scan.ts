@@ -57,6 +57,21 @@ fn scan_blocks(
 }
 `;
 
+export const scanVisibilityBlocksWGSL = scanBlocksWGSL
+  .replace("fn scan_blocks(", "fn scan_visibility_blocks(")
+  .replace(
+    "input_values: ptr<storage, array<u32>, read>",
+    "input_values: ptr<storage, array<vec4<f32>>, read>",
+  )
+  .replace(
+    "select(0u, (*input_values)[first], first < length)",
+    "select(0u, 1u, first < length && (*input_values)[first].w > 0.0)",
+  )
+  .replace(
+    "select(0u, (*input_values)[second], second < length)",
+    "select(0u, 1u, second < length && (*input_values)[second].w > 0.0)",
+  );
+
 export const addScanOffsetsWGSL = /* wgsl */ `
 fn add_scan_offsets(
   index: u32,

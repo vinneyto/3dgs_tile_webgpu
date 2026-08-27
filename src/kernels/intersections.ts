@@ -48,7 +48,7 @@ export const emitIntersectionsWGSL = (() => {
     onHit: /* wgsl */ `
         if (local_index < reserved_count) {
           let destination = (*intersection_offsets)[rank] + local_index;
-          if (destination < (*state)[0].x) {
+          if (destination < capacity) {
             let tile_id = u32(tile_y) * tiles.x + u32(tile_x);
             (*records)[destination] = vec2<u32>(tile_id, gaussian_id);
           }
@@ -59,6 +59,7 @@ export const emitIntersectionsWGSL = (() => {
 fn emit_intersections(
   rank: u32,
   tiles: vec2<u32>,
+  capacity: u32,
   sorted_gaussians: ptr<storage, array<vec2<u32>>, read>,
   projected_mean: ptr<storage, array<vec4<f32>>, read>,
   projected_conic: ptr<storage, array<vec4<f32>>, read>,
@@ -66,7 +67,6 @@ fn emit_intersections(
   tile_counts: ptr<storage, array<u32>, read>,
   intersection_offsets: ptr<storage, array<u32>, read>,
   visible_state: ptr<storage, array<vec4<u32>>, read>,
-  state: ptr<storage, array<vec4<u32>>, read>,
   records: ptr<storage, array<vec2<u32>>, read_write>
 ) -> u32 {
   if (rank >= (*visible_state)[0].x) { return 0u; }
@@ -100,7 +100,7 @@ ${emitContributingTile}
   let sentinel_tile = tiles.x * tiles.y;
   for (var pad = local_index; pad < reserved_count; pad++) {
     let destination = (*intersection_offsets)[rank] + pad;
-    if (destination < (*state)[0].x) {
+    if (destination < capacity) {
       (*records)[destination] = vec2<u32>(sentinel_tile, gaussian_id);
     }
   }

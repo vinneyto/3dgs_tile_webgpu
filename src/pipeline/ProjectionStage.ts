@@ -17,7 +17,6 @@ export class ProjectionStage {
   readonly projectedConic: StorageBufferAttribute;
   readonly projectedColor: StorageBufferAttribute;
   readonly tileCounts: StorageBufferAttribute;
-  readonly visibleFlags: StorageBufferAttribute;
 
   private readonly attributes = new AttributePool();
   private readonly computeNode: ComputeNode;
@@ -41,10 +40,6 @@ export class ProjectionStage {
     );
     this.tileCounts = this.attributes.createUint(
       "3dgs.tile-counts",
-      data.count,
-    );
-    this.visibleFlags = this.attributes.createUint(
-      "3dgs.visible-flags",
       data.count,
     );
 
@@ -74,7 +69,6 @@ export class ProjectionStage {
       projected_conic: storage(this.projectedConic, "vec4", data.count),
       projected_color: storage(this.projectedColor, "vec4", data.count),
       tile_counts: storage(this.tileCounts, "uint", data.count),
-      visible_flags: storage(this.visibleFlags, "uint", data.count),
     })
       .compute(data.count, [WORKGROUP_SIZE])
       .setName(`3DGS projection WGSL (${antialiasMode})`);

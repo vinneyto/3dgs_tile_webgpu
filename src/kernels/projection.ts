@@ -48,12 +48,12 @@ fn project_gaussians(
   projected_mean: ptr<storage, array<vec4<f32>>, read_write>,
   projected_conic: ptr<storage, array<vec4<f32>>, read_write>,
   projected_color: ptr<storage, array<vec4<f32>>, read_write>,
-  tile_counts: ptr<storage, array<u32>, read_write>,
-  visible_flags: ptr<storage, array<u32>, read_write>
+  tile_counts: ptr<storage, array<u32>, read_write>
 ) -> u32 {
   if (gid >= gaussian_count) { return 0u; }
   (*tile_counts)[gid] = 0u;
-  (*visible_flags)[gid] = 0u;
+  // Opacity zero is also the visibility predicate consumed by the compact scan.
+  (*projected_mean)[gid] = vec4<f32>(0.0);
   let mean_local = (*means)[gid].xyz;
   let view = model_view * vec4<f32>(mean_local, 1.0);
   let depth = -view.z;
@@ -208,7 +208,6 @@ ${countContributingTile}
     radius_y
   );
   (*tile_counts)[gid] = count;
-  (*visible_flags)[gid] = 1u;
   return 0u;
 }
 `;

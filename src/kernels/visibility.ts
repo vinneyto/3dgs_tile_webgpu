@@ -9,7 +9,7 @@ import type { DepthSortMode } from "../pipeline/types";
 export const prepareVisibleDispatchWGSL = /* wgsl */ `
 fn prepare_visible_dispatch(
   gaussian_count: u32,
-  visible_flags: ptr<storage, array<u32>, read>,
+  projected_mean: ptr<storage, array<vec4<f32>>, read>,
   visible_offsets: ptr<storage, array<u32>, read>,
   state: ptr<storage, array<vec4<u32>>, read_write>,
   radix_block_dispatch: ptr<storage, array<vec4<u32>>, read_write>,
@@ -19,7 +19,7 @@ fn prepare_visible_dispatch(
   var count = 0u;
   if (gaussian_count > 0u) {
     let last = gaussian_count - 1u;
-    count = (*visible_offsets)[last] + (*visible_flags)[last];
+    count = (*visible_offsets)[last] + select(0u, 1u, (*projected_mean)[last].w > 0.0);
   }
   let radix_blocks = (count + ${RADIX_BLOCK_ITEMS - 1}u) / ${RADIX_BLOCK_ITEMS}u;
   let reduce_chunks = (radix_blocks + ${RADIX_REDUCE_ITEMS - 1}u) / ${RADIX_REDUCE_ITEMS}u;
@@ -48,12 +48,11 @@ fn compact_visible_${mode}(
   gid: u32,
   gaussian_count: u32,
   viewport: vec4<f32>,
-  visible_flags: ptr<storage, array<u32>, read>,
   visible_offsets: ptr<storage, array<u32>, read>,
   projected_mean: ptr<storage, array<vec4<f32>>, read>,
   records: ptr<storage, array<vec2<u32>>, read_write>
 ) -> u32 {
-  if (gid >= gaussian_count || (*visible_flags)[gid] == 0u) { return 0u; }
+  if (gid >= gaussian_count || (*projected_mean)[gid].w <= 0.0) { return 0u; }
   let depth = (*projected_mean)[gid].z;
   (*records)[(*visible_offsets)[gid]] = vec2<u32>(${depthKey}, gid);
   return 0u;

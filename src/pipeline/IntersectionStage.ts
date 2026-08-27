@@ -91,6 +91,7 @@ export class IntersectionStage {
     this.emitNode = emitKernel({
       rank: instanceIndex,
       tiles: uvec2(frame.tilesX, frame.tilesY),
+      capacity: uint(capacity),
       sorted_gaussians: storage(
         sortedGaussiansAttribute,
         "uvec2",
@@ -114,7 +115,6 @@ export class IntersectionStage {
       tile_counts: tileCounts,
       intersection_offsets: intersectionOffsets,
       visible_state: visibleState,
-      state: storage(this.dispatch.state, "uvec4", 1).toReadOnly(),
       records: storage(this.buffers.recordsA, "uvec2", capacity),
     })
       .computeKernel([WORKGROUP_SIZE])

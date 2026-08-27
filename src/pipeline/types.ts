@@ -51,7 +51,6 @@ export interface GaussianPassResources {
   projectedMean: StorageBufferAttribute;
   projectedConic: StorageBufferAttribute;
   projectedColor: StorageBufferAttribute;
-  visibleFlags: StorageBufferAttribute;
   visibleOffsets: StorageBufferAttribute;
   /** uvec2(depth key, original Gaussian id), sorted front-to-back. */
   depthSortedGaussians: StorageBufferAttribute;

@@ -220,7 +220,7 @@ created once at
 path itself performs no GPU-to-CPU synchronization.
 
 After the first rendered frame, `pass.getResources()` exposes the Three.js-owned intermediate attributes:
-projected means/conics/colors, visible flags and offsets, the depth-sorted Gaussian list, original and
+projected means/conics/colors, visible offsets, the depth-sorted Gaussian list, original and
 depth-ordered tile counts, intersection offsets, dispatch state, sorted intersection records and tile offsets.
 They can be wrapped with Three.js `storage(...)` and passed to another `wgslFn` kernel or node material without
 reaching into the WebGPU backend.

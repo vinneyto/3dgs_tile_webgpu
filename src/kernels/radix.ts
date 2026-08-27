@@ -224,14 +224,14 @@ fn radix_scatter_${shift}(
     }
 
     var subgroup_prefix = 0u;
-    for (var target = 0u; target < ${RADIX_SIZE}u; target++) {
-      let matches = select(0u, 1u, valid && digit == target);
+    for (var target_digit = 0u; target_digit < ${RADIX_SIZE}u; target_digit++) {
+      let matches = select(0u, 1u, valid && digit == target_digit);
       let prefix = subgroupExclusiveAdd(matches);
       let total = subgroupAdd(matches);
       if (subgroup_lane == 0u) {
-        (*partials)[target * ${RADIX_MAX_SUBGROUPS}u + subgroup_index] = total;
+        (*partials)[target_digit * ${RADIX_MAX_SUBGROUPS}u + subgroup_index] = total;
       }
-      if (digit == target) { subgroup_prefix = prefix; }
+      if (digit == target_digit) { subgroup_prefix = prefix; }
     }
     workgroupBarrier();
 

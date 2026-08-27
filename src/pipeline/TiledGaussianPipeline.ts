@@ -56,15 +56,15 @@ export class TiledGaussianPipeline {
     this.frame = new FrameUniforms(camera, data, anchor, background);
     this.projection = new ProjectionStage(data, this.frame, antialiasMode);
     this.visibleScan = new ExclusiveScanStage(
-      this.projection.visibleFlags,
+      this.projection.projectedMean,
       data.count,
       "visible",
+      "projectedVisibility",
     );
     this.visible = new VisibleGaussianStage(
       renderer,
       mode,
       data.count,
-      this.projection.visibleFlags,
       this.visibleScan.output,
       this.projection.projectedMean,
       this.frame.viewport,
@@ -169,7 +169,6 @@ export class TiledGaussianPipeline {
       projectedMean: this.projection.projectedMean,
       projectedConic: this.projection.projectedConic,
       projectedColor: this.projection.projectedColor,
-      visibleFlags: this.projection.visibleFlags,
       visibleOffsets: this.visibleScan.output,
       depthSortedGaussians: this.depthSorter.sortedRecords,
       tileCounts: this.projection.tileCounts,

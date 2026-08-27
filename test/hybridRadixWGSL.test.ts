@@ -8,6 +8,7 @@ import {
 } from "../src/kernels/radix";
 import { emitIntersectionsWGSL } from "../src/kernels/intersections";
 import { projectionWGSL } from "../src/kernels/projection";
+import { scanVisibilityBlocksWGSL } from "../src/kernels/scan";
 import {
   RADIX_BLOCK_ITEMS,
   RADIX_ELEMENTS_PER_THREAD,
@@ -19,6 +20,7 @@ describe("hybrid depth/tile radix pipeline", () => {
     expect(RADIX_BLOCK_ITEMS).toBe(1024);
     expect(radixHistogramWGSL(0)).toContain("subgroupAdd(local_count)");
     expect(radixScatterWGSL(0)).toContain("subgroupExclusiveAdd(matches)");
+    expect(radixScatterWGSL(0)).not.toMatch(/\btarget\b/);
   });
 
   it("uses the five Brush-style stages", () => {
@@ -32,6 +34,20 @@ describe("hybrid depth/tile radix pipeline", () => {
     expect(projection).toContain("contributes = sigma <= power_threshold");
     expect(emitIntersectionsWGSL).toContain(
       "contributes = sigma <= power_threshold",
+    );
+  });
+
+  it("stays within the default eight-storage-buffer stage limit", () => {
+    expect(projectionWGSL("compensated").match(/ptr<storage/g)).toHaveLength(8);
+    expect(emitIntersectionsWGSL.match(/ptr<storage/g)).toHaveLength(8);
+  });
+
+  it("scans projected opacity into compact visibility offsets", () => {
+    expect(scanVisibilityBlocksWGSL).toContain(
+      "input_values: ptr<storage, array<vec4<f32>>, read>",
+    );
+    expect(scanVisibilityBlocksWGSL).toContain(
+      "(*input_values)[first].w > 0.0",
     );
   });
 });

@@ -29,7 +29,6 @@ export class VisibleGaussianStage {
     private readonly renderer: WebGPURenderer,
     mode: DepthSortMode,
     gaussianCount: number,
-    visibleFlagsAttribute: StorageBufferAttribute,
     visibleOffsetsAttribute: StorageBufferAttribute,
     projectedMeanAttribute: StorageBufferAttribute,
     viewport: Node,
@@ -57,11 +56,6 @@ export class VisibleGaussianStage {
       linear: this.attributes.createIndirect("3dgs.visible-linear-dispatch"),
     };
 
-    const visibleFlags = storage(
-      visibleFlagsAttribute,
-      "uint",
-      gaussianCount,
-    ).toReadOnly();
     const visibleOffsets = storage(
       visibleOffsetsAttribute,
       "uint",
@@ -72,7 +66,11 @@ export class VisibleGaussianStage {
     );
     this.prepareNode = prepareKernel({
       gaussian_count: uint(gaussianCount),
-      visible_flags: visibleFlags,
+      projected_mean: storage(
+        projectedMeanAttribute,
+        "vec4",
+        gaussianCount,
+      ).toReadOnly(),
       visible_offsets: visibleOffsets,
       state: storage(this.dispatch.state, "uvec4", 1),
       radix_block_dispatch: storage(this.dispatch.radixBlock, "uvec4", 1),
@@ -89,7 +87,6 @@ export class VisibleGaussianStage {
       gid: instanceIndex,
       gaussian_count: uint(gaussianCount),
       viewport,
-      visible_flags: visibleFlags,
       visible_offsets: visibleOffsets,
       projected_mean: storage(
         projectedMeanAttribute,
