@@ -24,8 +24,12 @@ canvas {
   position: fixed;
   top: 16px;
   left: 16px;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   max-width: min(420px, calc(100vw - 64px));
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  box-sizing: border-box;
   gap: 8px;
   padding: 14px 16px;
   border: 1px solid rgb(255 255 255 / 12%);
@@ -78,7 +82,14 @@ small {
 }
 
 #kernel-profile {
+  min-height: 0;
   color: #a9d4b2;
+}
+
+#kernel-profile[open] {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 #kernel-profile summary {
@@ -87,7 +98,7 @@ small {
 }
 
 #kernel-timings {
-  max-height: min(52vh, 560px);
+  min-height: 0;
   margin: 8px 0 0;
   overflow: auto;
   font:
