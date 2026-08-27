@@ -163,10 +163,10 @@ Use `antialiasMode: "classic"` to reproduce the former fixed-footprint behavior.
 
 ## Sort modes
 
-Both modes use the same hybrid pipeline. Depth is sorted once per visible Gaussian, before intersections are
-emitted. Because emission follows that order, the later stable tile-ID sort preserves front-to-back order
-inside every tile. If `N_visible` Gaussians produce `K` intersections, the work is proportional to
-`depthPasses × N_visible + tilePasses × K`, rather than sorting depth `K` times.
+Here, "hybrid" means combining two sorting domains: depth is sorted once over visible Gaussians, then emitted
+intersections are sorted stably by tile ID. Because emission follows depth order, the tile sort preserves
+front-to-back order inside every tile. If `N_visible` Gaussians produce `K` intersections, the work is
+proportional to `depthPasses × N_visible + tilePasses × K`, rather than sorting depth `K` times.
 
 ### `float32`
 

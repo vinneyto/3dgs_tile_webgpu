@@ -14,7 +14,7 @@ import {
   RADIX_ELEMENTS_PER_THREAD,
 } from "../src/pipeline/constants";
 
-describe("hybrid depth/tile radix pipeline", () => {
+describe("depth/tile radix pipeline", () => {
   it("processes four records per thread with subgroup-stable scatter", () => {
     expect(RADIX_ELEMENTS_PER_THREAD).toBe(4);
     expect(RADIX_BLOCK_ITEMS).toBe(1024);
