@@ -18,6 +18,7 @@ import { TiledGaussianPipeline } from "./pipeline/TiledGaussianPipeline";
 import { WORKGROUP_SIZE } from "./pipeline/constants";
 import type {
   DepthSortMode,
+  GaussianPassDebugInfo,
   GaussianPassOptions,
   GaussianPassResources,
   GaussianPassStats,
@@ -188,6 +189,21 @@ export class GaussianPass extends PassNode {
     });
   }
 
+  /** CPU-side lifecycle information; unlike readStats(), this does not perform a GPU readback. */
+  getDebugInfo(): GaussianPassDebugInfo {
+    return (
+      this.pipeline?.getDebugInfo() ?? {
+        initialized: false,
+        width: 0,
+        height: 0,
+        tilesX: 0,
+        tilesY: 0,
+        tileStageRebuilds: 0,
+        radixPasses: 0,
+      }
+    );
+  }
+
   override dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -200,6 +216,7 @@ export class GaussianPass extends PassNode {
 
 export type {
   DepthSortMode,
+  GaussianPassDebugInfo,
   GaussianPassOptions,
   GaussianPassResources,
   GaussianPassStats,

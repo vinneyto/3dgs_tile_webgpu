@@ -12,6 +12,7 @@ import {
   type GaussianPass,
 } from "../../src/index";
 import { CanonicalGaussianPlyLoader } from "./CanonicalGaussianPlyLoader";
+import { DebugPanel } from "./DebugPanel";
 
 const MAX_INDIRECT_CAPACITY = 256 * 65_535;
 
@@ -19,6 +20,7 @@ export class GaussianSandbox {
   private readonly loader = new CanonicalGaussianPlyLoader();
   private readonly anchor = new Object3D();
   private readonly controls: OrbitControls;
+  private readonly debugPanel: DebugPanel;
   private pipeline: RenderPipeline | null = null;
   private pass: GaussianPass | null = null;
   private data: GaussianData | null = null;
@@ -27,16 +29,21 @@ export class GaussianSandbox {
     private readonly renderer: WebGPURenderer,
     private readonly camera: PerspectiveCamera,
     private readonly status: HTMLElement,
+    metrics: HTMLElement,
+    debugEnabled: boolean,
   ) {
     const scene = new Scene();
     scene.add(this.anchor);
     this.anchor.name = "PLY Gaussian cloud transform";
     this.controls = new OrbitControls(camera, renderer.domElement);
     this.controls.enableDamping = true;
+    this.debugPanel = new DebugPanel(renderer, metrics, debugEnabled);
 
-    renderer.setAnimationLoop(() => {
+    renderer.setAnimationLoop((time) => {
+      const encodeStart = performance.now();
       this.controls.update();
       this.pipeline?.render();
+      this.debugPanel.update(time, performance.now() - encodeStart);
     });
     addEventListener("resize", () => this.resize());
   }
@@ -44,16 +51,31 @@ export class GaussianSandbox {
   static async create(
     viewport: HTMLElement,
     status: HTMLElement,
+    metrics: HTMLElement,
   ): Promise<GaussianSandbox> {
     if (!navigator.gpu)
       throw new Error("WebGPU is unavailable in this browser");
-    const renderer = new WebGPURenderer({ antialias: false });
+    const debugEnabled =
+      new URLSearchParams(location.search).get("debug") !== "0";
+    const renderer = new WebGPURenderer({
+      antialias: false,
+      trackTimestamp: debugEnabled,
+    });
     await renderer.init();
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    // Tile rasterization cost scales with the number of physical pixels. A
+    // devicePixelRatio of 2 quadruples that work, so the performance sandbox
+    // defaults to one render pixel per CSS pixel and makes supersampling explicit.
+    renderer.setPixelRatio(readRenderPixelRatio());
     viewport.appendChild(renderer.domElement);
 
     const camera = new PerspectiveCamera(50, 1, 0.01, 10_000);
-    const sandbox = new GaussianSandbox(renderer, camera, status);
+    const sandbox = new GaussianSandbox(
+      renderer,
+      camera,
+      status,
+      metrics,
+      debugEnabled,
+    );
     sandbox.resize();
     return sandbox;
   }
@@ -98,6 +120,7 @@ export class GaussianSandbox {
       intersectionCapacity,
       background: [0.018, 0.022, 0.032, 1],
     });
+    this.debugPanel.setPass(this.pass);
     this.pipeline = new RenderPipeline(this.renderer);
     this.pipeline.outputNode = this.pass;
     this.setStatus(
@@ -162,4 +185,12 @@ export class GaussianSandbox {
     this.status.dataset.error = "true";
     console.error(error);
   }
+}
+
+function readRenderPixelRatio(): number {
+  const requested = Number(
+    new URLSearchParams(location.search).get("dpr") ?? "1",
+  );
+  if (!Number.isFinite(requested)) return 1;
+  return Math.min(2, Math.max(0.25, requested));
 }

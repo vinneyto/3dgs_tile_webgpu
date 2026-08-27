@@ -15,6 +15,7 @@ import { TileRasterizer } from "./TileRasterizer";
 import { TILE_SIZE } from "./constants";
 import type {
   DepthSortMode,
+  GaussianPassDebugInfo,
   GaussianPassResources,
   GaussianPassStats,
 } from "./types";
@@ -32,6 +33,7 @@ export class TiledGaussianPipeline {
   private height = 0;
   private tilesX = 0;
   private tilesY = 0;
+  private tileStageRebuilds = 0;
 
   constructor(
     private readonly renderer: WebGPURenderer,
@@ -54,6 +56,7 @@ export class TiledGaussianPipeline {
       this.scan.output,
       this.projection.projectedMean,
       this.projection.projectedConic,
+      this.projection.projectedColor,
       this.frame,
     );
     this.sorter = new RadixSorter(
@@ -93,6 +96,18 @@ export class TiledGaussianPipeline {
 
   readStats(): Promise<GaussianPassStats> {
     return this.intersections.readStats();
+  }
+
+  getDebugInfo(): GaussianPassDebugInfo {
+    return {
+      initialized: this.tileOffsets !== null && this.rasterizer !== null,
+      width: this.width,
+      height: this.height,
+      tilesX: this.tilesX,
+      tilesY: this.tilesY,
+      tileStageRebuilds: this.tileStageRebuilds,
+      radixPasses: this.sorter.passCount,
+    };
   }
 
   getResources(): GaussianPassResources | null {
@@ -166,5 +181,6 @@ export class TiledGaussianPipeline {
     this.height = height;
     this.tilesX = tilesX;
     this.tilesY = tilesY;
+    this.tileStageRebuilds++;
   }
 }

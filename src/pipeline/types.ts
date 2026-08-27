@@ -23,6 +23,17 @@ export interface GaussianPassStats {
   overflow: boolean;
 }
 
+/** CPU-side lifecycle counters. Reading these values never synchronizes with the GPU. */
+export interface GaussianPassDebugInfo {
+  initialized: boolean;
+  width: number;
+  height: number;
+  tilesX: number;
+  tilesY: number;
+  tileStageRebuilds: number;
+  radixPasses: number;
+}
+
 /** Three.js-owned intermediate attributes reusable by other node code or wgslFn kernels. */
 export interface GaussianPassResources {
   projectedMean: StorageBufferAttribute;

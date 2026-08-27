@@ -49,6 +49,7 @@ fn emit_intersections_${mode}(
   viewport: vec4<f32>,
   projected_mean: ptr<storage, array<vec4<f32>>, read>,
   projected_conic: ptr<storage, array<vec4<f32>>, read>,
+  projected_color: ptr<storage, array<vec4<f32>>, read>,
   tile_counts: ptr<storage, array<u32>, read>,
   intersection_offsets: ptr<storage, array<u32>, read>,
   state: ptr<storage, array<vec4<u32>>, read>,
@@ -56,17 +57,17 @@ fn emit_intersections_${mode}(
 ) -> u32 {
   if (gid >= gaussian_count || (*tile_counts)[gid] == 0u) { return 0u; }
   let mean = (*projected_mean)[gid];
-  let radius = (*projected_conic)[gid].w;
+  let radius = vec2<f32>((*projected_conic)[gid].w, (*projected_color)[gid].w);
   let center = mean.xy;
   let max_tile_x = i32(tiles.x) - 1;
   let max_tile_y = i32(tiles.y) - 1;
   let tile_min = vec2<i32>(
-    clamp(i32(floor((center.x - radius) / ${TILE_SIZE}.0)), 0, max_tile_x),
-    clamp(i32(floor((center.y - radius) / ${TILE_SIZE}.0)), 0, max_tile_y)
+    clamp(i32(floor((center.x - radius.x) / ${TILE_SIZE}.0)), 0, max_tile_x),
+    clamp(i32(floor((center.y - radius.y) / ${TILE_SIZE}.0)), 0, max_tile_y)
   );
   let tile_max = vec2<i32>(
-    clamp(i32(floor((center.x + radius) / ${TILE_SIZE}.0)), 0, max_tile_x),
-    clamp(i32(floor((center.y + radius) / ${TILE_SIZE}.0)), 0, max_tile_y)
+    clamp(i32(floor((center.x + radius.x) / ${TILE_SIZE}.0)), 0, max_tile_x),
+    clamp(i32(floor((center.y + radius.y) / ${TILE_SIZE}.0)), 0, max_tile_y)
   );
   var local_index = 0u;
   for (var tile_y = tile_min.y; tile_y <= tile_max.y; tile_y++) {

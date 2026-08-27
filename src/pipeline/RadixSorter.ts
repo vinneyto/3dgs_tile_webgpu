@@ -126,6 +126,10 @@ export class RadixSorter {
         : this.intersections.recordsB;
   }
 
+  get passCount(): number {
+    return this.passes.length;
+  }
+
   encode(): void {
     for (const pass of this.passes) {
       this.renderer.compute(pass.histogram, this.dispatch.radix);

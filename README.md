@@ -225,7 +225,7 @@ The sandbox loads its small `sample.ply` by default and enables the standard Thr
 explicitly:
 
 ```text
-http://localhost:5173/?ply=/my-cloud.ply&sort=packed16
+http://localhost:5173/?ply=/my-cloud.ply&sort=packed16&dpr=1
 ```
 
 Files addressed by URL belong in `sandbox/public/`; the file picker and drag-and-drop do not require copying
@@ -236,6 +236,14 @@ vertex data. Matching `lidar_sim`, it performs these boundary conversions:
 - `opacity`: `sigmoid(opacityLogit)`;
 - `rot_0..3`: canonical PLY `wxyz` to normalized Three.js/renderer `xyzw`;
 - `f_dc_*` and channel-major `f_rest_*`: Gaussian-major SH coefficient vectors.
+
+The HUD also reports CPU encoding time, Three.js compute-call count, GPU compute/present time (when the adapter
+supports timestamp queries), requested/emitted intersection counts, capacity overflow, tile-stage rebuilds and
+Three.js-tracked GPU memory. The memory delta is captured after a 30-frame warm-up, making accidental per-frame
+resource growth visible. Diagnostic intersection readback runs asynchronously every 1.5 seconds. Append
+`?debug=0` to disable timestamp queries and all diagnostic readbacks when measuring the undisturbed renderer.
+The demo defaults to `dpr=1`; raising it to `dpr=2` quadruples the number of rasterized pixels and is therefore
+an explicit quality/performance choice rather than an automatic use of the display pixel ratio.
 
 ## Current scope
 

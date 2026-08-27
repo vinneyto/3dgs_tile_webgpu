@@ -37,6 +37,7 @@ export class IntersectionStage {
     intersectionOffsetsAttribute: StorageBufferAttribute,
     projectedMeanAttribute: StorageBufferAttribute,
     projectedConicAttribute: StorageBufferAttribute,
+    projectedColorAttribute: StorageBufferAttribute,
     frame: FrameUniforms,
   ) {
     this.dispatch = {
@@ -85,6 +86,11 @@ export class IntersectionStage {
       ).toReadOnly(),
       projected_conic: storage(
         projectedConicAttribute,
+        "vec4",
+        data.count,
+      ).toReadOnly(),
+      projected_color: storage(
+        projectedColorAttribute,
         "vec4",
         data.count,
       ).toReadOnly(),

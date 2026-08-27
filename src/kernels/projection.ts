@@ -63,18 +63,41 @@ fn project_gaussians(
   let j1 = vec3<f32>(0.0, -fy * inverse_depth, -fy * view.y * inverse_depth * inverse_depth);
   let covariance_j0 = covariance_view * j0;
   let covariance_j1 = covariance_view * j1;
-  let sigma00 = dot(j0, covariance_j0) + 0.3;
-  let sigma01 = dot(j0, covariance_j1);
-  let sigma11 = dot(j1, covariance_j1) + 0.3;
+  var sigma00 = dot(j0, covariance_j0) + 0.3;
+  var sigma01 = dot(j0, covariance_j1);
+  var sigma11 = dot(j1, covariance_j1) + 0.3;
+  let max_f32 = 3.402823e+38;
+  let covariance_is_finite =
+    sigma00 == sigma00 && abs(sigma00) <= max_f32 &&
+    sigma01 == sigma01 && abs(sigma01) <= max_f32 &&
+    sigma11 == sigma11 && abs(sigma11) <= max_f32;
+  if (!covariance_is_finite) { return 0u; }
+
+  // Match the Metal reference: bound the projected footprint before inversion.
+  // Without the upper bound, Gaussians close to the camera can expand across
+  // the entire screen and produce both excessive intersections and fogging.
+  let eigen_midpoint = 0.5 * (sigma00 + sigma11);
+  let eigen_radius = sqrt(
+    0.25 * (sigma00 - sigma11) * (sigma00 - sigma11) + sigma01 * sigma01
+  );
+  let lambda_min = clamp(eigen_midpoint - eigen_radius, 1e-6, 1e4);
+  let lambda_max = clamp(eigen_midpoint + eigen_radius, 1e-6, 1e4);
+  let theta = 0.5 * atan2(2.0 * sigma01, sigma00 - sigma11);
+  let cs = cos(theta);
+  let sn = sin(theta);
+  sigma00 = lambda_min * sn * sn + lambda_max * cs * cs;
+  sigma01 = (lambda_max - lambda_min) * cs * sn;
+  sigma11 = lambda_min * cs * cs + lambda_max * sn * sn;
   let determinant = sigma00 * sigma11 - sigma01 * sigma01;
   if (determinant <= 1e-8) { return 0u; }
-  let discriminant = sqrt(max(0.0, (sigma00 - sigma11) * (sigma00 - sigma11) + 4.0 * sigma01 * sigma01));
-  let major_variance = max(0.5 * (sigma00 + sigma11 + discriminant), 1e-8);
-  let radius = ceil(3.0 * sqrt(major_variance));
-  if (radius <= 0.0) { return 0u; }
+  let radius_x = ceil(3.0 * sqrt(clamp(sigma00, 1e-12, 1e4)));
+  let radius_y = ceil(3.0 * sqrt(clamp(sigma11, 1e-12, 1e4)));
+  if (radius_x <= 0.0 || radius_y <= 0.0) { return 0u; }
 
-  let min_pixel = center - vec2<f32>(radius);
-  let max_pixel = center + vec2<f32>(radius);
+  // Axis-specific radii avoid the square major-eigenvalue AABB, which can
+  // multiply K for elongated Gaussians.
+  let min_pixel = center - vec2<f32>(radius_x, radius_y);
+  let max_pixel = center + vec2<f32>(radius_x, radius_y);
   if (max_pixel.x < 0.0 || max_pixel.y < 0.0 || min_pixel.x >= width || min_pixel.y >= height) { return 0u; }
   let max_tile_x = i32(tiles.x) - 1;
   let max_tile_y = i32(tiles.y) - 1;
@@ -90,7 +113,8 @@ fn project_gaussians(
   let count = u32(tile_extent.x * tile_extent.y);
   if (count == 0u) { return 0u; }
 
-  let direction = normalize(camera_local.xyz - mean_local);
+  // Canonical 3DGS evaluates SH in the camera-to-point direction.
+  let direction = normalize(mean_local - camera_local.xyz);
   let x = direction.x;
   let y = direction.y;
   let z = direction.z;
@@ -131,9 +155,12 @@ fn project_gaussians(
     sigma11 * inverse_determinant,
     -sigma01 * inverse_determinant,
     sigma00 * inverse_determinant,
-    radius
+    radius_x
   );
-  (*projected_color)[gid] = vec4<f32>(max(color + vec3<f32>(0.5), vec3<f32>(0.0)), 1.0);
+  (*projected_color)[gid] = vec4<f32>(
+    clamp(color + vec3<f32>(0.5), vec3<f32>(0.0), vec3<f32>(1.0)),
+    radius_y
+  );
   (*tile_counts)[gid] = count;
   return 0u;
 }
