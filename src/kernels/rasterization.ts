@@ -13,15 +13,6 @@ export function rasterizationWGSL(
     : "";
 
   return /* wgsl */ `
-fn compact_morton_bits_16(value: u32) -> u32 {
-  var result = value & 0x55555555u;
-  result = (result | (result >> 1u)) & 0x33333333u;
-  result = (result | (result >> 2u)) & 0x0f0f0f0fu;
-  result = (result | (result >> 4u)) & 0x00ff00ffu;
-  result = (result | (result >> 8u)) & 0x0000ffffu;
-  return result;
-}
-
 fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
   local_index: u32,
   group_id: vec3<u32>,
@@ -162,6 +153,15 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
     ${depthStore}
   }
   return 0u;
+}
+
+fn compact_morton_bits_16(value: u32) -> u32 {
+  var result = value & 0x55555555u;
+  result = (result | (result >> 1u)) & 0x33333333u;
+  result = (result | (result >> 2u)) & 0x0f0f0f0fu;
+  result = (result | (result >> 4u)) & 0x00ff00ffu;
+  result = (result | (result >> 8u)) & 0x0000ffffu;
+  return result;
 }
 `;
 }

@@ -27,6 +27,7 @@ describe("rasterizationWGSL", () => {
     expect(Math.max(...firstSubgroup.map(([, y]) => y))).toBe(3);
 
     const source = rasterizationWGSL("float32", false);
+    expect(source.trimStart()).toMatch(/^fn rasterize_tiles_float32\(/);
     expect(source).toContain("compact_morton_bits_16(local_index)");
     expect(source).toContain("compact_morton_bits_16(local_index >> 1u)");
   });
