@@ -240,9 +240,9 @@ vertex data. Matching `lidar_sim`, it performs these boundary conversions:
 The HUD also reports CPU encoding time, Three.js compute-call count, GPU compute/present time (when the adapter
 supports timestamp queries), requested/emitted intersection counts, capacity overflow, tile-stage rebuilds and
 Three.js-tracked GPU memory. Expand **Kernel timings** for timestamp-query timings of every named compute group.
-Append `?profile=kernels` to split the normally batched prepare/emit and radix scan groups into separate compute
-passes and measure every WGSL kernel independently. This profiling mode adds pass boundaries and should not be
-used as the final production-performance number.
+Append `?profile=kernels` to split the normally batched prepare/emit group into separate compute passes. Radix
+stages already require distinct passes because their direct and indirect dispatch dimensions differ. Profiling
+mode adds a pass boundary and should not be used as the final production-performance number.
 
 The memory delta is captured after a 30-frame warm-up, making accidental per-frame resource growth visible.
 Diagnostic intersection readback runs asynchronously every 1.5 seconds; `?stats=0` disables that readback while

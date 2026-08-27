@@ -167,8 +167,8 @@ export class DebugPanel {
       ...rows,
       "",
       profileKernels
-        ? "?profile=kernels adds compute-pass boundaries for exact kernel timings"
-        : "Use ?profile=kernels to split batched prepare/emit and radix scans",
+        ? "?profile=kernels splits the batched prepare/emit group"
+        : "Radix stages already have individual timing boundaries",
     ].join("\n");
   }
 }
