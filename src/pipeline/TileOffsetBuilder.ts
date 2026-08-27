@@ -7,11 +7,11 @@ import type {
 import { instanceIndex, storage, uint, wgslFn } from "three/tsl";
 import {
   clearTileOffsetsWGSL,
-  fillTileOffsetsWGSL,
   tileBoundariesWGSL,
 } from "../kernels/tileOffsets";
 import { AttributePool } from "./AttributePool";
 import { WORKGROUP_SIZE } from "./constants";
+import { SuffixMinStage } from "./SuffixMinStage";
 import type { DepthSortMode, DispatchResources } from "./types";
 
 export class TileOffsetBuilder {
@@ -20,7 +20,7 @@ export class TileOffsetBuilder {
   private readonly attributes = new AttributePool();
   private readonly clearNode: ComputeNode;
   private readonly boundariesNode: ComputeNode;
-  private readonly fillNode: ComputeNode;
+  private readonly suffixMin: SuffixMinStage;
 
   constructor(
     private readonly renderer: WebGPURenderer,
@@ -38,7 +38,8 @@ export class TileOffsetBuilder {
     const clearKernel = wgslFn<Record<string, Node>>(clearTileOffsetsWGSL);
     this.clearNode = clearKernel({
       index: instanceIndex,
-      offset_count: uint(tileCount + 1),
+      tile_count: uint(tileCount),
+      state: storage(dispatch.state, "uvec4", 1).toReadOnly(),
       offsets,
     })
       .compute(tileCount + 1, [WORKGROUP_SIZE])
@@ -61,26 +62,19 @@ export class TileOffsetBuilder {
       .computeKernel([WORKGROUP_SIZE])
       .setName(`3DGS find tile boundaries WGSL (${mode})`);
 
-    const fillKernel = wgslFn<Record<string, Node>>(fillTileOffsetsWGSL);
-    this.fillNode = fillKernel({
-      tile_count: uint(tileCount),
-      state: storage(dispatch.state, "uvec4", 1).toReadOnly(),
-      offsets,
-    })
-      .compute(1)
-      .setName("3DGS fill tile offset gaps WGSL");
+    this.suffixMin = new SuffixMinStage(this.offsets, tileCount + 1);
   }
 
   encode(): void {
     this.renderer.compute(this.clearNode);
     this.renderer.compute(this.boundariesNode, this.dispatch.linear);
-    this.renderer.compute(this.fillNode);
+    this.suffixMin.encode(this.renderer);
   }
 
   dispose(): void {
     this.clearNode.dispose();
     this.boundariesNode.dispose();
-    this.fillNode.dispose();
+    this.suffixMin.dispose();
     this.attributes.dispose();
   }
 }

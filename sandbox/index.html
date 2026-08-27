@@ -13,6 +13,11 @@
       <button id="open-ply" type="button">Open PLY</button>
       <input id="ply-file" type="file" accept=".ply" hidden />
       <small>Orbit: drag · Zoom: wheel · Drop a canonical 3DGS PLY</small>
+      <pre id="metrics" aria-label="WebGPU diagnostics"></pre>
+      <details id="kernel-profile">
+        <summary>Kernel timings</summary>
+        <pre id="kernel-timings" aria-label="WebGPU kernel timings"></pre>
+      </details>
     </section>
     <script type="module" src="/src/main.ts"></script>
   </body>

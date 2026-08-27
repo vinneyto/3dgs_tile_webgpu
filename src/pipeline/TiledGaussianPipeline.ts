@@ -14,7 +14,9 @@ import { TileOffsetBuilder } from "./TileOffsetBuilder";
 import { TileRasterizer } from "./TileRasterizer";
 import { TILE_SIZE } from "./constants";
 import type {
+  AntialiasMode,
   DepthSortMode,
+  GaussianPassDebugInfo,
   GaussianPassResources,
   GaussianPassStats,
 } from "./types";
@@ -32,6 +34,7 @@ export class TiledGaussianPipeline {
   private height = 0;
   private tilesX = 0;
   private tilesY = 0;
+  private tileStageRebuilds = 0;
 
   constructor(
     private readonly renderer: WebGPURenderer,
@@ -39,11 +42,13 @@ export class TiledGaussianPipeline {
     private readonly data: GaussianData,
     anchor: Object3D,
     private readonly mode: DepthSortMode,
+    antialiasMode: AntialiasMode,
     private readonly capacity: number,
     background: readonly [number, number, number, number],
+    private readonly profileKernels: boolean,
   ) {
     this.frame = new FrameUniforms(camera, data, anchor, background);
-    this.projection = new ProjectionStage(data, this.frame);
+    this.projection = new ProjectionStage(data, this.frame, antialiasMode);
     this.scan = new ExclusiveScanStage(this.projection.tileCounts, data.count);
     this.intersections = new IntersectionStage(
       renderer,
@@ -54,6 +59,7 @@ export class TiledGaussianPipeline {
       this.scan.output,
       this.projection.projectedMean,
       this.projection.projectedConic,
+      this.projection.projectedColor,
       this.frame,
     );
     this.sorter = new RadixSorter(
@@ -85,14 +91,27 @@ export class TiledGaussianPipeline {
     }
     this.projection.encode(this.renderer);
     this.scan.encode(this.renderer);
-    this.intersections.encode();
-    this.sorter.encode();
+    this.intersections.encode(this.profileKernels);
+    this.sorter.encode(this.profileKernels);
     this.tileOffsets.encode();
     this.rasterizer.encode(this.tilesX, this.tilesY);
   }
 
   readStats(): Promise<GaussianPassStats> {
     return this.intersections.readStats();
+  }
+
+  getDebugInfo(): GaussianPassDebugInfo {
+    return {
+      initialized: this.tileOffsets !== null && this.rasterizer !== null,
+      width: this.width,
+      height: this.height,
+      tilesX: this.tilesX,
+      tilesY: this.tilesY,
+      tileStageRebuilds: this.tileStageRebuilds,
+      radixPasses: this.sorter.passCount,
+      profileKernels: this.profileKernels,
+    };
   }
 
   getResources(): GaussianPassResources | null {
@@ -166,5 +185,6 @@ export class TiledGaussianPipeline {
     this.height = height;
     this.tilesX = tilesX;
     this.tilesY = tilesY;
+    this.tileStageRebuilds++;
   }
 }

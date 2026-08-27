@@ -1,19 +1,27 @@
 import type {
+  ColorSpace,
   IndirectStorageBufferAttribute,
   StorageBufferAttribute,
 } from "three/webgpu";
 
 export type DepthSortMode = "float32" | "packed16";
+export type AntialiasMode = "compensated" | "classic";
 
 export interface GaussianPassOptions {
   /** Exact float32 depth, or a packed 16-bit tile + 16-bit quantized depth key. */
   depthSortMode?: DepthSortMode;
+  /** Preserve subpixel Gaussian energy, or retain the original fixed-footprint 3DGS low-pass behavior. */
+  antialiasMode?: AntialiasMode;
   /** Maximum emitted tile/Gaussian intersections. Buffers are allocated once at this capacity. */
   intersectionCapacity?: number;
   /** RGBA clear color composited behind the cloud. Defaults to transparent black. */
   background?: readonly [number, number, number, number];
   /** Create a standard perspective-depth texture exposed as pass.getTextureNode("depth"). */
   outputDepth?: boolean;
+  /** Encoding of reconstructed SH RGB values. The pass converts it to Three.js working-linear; canonical 3DGS PLY is sRGB. */
+  colorSpace?: ColorSpace;
+  /** Split normally batched compute groups so timestamp tools can measure every kernel. */
+  profileKernels?: boolean;
 }
 
 export interface GaussianPassStats {
@@ -21,6 +29,18 @@ export interface GaussianPassStats {
   requestedIntersections: number;
   intersectionCapacity: number;
   overflow: boolean;
+}
+
+/** CPU-side lifecycle counters. Reading these values never synchronizes with the GPU. */
+export interface GaussianPassDebugInfo {
+  initialized: boolean;
+  width: number;
+  height: number;
+  tilesX: number;
+  tilesY: number;
+  tileStageRebuilds: number;
+  radixPasses: number;
+  profileKernels: boolean;
 }
 
 /** Three.js-owned intermediate attributes reusable by other node code or wgslFn kernels. */
@@ -54,5 +74,7 @@ export type IntersectionBuffers =
 export interface DispatchResources {
   state: StorageBufferAttribute;
   radix: IndirectStorageBufferAttribute;
+  radixBlock: IndirectStorageBufferAttribute;
+  radixScan: IndirectStorageBufferAttribute;
   linear: IndirectStorageBufferAttribute;
 }

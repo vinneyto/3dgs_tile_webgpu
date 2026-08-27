@@ -91,6 +91,7 @@ scene.add(cloudTransform); // an empty positioning object; it has no geometry
 
 const pass = gaussianPass(renderer, camera, data, cloudTransform, {
   depthSortMode: "float32",
+  antialiasMode: "compensated",
   intersectionCapacity: 4_000_000,
   background: [0, 0, 0, 0],
   outputDepth: true,
@@ -110,10 +111,13 @@ const bloomNode = bloom(pass, 0.25);
 pipeline.outputNode = pass.add(bloomNode);
 ```
 
-The named texture outputs are normal Three.js texture nodes:
+The pass itself and `getColorNode()` expose color-managed working-linear RGB for composition with other
+Three.js nodes. `getTextureNode("output")` is the raw encoded `rgba16float` storage texture, which is useful for
+custom WGSL consumers that want to perform their own color conversion:
 
 ```ts
-const colorNode = pass.getTextureNode("output");
+const colorNode = pass.getColorNode();
+const rawColorNode = pass.getTextureNode("output");
 const depthNode = pass.getTextureNode("depth"); // requires outputDepth: true
 ```
 
@@ -141,6 +145,17 @@ The parser is responsible for applying source-format activations such as `exp(lo
 The empty `Object3D` passed to the pass supplies the cloud's full local-to-world transform. Translation,
 rotation, and non-uniform scale are included in projected covariance; the source Gaussian buffers remain in
 local space.
+
+## Antialiasing
+
+`antialiasMode: "compensated"` is the default. The projection kernel retains the classic 3DGS `0.3 px²`
+low-pass covariance so subpixel splats do not flicker, but scales peak opacity by
+`sqrt(det(originalCovariance) / det(filteredCovariance))`. A Gaussian therefore fades as its projected area
+shrinks instead of remaining an opaque, approximately 4×4-pixel dot. Splats whose compensated peak alpha is
+below `1/255` are culled before intersection emission and sorting.
+
+Use `antialiasMode: "classic"` to reproduce the former fixed-footprint behavior. In the sandbox, append
+`?aa=classic` for an immediate comparison.
 
 ## Sort modes
 
@@ -225,7 +240,7 @@ The sandbox loads its small `sample.ply` by default and enables the standard Thr
 explicitly:
 
 ```text
-http://localhost:5173/?ply=/my-cloud.ply&sort=packed16
+http://localhost:5173/?ply=/my-cloud.ply&sort=packed16&dpr=1
 ```
 
 Files addressed by URL belong in `sandbox/public/`; the file picker and drag-and-drop do not require copying
@@ -236,6 +251,25 @@ vertex data. Matching `lidar_sim`, it performs these boundary conversions:
 - `opacity`: `sigmoid(opacityLogit)`;
 - `rot_0..3`: canonical PLY `wxyz` to normalized Three.js/renderer `xyzw`;
 - `f_dc_*` and channel-major `f_rest_*`: Gaussian-major SH coefficient vectors.
+
+The HUD also reports CPU encoding time, Three.js compute-call count, GPU compute/present time (when the adapter
+supports timestamp queries), requested/emitted intersection counts, capacity overflow, tile-stage rebuilds and
+Three.js-tracked GPU memory. Expand **Kernel timings** for timestamp-query timings of every named compute group.
+Append `?profile=kernels` to split the normally batched prepare/emit group into separate compute passes. Radix
+stages already require distinct passes because their direct and indirect dispatch dimensions differ. Profiling
+mode adds a pass boundary and should not be used as the final production-performance number.
+
+The memory delta is captured after a 30-frame warm-up, making accidental per-frame resource growth visible.
+Diagnostic intersection readback runs asynchronously every 1.5 seconds; `?stats=0` disables that readback while
+retaining GPU timestamps. Append `?debug=0` to disable all diagnostics when measuring the undisturbed renderer.
+The demo defaults to `dpr=1`; raising it to `dpr=2` quadruples the number of rasterized pixels and is therefore
+an explicit quality/performance choice rather than an automatic use of the display pixel ratio.
+
+Canonical 3DGS SH coefficients reconstruct sRGB values. The output is an `rgba16float` storage texture, for
+which WebGPU has no hardware sRGB sampling format. `GaussianPass` therefore keeps the physical texture raw and
+explicitly decodes the configured `colorSpace` when exposing the pass/getColorNode output to Three.js. Later
+passes receive working-linear RGB and `RenderPipeline` performs exactly one display transform. Pass
+`colorSpace` explicitly when supplying coefficients trained in a different color space.
 
 ## Current scope
 

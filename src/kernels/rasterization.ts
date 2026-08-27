@@ -1,4 +1,4 @@
-import { TILE_SIZE } from "../pipeline/constants";
+import { TILE_SIZE, WORKGROUP_SIZE } from "../pipeline/constants";
 import type { DepthSortMode } from "../pipeline/types";
 
 export function rasterizationWGSL(
@@ -29,6 +29,10 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
   projected_color: ptr<storage, array<vec4<f32>>, read>,
   records: ptr<storage, array<${recordType}>, read>,
   tile_offsets: ptr<storage, array<u32>, read>,
+  shared_mean: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
+  shared_conic: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
+  shared_color: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
+  shared_active: ptr<workgroup, array<u32, ${WORKGROUP_SIZE}>>,
   color_output: texture_storage_2d<rgba16float, write>${depthParameter}
 ) -> u32 {
   let local_x = local_index % ${TILE_SIZE}u;
@@ -37,9 +41,7 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
     group_id.x * ${TILE_SIZE}u + local_x,
     group_id.y * ${TILE_SIZE}u + local_y
   );
-  if (pixel.x >= u32(viewport.x) || pixel.y >= u32(viewport.y)) {
-    return 0u;
-  }
+  let active_pixel = pixel.x < u32(viewport.x) && pixel.y < u32(viewport.y);
 
   let tile = group_id.y * tiles.x + group_id.x;
   let begin = (*tile_offsets)[tile];
@@ -49,46 +51,100 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
   var transmittance = 1.0;
   var depth = 1.0;
   var depth_written = false;
+  var done = false;
 
-  for (var intersection = begin; intersection < end; intersection++) {
-    let gaussian_id = ${gaussianId};
-    let mean = (*projected_mean)[gaussian_id];
-    let delta = pixel_center - mean.xy;
-    let conic = (*projected_conic)[gaussian_id].xyz;
-    let power = -0.5 * (
-      conic.x * delta.x * delta.x +
-      2.0 * conic.y * delta.x * delta.y +
-      conic.z * delta.y * delta.y
-    );
-    if (power > 0.0) { continue; }
-    let alpha = min(0.99, mean.w * exp(power));
-    if (alpha < (1.0 / 255.0)) { continue; }
-
-    if (!depth_written) {
-      let view_z = -mean.z;
-      depth = clamp(
-        ((viewport.z + view_z) * viewport.w) /
-          ((viewport.w - viewport.z) * view_z),
-        0.0,
-        1.0
-      );
-      depth_written = true;
+  for (var batch_start = begin; batch_start < end; batch_start += ${WORKGROUP_SIZE}u) {
+    let load_index = batch_start + local_index;
+    if (load_index < end) {
+      let gaussian_id = ${gaussianId.replaceAll("intersection", "load_index")};
+      (*shared_mean)[local_index] = (*projected_mean)[gaussian_id];
+      (*shared_conic)[local_index] = (*projected_conic)[gaussian_id];
+      (*shared_color)[local_index] = (*projected_color)[gaussian_id];
     }
+    if (local_index == 0u) {
+      (*shared_active)[0] = select(
+        0u,
+        1u,
+        batch_start + ${WORKGROUP_SIZE}u < end
+      );
+    }
+    let has_next_batch = workgroupUniformLoad(&(*shared_active)[0]);
 
-    accumulated += (*projected_color)[gaussian_id].xyz * transmittance * alpha;
-    transmittance *= 1.0 - alpha;
-    if (transmittance < 1e-4) { break; }
+    let batch_count = min(${WORKGROUP_SIZE}u, end - batch_start);
+    if (active_pixel && !done) {
+      for (var batch_index = 0u; batch_index < batch_count; batch_index++) {
+        let mean = (*shared_mean)[batch_index];
+        let delta = pixel_center - mean.xy;
+        let conic = (*shared_conic)[batch_index].xyz;
+        let power = -0.5 * (
+          conic.x * delta.x * delta.x +
+          2.0 * conic.y * delta.x * delta.y +
+          conic.z * delta.y * delta.y
+        );
+        if (power > 0.0) { continue; }
+        let alpha = min(0.99, mean.w * exp(power));
+        if (alpha < (1.0 / 255.0)) { continue; }
+
+        if (!depth_written) {
+          let view_z = -mean.z;
+          depth = clamp(
+            ((viewport.z + view_z) * viewport.w) /
+              ((viewport.w - viewport.z) * view_z),
+            0.0,
+            1.0
+          );
+          depth_written = true;
+        }
+
+        accumulated += (*shared_color)[batch_index].xyz * transmittance * alpha;
+        transmittance *= 1.0 - alpha;
+        if (transmittance < 1e-4) {
+          done = true;
+          break;
+        }
+      }
+    }
+    if (has_next_batch == 0u) { break; }
+
+    (*shared_active)[local_index] = select(
+      0u,
+      1u,
+      active_pixel && !done
+    );
+    workgroupBarrier();
+
+    if (local_index < 8u) {
+      let first_lane = local_index * 32u;
+      var subgroup_active = 0u;
+      for (var lane_offset = 0u; lane_offset < 32u; lane_offset++) {
+        subgroup_active |= (*shared_active)[first_lane + lane_offset];
+      }
+      (*shared_active)[local_index] = subgroup_active;
+    }
+    workgroupBarrier();
+
+    if (local_index == 0u) {
+      var tile_active = 0u;
+      for (var subgroup = 0u; subgroup < 8u; subgroup++) {
+        tile_active |= (*shared_active)[subgroup];
+      }
+      (*shared_active)[0] = tile_active;
+    }
+    let tile_active = workgroupUniformLoad(&(*shared_active)[0]);
+    if (tile_active == 0u) { break; }
   }
 
-  let background_alpha = clamp(background.w, 0.0, 1.0);
-  accumulated += background.xyz * transmittance * background_alpha;
-  let alpha = 1.0 - transmittance * (1.0 - background_alpha);
-  textureStore(
-    color_output,
-    vec2<i32>(pixel),
-    vec4<f32>(accumulated, alpha)
-  );
-  ${depthStore}
+  if (active_pixel) {
+    let background_alpha = clamp(background.w, 0.0, 1.0);
+    accumulated += background.xyz * transmittance * background_alpha;
+    let alpha = 1.0 - transmittance * (1.0 - background_alpha);
+    textureStore(
+      color_output,
+      vec2<i32>(pixel),
+      vec4<f32>(accumulated, alpha)
+    );
+    ${depthStore}
+  }
   return 0u;
 }
 `;

@@ -2,22 +2,30 @@ import {
   FloatType,
   HalfFloatType,
   NearestFilter,
+  NoColorSpace,
   Object3D,
   PassNode,
   PerspectiveCamera,
   RedFormat,
   Scene,
+  SRGBColorSpace,
   StorageTexture,
   Vector2,
+  type Node,
+  type NodeBuilder,
   type NodeFrame,
+  type ColorSpace,
   type Texture,
   type WebGPURenderer,
 } from "three/webgpu";
+import { colorSpaceToWorking } from "three/tsl";
 import { GaussianData } from "./GaussianData";
 import { TiledGaussianPipeline } from "./pipeline/TiledGaussianPipeline";
 import { WORKGROUP_SIZE } from "./pipeline/constants";
 import type {
+  AntialiasMode,
   DepthSortMode,
+  GaussianPassDebugInfo,
   GaussianPassOptions,
   GaussianPassResources,
   GaussianPassStats,
@@ -33,13 +41,17 @@ export class GaussianPass extends PassNode {
   readonly gaussianData: GaussianData;
   readonly anchor: Object3D;
   readonly depthSortMode: DepthSortMode;
+  readonly antialiasMode: AntialiasMode;
   readonly intersectionCapacity: number;
   readonly background: readonly [number, number, number, number];
   readonly outputDepth: boolean;
+  readonly colorSpace: ColorSpace;
+  readonly profileKernels: boolean;
   readonly colorTexture: StorageTexture;
   readonly depthTexture: StorageTexture | null;
 
   private readonly ownerRenderer: WebGPURenderer;
+  private workingColorNode: Node | null = null;
   private pipeline: TiledGaussianPipeline | null = null;
   private disposed = false;
 
@@ -58,6 +70,12 @@ export class GaussianPass extends PassNode {
     });
 
     const depthSortMode = options.depthSortMode ?? "float32";
+    const antialiasMode = options.antialiasMode ?? "compensated";
+    if (antialiasMode !== "compensated" && antialiasMode !== "classic") {
+      throw new RangeError(
+        'antialiasMode must be either "compensated" or "classic"',
+      );
+    }
     const intersectionCapacity =
       options.intersectionCapacity ?? gaussianData.count * 16;
     if (!Number.isInteger(intersectionCapacity) || intersectionCapacity <= 0) {
@@ -79,14 +97,20 @@ export class GaussianPass extends PassNode {
     this.gaussianData = gaussianData;
     this.anchor = anchor;
     this.depthSortMode = depthSortMode;
+    this.antialiasMode = antialiasMode;
     this.intersectionCapacity = intersectionCapacity;
     this.background = options.background ?? [0, 0, 0, 0];
     this.outputDepth = options.outputDepth ?? false;
+    this.colorSpace = options.colorSpace ?? SRGBColorSpace;
+    this.profileKernels = options.profileKernels ?? false;
 
     this.renderTarget.texture.dispose();
     this.colorTexture = new StorageTexture(1, 1);
     this.colorTexture.name = "GaussianPass.output";
     this.colorTexture.type = HalfFloatType;
+    // rgba16float has no hardware sRGB sampling variant. Keep the storage
+    // texture raw and decode its declared color space explicitly in setup().
+    this.colorTexture.colorSpace = NoColorSpace;
     this.colorTexture.generateMipmaps = false;
     Object.assign(this.colorTexture, { mipmapsAutoUpdate: false });
     this.colorTexture.isRenderTargetTexture = true;
@@ -125,6 +149,23 @@ export class GaussianPass extends PassNode {
     this.depthTexture?.setSize(width, height, 1);
   }
 
+  /** Color-managed output in Three.js' linear working color space. */
+  getColorNode(): Node {
+    this.workingColorNode ??= colorSpaceToWorking(
+      this.getTextureNode("output"),
+      this.colorSpace,
+    );
+    return this.workingColorNode;
+  }
+
+  override setup(builder: NodeBuilder): Node {
+    const rawOutput = super.setup(builder);
+    if (rawOutput === null || rawOutput === undefined) {
+      throw new Error("GaussianPass color output node is unavailable");
+    }
+    return this.getColorNode();
+  }
+
   override updateBefore(frame: NodeFrame): boolean | undefined {
     const renderer = frame.renderer as WebGPURenderer | null;
     if (renderer === null) {
@@ -159,8 +200,10 @@ export class GaussianPass extends PassNode {
       this.gaussianData,
       this.anchor,
       this.depthSortMode,
+      this.antialiasMode,
       this.intersectionCapacity,
       this.background,
+      this.profileKernels,
     );
     this.pipeline.prepareFrame(
       width,
@@ -188,6 +231,22 @@ export class GaussianPass extends PassNode {
     });
   }
 
+  /** CPU-side lifecycle information; unlike readStats(), this does not perform a GPU readback. */
+  getDebugInfo(): GaussianPassDebugInfo {
+    return (
+      this.pipeline?.getDebugInfo() ?? {
+        initialized: false,
+        width: 0,
+        height: 0,
+        tilesX: 0,
+        tilesY: 0,
+        tileStageRebuilds: 0,
+        radixPasses: 0,
+        profileKernels: this.profileKernels,
+      }
+    );
+  }
+
   override dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -199,7 +258,9 @@ export class GaussianPass extends PassNode {
 }
 
 export type {
+  AntialiasMode,
   DepthSortMode,
+  GaussianPassDebugInfo,
   GaussianPassOptions,
   GaussianPassResources,
   GaussianPassStats,

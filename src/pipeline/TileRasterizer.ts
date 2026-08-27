@@ -12,10 +12,11 @@ import {
   uvec2,
   vec4,
   wgslFn,
+  workgroupArray,
   workgroupId,
 } from "three/tsl";
 import { rasterizationWGSL } from "../kernels/rasterization";
-import { TILE_SIZE } from "./constants";
+import { TILE_SIZE, WORKGROUP_SIZE } from "./constants";
 import type { FrameUniforms } from "./FrameUniforms";
 import type { DepthSortMode } from "./types";
 
@@ -71,6 +72,10 @@ export class TileRasterizer {
         "uint",
         tileOffsetsAttribute.count,
       ).toReadOnly(),
+      shared_mean: workgroupArray("vec4", WORKGROUP_SIZE),
+      shared_conic: workgroupArray("vec4", WORKGROUP_SIZE),
+      shared_color: workgroupArray("vec4", WORKGROUP_SIZE),
+      shared_active: workgroupArray("uint", WORKGROUP_SIZE),
       color_output: storageTexture(colorTexture),
     };
     if (depthTexture !== null) {

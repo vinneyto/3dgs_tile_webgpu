@@ -37,11 +37,14 @@ export class IntersectionStage {
     intersectionOffsetsAttribute: StorageBufferAttribute,
     projectedMeanAttribute: StorageBufferAttribute,
     projectedConicAttribute: StorageBufferAttribute,
+    projectedColorAttribute: StorageBufferAttribute,
     frame: FrameUniforms,
   ) {
     this.dispatch = {
       state: this.attributes.createUint("3dgs.dispatch-state", 1, 4),
       radix: this.attributes.createIndirect("3dgs.radix-dispatch"),
+      radixBlock: this.attributes.createIndirect("3dgs.radix-block-dispatch"),
+      radixScan: this.attributes.createIndirect("3dgs.radix-scan-dispatch"),
       linear: this.attributes.createIndirect("3dgs.linear-dispatch"),
     };
     this.buffers = this.createIntersectionBuffers(mode);
@@ -64,6 +67,8 @@ export class IntersectionStage {
       intersection_offsets: intersectionOffsets,
       state: storage(this.dispatch.state, "uvec4", 1),
       radix_dispatch: storage(this.dispatch.radix, "uvec4", 1),
+      radix_block_dispatch: storage(this.dispatch.radixBlock, "uvec4", 1),
+      radix_scan_dispatch: storage(this.dispatch.radixScan, "uvec4", 1),
       linear_dispatch: storage(this.dispatch.linear, "uvec4", 1),
     })
       .compute(1)
@@ -88,6 +93,11 @@ export class IntersectionStage {
         "vec4",
         data.count,
       ).toReadOnly(),
+      projected_color: storage(
+        projectedColorAttribute,
+        "vec4",
+        data.count,
+      ).toReadOnly(),
       tile_counts: tileCounts,
       intersection_offsets: intersectionOffsets,
       state: storage(this.dispatch.state, "uvec4", 1).toReadOnly(),
@@ -97,8 +107,13 @@ export class IntersectionStage {
       .setName(`3DGS emit intersections WGSL (${mode})`);
   }
 
-  encode(): void {
-    this.renderer.compute([this.prepareNode, this.emitNode]);
+  encode(profileKernels = false): void {
+    if (profileKernels) {
+      this.renderer.compute(this.prepareNode);
+      this.renderer.compute(this.emitNode);
+    } else {
+      this.renderer.compute([this.prepareNode, this.emitNode]);
+    }
   }
 
   async readStats(): Promise<GaussianPassStats> {
