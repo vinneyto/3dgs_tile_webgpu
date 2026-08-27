@@ -40,7 +40,6 @@ export class TileRasterizer {
     const rasterizeKernel = wgslFn<Record<string, Node>>(
       rasterizationWGSL(mode, depthTexture !== null),
     );
-    const recordType = mode === "float32" ? "uvec4" : "uvec2";
     const parameters: Record<string, Node> = {
       local_index: invocationLocalIndex,
       group_id: workgroupId,
@@ -64,7 +63,7 @@ export class TileRasterizer {
       ).toReadOnly(),
       records: storage(
         sortedRecordsAttribute,
-        recordType,
+        "uvec2",
         intersectionCapacity,
       ).toReadOnly(),
       tile_offsets: storage(

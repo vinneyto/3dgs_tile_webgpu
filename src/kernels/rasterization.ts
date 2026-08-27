@@ -5,11 +5,6 @@ export function rasterizationWGSL(
   mode: DepthSortMode,
   outputDepth: boolean,
 ): string {
-  const recordType = mode === "float32" ? "vec4<u32>" : "vec2<u32>";
-  const gaussianId =
-    mode === "float32"
-      ? "(*records)[intersection].z"
-      : "(*records)[intersection].y";
   const depthParameter = outputDepth
     ? ",\n  depth_output: texture_storage_2d<r32float, write>"
     : "";
@@ -27,7 +22,7 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
   projected_mean: ptr<storage, array<vec4<f32>>, read>,
   projected_conic: ptr<storage, array<vec4<f32>>, read>,
   projected_color: ptr<storage, array<vec4<f32>>, read>,
-  records: ptr<storage, array<${recordType}>, read>,
+  records: ptr<storage, array<vec2<u32>>, read>,
   tile_offsets: ptr<storage, array<u32>, read>,
   shared_mean: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
   shared_conic: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
@@ -56,7 +51,7 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
   for (var batch_start = begin; batch_start < end; batch_start += ${WORKGROUP_SIZE}u) {
     let load_index = batch_start + local_index;
     if (load_index < end) {
-      let gaussian_id = ${gaussianId.replaceAll("intersection", "load_index")};
+      let gaussian_id = (*records)[load_index].y;
       (*shared_mean)[local_index] = (*projected_mean)[gaussian_id];
       (*shared_conic)[local_index] = (*projected_conic)[gaussian_id];
       (*shared_color)[local_index] = (*projected_color)[gaussian_id];

@@ -5,195 +5,142 @@ import type {
   WebGPURenderer,
 } from "three/webgpu";
 import {
-  instanceIndex,
   invocationLocalIndex,
+  invocationSubgroupIndex,
   storage,
+  subgroupIndex,
+  subgroupSize,
   uint,
   wgslFn,
   workgroupArray,
   workgroupId,
 } from "three/tsl";
 import {
-  addRadixChunkOffsetsWGSL,
   radixHistogramWGSL,
   radixScatterWGSL,
-  scanDigitTotalsWGSL,
-  scanRadixChunkSumsWGSL,
-  scanRadixHistogramChunksWGSL,
+  reduceRadixHistogramsWGSL,
+  scanAddRadixHistogramsWGSL,
+  scanRadixReducedWGSL,
 } from "../kernels/radix";
 import { AttributePool } from "./AttributePool";
 import {
   RADIX_BITS,
   RADIX_BLOCK_ITEMS,
-  RADIX_SCAN_CHUNK_ITEMS,
+  RADIX_MAX_SUBGROUPS,
+  RADIX_REDUCE_ITEMS,
   RADIX_SIZE,
   WORKGROUP_SIZE,
 } from "./constants";
-import type {
-  DepthSortMode,
-  DispatchResources,
-  IntersectionBuffers,
-} from "./types";
+import type { DispatchResources, KeyValueBuffers } from "./types";
 
 interface RadixPass {
   histogram: ComputeNode;
   scatter: ComputeNode;
 }
 
+/** Stable GPU radix sort for uvec2(key, value) records. */
 export class RadixSorter {
   sortedRecords: StorageBufferAttribute;
 
   private readonly attributes = new AttributePool();
   private readonly blockHistograms: StorageBufferAttribute;
   private readonly blockPrefixes: StorageBufferAttribute;
-  private readonly digitTotals: StorageBufferAttribute;
-  private readonly digitOffsets: StorageBufferAttribute;
-  private readonly chunkSums: StorageBufferAttribute;
-  private readonly chunkOffsets: StorageBufferAttribute;
-  private readonly scanHistogramChunksNode: ComputeNode;
-  private readonly scanChunkSumsNode: ComputeNode;
-  private readonly addChunkOffsetsNode: ComputeNode;
-  private readonly scanDigitTotalsNode: ComputeNode;
+  private readonly reduced: StorageBufferAttribute;
+  private readonly reduceNode: ComputeNode;
+  private readonly scanReducedNode: ComputeNode;
+  private readonly scanAddNode: ComputeNode;
+  private readonly maxRadixBlocks: number;
+  private readonly maxReduceChunks: number;
   private passes: RadixPass[] = [];
 
   constructor(
     private readonly renderer: WebGPURenderer,
-    private readonly mode: DepthSortMode,
+    private readonly label: string,
     private readonly capacity: number,
-    private readonly intersections: IntersectionBuffers,
+    private readonly buffers: KeyValueBuffers,
     private readonly dispatch: DispatchResources,
   ) {
-    const maxRadixBlocks = Math.ceil(capacity / RADIX_BLOCK_ITEMS);
-    const maxScanChunks = Math.ceil(maxRadixBlocks / RADIX_SCAN_CHUNK_ITEMS);
+    this.maxRadixBlocks = Math.ceil(capacity / RADIX_BLOCK_ITEMS);
+    this.maxReduceChunks = Math.ceil(this.maxRadixBlocks / RADIX_REDUCE_ITEMS);
     this.blockHistograms = this.attributes.createUint(
-      "3dgs.radix-histograms",
-      maxRadixBlocks * RADIX_SIZE,
+      `3dgs.${label}-radix-histograms`,
+      this.maxRadixBlocks * RADIX_SIZE,
     );
     this.blockPrefixes = this.attributes.createUint(
-      "3dgs.radix-prefixes",
-      maxRadixBlocks * RADIX_SIZE,
+      `3dgs.${label}-radix-prefixes`,
+      this.maxRadixBlocks * RADIX_SIZE,
     );
-    this.digitTotals = this.attributes.createUint(
-      "3dgs.radix-digit-totals",
-      RADIX_SIZE,
-    );
-    this.digitOffsets = this.attributes.createUint(
-      "3dgs.radix-digit-offsets",
-      RADIX_SIZE,
-    );
-    this.chunkSums = this.attributes.createUint(
-      "3dgs.radix-chunk-sums",
-      maxScanChunks * RADIX_SIZE,
-    );
-    this.chunkOffsets = this.attributes.createUint(
-      "3dgs.radix-chunk-offsets",
-      maxScanChunks * RADIX_SIZE,
+    this.reduced = this.attributes.createUint(
+      `3dgs.${label}-radix-reduced`,
+      this.maxReduceChunks * RADIX_SIZE,
     );
 
     const state = storage(dispatch.state, "uvec4", 1).toReadOnly();
-    const blockPrefixes = storage(
-      this.blockPrefixes,
+    const histograms = storage(
+      this.blockHistograms,
       "uint",
-      this.blockPrefixes.count,
+      this.blockHistograms.count,
+    ).toReadOnly();
+    const reduceKernel = wgslFn<Record<string, Node>>(
+      reduceRadixHistogramsWGSL,
     );
-    const scanChunksKernel = wgslFn<Record<string, Node>>(
-      scanRadixHistogramChunksWGSL,
-    );
-    this.scanHistogramChunksNode = scanChunksKernel({
+    this.reduceNode = reduceKernel({
       lane: invocationLocalIndex,
       group_id: workgroupId,
-      chunk_stride: uint(maxScanChunks),
+      subgroup_index: subgroupIndex,
+      subgroup_lane: invocationSubgroupIndex,
+      subgroup_size: subgroupSize,
+      block_stride: uint(this.maxRadixBlocks),
+      chunk_stride: uint(this.maxReduceChunks),
       state,
-      block_histograms: storage(
-        this.blockHistograms,
-        "uint",
-        this.blockHistograms.count,
-      ).toReadOnly(),
-      block_prefixes: blockPrefixes,
-      chunk_sums: storage(this.chunkSums, "uint", this.chunkSums.count),
-      scratch: workgroupArray("uint", RADIX_SCAN_CHUNK_ITEMS),
+      block_histograms: histograms,
+      reduced: storage(this.reduced, "uint", this.reduced.count),
+      partials: workgroupArray("uint", RADIX_MAX_SUBGROUPS),
     })
       .computeKernel([WORKGROUP_SIZE])
-      .setName("3DGS radix scan histogram chunks WGSL");
+      .setName(`3DGS ${label} radix reduce WGSL`);
 
-    const scanChunkSumsKernel = wgslFn<Record<string, Node>>(
-      scanRadixChunkSumsWGSL,
-    );
-    this.scanChunkSumsNode = scanChunkSumsKernel({
-      lane: invocationLocalIndex,
-      digit: workgroupId.x,
-      chunk_stride: uint(maxScanChunks),
+    const scanReducedKernel =
+      wgslFn<Record<string, Node>>(scanRadixReducedWGSL);
+    this.scanReducedNode = scanReducedKernel({
+      chunk_stride: uint(this.maxReduceChunks),
       state,
-      chunk_sums: storage(
-        this.chunkSums,
-        "uint",
-        this.chunkSums.count,
-      ).toReadOnly(),
-      chunk_offsets: storage(
-        this.chunkOffsets,
-        "uint",
-        this.chunkOffsets.count,
-      ),
-      digit_totals: storage(this.digitTotals, "uint", RADIX_SIZE),
-      scratch: workgroupArray("uint", RADIX_SCAN_CHUNK_ITEMS),
-    })
-      .computeKernel([WORKGROUP_SIZE])
-      .setName("3DGS radix scan chunk sums WGSL");
-
-    const addChunkOffsetsKernel = wgslFn<Record<string, Node>>(
-      addRadixChunkOffsetsWGSL,
-    );
-    this.addChunkOffsetsNode = addChunkOffsetsKernel({
-      lane: invocationLocalIndex,
-      group_id: workgroupId,
-      chunk_stride: uint(maxScanChunks),
-      state,
-      block_prefixes: blockPrefixes,
-      chunk_offsets: storage(
-        this.chunkOffsets,
-        "uint",
-        this.chunkOffsets.count,
-      ).toReadOnly(),
-    })
-      .computeKernel([WORKGROUP_SIZE])
-      .setName("3DGS radix add chunk offsets WGSL");
-
-    const scanDigitsKernel = wgslFn<Record<string, Node>>(scanDigitTotalsWGSL);
-    this.scanDigitTotalsNode = scanDigitsKernel({
-      digit_totals: storage(this.digitTotals, "uint", RADIX_SIZE).toReadOnly(),
-      digit_offsets: storage(this.digitOffsets, "uint", RADIX_SIZE),
+      reduced: storage(this.reduced, "uint", this.reduced.count),
     })
       .compute(1)
-      .setName("3DGS radix scan digit totals WGSL");
+      .setName(`3DGS ${label} radix global scan WGSL`);
 
-    this.sortedRecords = intersections.recordsA;
+    const scanAddKernel = wgslFn<Record<string, Node>>(
+      scanAddRadixHistogramsWGSL,
+    );
+    this.scanAddNode = scanAddKernel({
+      lane: invocationLocalIndex,
+      group_id: workgroupId,
+      block_stride: uint(this.maxRadixBlocks),
+      chunk_stride: uint(this.maxReduceChunks),
+      state,
+      block_histograms: histograms,
+      reduced: storage(this.reduced, "uint", this.reduced.count).toReadOnly(),
+      block_prefixes: storage(
+        this.blockPrefixes,
+        "uint",
+        this.blockPrefixes.count,
+      ),
+      scratch: workgroupArray("uint", RADIX_REDUCE_ITEMS),
+    })
+      .computeKernel([WORKGROUP_SIZE])
+      .setName(`3DGS ${label} radix scan-add WGSL`);
+    this.sortedRecords = buffers.recordsA;
   }
 
-  configure(tileCount: number): void {
+  configure(bitCount: number): void {
     this.disposePasses();
-    const tileBits = Math.max(1, Math.ceil(Math.log2(Math.max(1, tileCount))));
-    const tilePassCount = Math.ceil(tileBits / RADIX_BITS);
-    const descriptors: Array<{ shift: number; keyKind: number }> = [];
-    if (this.mode === "float32") {
-      for (let shift = 0; shift < 32; shift += RADIX_BITS) {
-        descriptors.push({ shift, keyKind: 0 });
-      }
-      for (let pass = 0; pass < tilePassCount; pass++) {
-        descriptors.push({ shift: pass * RADIX_BITS, keyKind: 1 });
-      }
-    } else {
-      for (let shift = 0; shift < 32; shift += RADIX_BITS) {
-        descriptors.push({ shift, keyKind: 0 });
-      }
-    }
-
-    this.passes = descriptors.map(({ shift, keyKind }, passIndex) =>
-      this.createPass(passIndex, shift, keyKind),
+    const passCount = Math.ceil(Math.max(0, bitCount) / RADIX_BITS);
+    this.passes = Array.from({ length: passCount }, (_, passIndex) =>
+      this.createPass(passIndex, passIndex * RADIX_BITS),
     );
     this.sortedRecords =
-      this.passes.length % 2 === 0
-        ? this.intersections.recordsA
-        : this.intersections.recordsB;
+      passCount % 2 === 0 ? this.buffers.recordsA : this.buffers.recordsB;
   }
 
   get passCount(): number {
@@ -202,52 +149,43 @@ export class RadixSorter {
 
   encode(_profileKernels = false): void {
     for (const pass of this.passes) {
-      this.renderer.compute(pass.histogram, this.dispatch.radix);
-      this.renderer.compute(
-        this.scanHistogramChunksNode,
-        this.dispatch.radixScan,
-      );
-      this.renderer.compute(this.scanChunkSumsNode, [RADIX_SIZE, 1, 1]);
-      this.renderer.compute(this.addChunkOffsetsNode, this.dispatch.radixScan);
-      this.renderer.compute(this.scanDigitTotalsNode);
+      this.renderer.compute(pass.histogram, this.dispatch.radixBlock);
+      this.renderer.compute(this.reduceNode, this.dispatch.radixReduce);
+      this.renderer.compute(this.scanReducedNode);
+      this.renderer.compute(this.scanAddNode, this.dispatch.radixReduce);
       this.renderer.compute(pass.scatter, this.dispatch.radixBlock);
     }
   }
 
   dispose(): void {
     this.disposePasses();
-    this.scanHistogramChunksNode.dispose();
-    this.scanChunkSumsNode.dispose();
-    this.addChunkOffsetsNode.dispose();
-    this.scanDigitTotalsNode.dispose();
+    this.reduceNode.dispose();
+    this.scanReducedNode.dispose();
+    this.scanAddNode.dispose();
     this.attributes.dispose();
   }
 
-  private createPass(
-    passIndex: number,
-    shift: number,
-    keyKind: number,
-  ): RadixPass {
+  private createPass(passIndex: number, shift: number): RadixPass {
     const inputA = passIndex % 2 === 0;
-    const recordsIn = inputA
-      ? this.intersections.recordsA
-      : this.intersections.recordsB;
-    const recordsOut = inputA
-      ? this.intersections.recordsB
-      : this.intersections.recordsA;
-    const recordType = this.mode === "float32" ? "uvec4" : "uvec2";
+    const recordsIn = inputA ? this.buffers.recordsA : this.buffers.recordsB;
+    const recordsOut = inputA ? this.buffers.recordsB : this.buffers.recordsA;
     const state = storage(this.dispatch.state, "uvec4", 1).toReadOnly();
     const recordsInput = storage(
       recordsIn,
-      recordType,
+      "uvec2",
       this.capacity,
     ).toReadOnly();
 
     const histogramKernel = wgslFn<Record<string, Node>>(
-      radixHistogramWGSL(this.mode, shift, keyKind),
+      radixHistogramWGSL(shift),
     );
     const histogram = histogramKernel({
-      block_index: instanceIndex,
+      lane: invocationLocalIndex,
+      block_index: workgroupId.x,
+      subgroup_index: subgroupIndex,
+      subgroup_lane: invocationSubgroupIndex,
+      subgroup_size: subgroupSize,
+      block_stride: uint(this.maxRadixBlocks),
       state,
       records: recordsInput,
       block_histograms: storage(
@@ -255,38 +193,33 @@ export class RadixSorter {
         "uint",
         this.blockHistograms.count,
       ),
+      partials: workgroupArray("uint", RADIX_SIZE * RADIX_MAX_SUBGROUPS),
     })
       .computeKernel([WORKGROUP_SIZE])
-      .setName(`3DGS radix histogram WGSL ${passIndex}`);
+      .setName(`3DGS ${this.label} radix histogram WGSL ${passIndex}`);
 
-    const scatterKernel = wgslFn<Record<string, Node>>(
-      radixScatterWGSL(this.mode, shift, keyKind),
-    );
+    const scatterKernel = wgslFn<Record<string, Node>>(radixScatterWGSL(shift));
     const scatter = scatterKernel({
       lane: invocationLocalIndex,
       block_index: workgroupId.x,
+      subgroup_index: subgroupIndex,
+      subgroup_lane: invocationSubgroupIndex,
+      subgroup_size: subgroupSize,
+      block_stride: uint(this.maxRadixBlocks),
       state,
       records_in: recordsInput,
-      records_out: storage(recordsOut, recordType, this.capacity),
+      records_out: storage(recordsOut, "uvec2", this.capacity),
       block_prefixes: storage(
         this.blockPrefixes,
         "uint",
         this.blockPrefixes.count,
       ).toReadOnly(),
-      digit_offsets: storage(
-        this.digitOffsets,
-        "uint",
-        RADIX_SIZE,
-      ).toReadOnly(),
-      shared_digits: workgroupArray("uint", WORKGROUP_SIZE),
-      shared_digit_masks: workgroupArray(
-        "uint",
-        RADIX_SIZE * (WORKGROUP_SIZE / 32),
-      ),
+      block_bases: workgroupArray("uint", RADIX_SIZE),
+      local_digit_counts: workgroupArray("uint", RADIX_SIZE),
+      partials: workgroupArray("uint", RADIX_SIZE * RADIX_MAX_SUBGROUPS),
     })
       .computeKernel([WORKGROUP_SIZE])
-      .setName(`3DGS radix scatter WGSL ${passIndex}`);
-
+      .setName(`3DGS ${this.label} radix scatter WGSL ${passIndex}`);
     return { histogram, scatter };
   }
 

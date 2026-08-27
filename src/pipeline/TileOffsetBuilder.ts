@@ -45,16 +45,16 @@ export class TileOffsetBuilder {
       .compute(tileCount + 1, [WORKGROUP_SIZE])
       .setName("3DGS clear tile offsets WGSL");
 
-    const recordType = mode === "float32" ? "uvec4" : "uvec2";
     const boundariesKernel = wgslFn<Record<string, Node>>(
       tileBoundariesWGSL(mode),
     );
     this.boundariesNode = boundariesKernel({
       index: instanceIndex,
+      tile_count: uint(tileCount),
       state: storage(dispatch.state, "uvec4", 1).toReadOnly(),
       records: storage(
         sortedRecordsAttribute,
-        recordType,
+        "uvec2",
         sortedRecordsAttribute.count,
       ).toReadOnly(),
       offsets,

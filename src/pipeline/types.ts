@@ -8,7 +8,7 @@ export type DepthSortMode = "float32" | "packed16";
 export type AntialiasMode = "compensated" | "classic";
 
 export interface GaussianPassOptions {
-  /** Exact float32 depth, or a packed 16-bit tile + 16-bit quantized depth key. */
+  /** Exact float32 or quantized 16-bit depth for the visible-Gaussian pre-sort. */
   depthSortMode?: DepthSortMode;
   /** Preserve subpixel Gaussian energy, or retain the original fixed-footprint 3DGS low-pass behavior. */
   antialiasMode?: AntialiasMode;
@@ -25,6 +25,7 @@ export interface GaussianPassOptions {
 }
 
 export interface GaussianPassStats {
+  visibleGaussianCount: number;
   intersectionCount: number;
   requestedIntersections: number;
   intersectionCapacity: number;
@@ -40,6 +41,8 @@ export interface GaussianPassDebugInfo {
   tilesY: number;
   tileStageRebuilds: number;
   radixPasses: number;
+  depthRadixPasses: number;
+  tileRadixPasses: number;
   profileKernels: boolean;
 }
 
@@ -48,33 +51,29 @@ export interface GaussianPassResources {
   projectedMean: StorageBufferAttribute;
   projectedConic: StorageBufferAttribute;
   projectedColor: StorageBufferAttribute;
+  visibleFlags: StorageBufferAttribute;
+  visibleOffsets: StorageBufferAttribute;
+  /** uvec2(depth key, original Gaussian id), sorted front-to-back. */
+  depthSortedGaussians: StorageBufferAttribute;
   tileCounts: StorageBufferAttribute;
+  depthOrderedTileCounts: StorageBufferAttribute;
   intersectionOffsets: StorageBufferAttribute;
   dispatchState: StorageBufferAttribute;
-  /** float32: uvec4(tile, depthBits, gaussianId, 0); packed16: uvec2(key, gaussianId). */
+  /** uvec2(tile id, original Gaussian id), already depth ordered by stable tile sorting. */
   sortedIntersections: StorageBufferAttribute;
   tileOffsets: StorageBufferAttribute;
 }
 
-export interface FloatIntersectionBuffers {
-  kind: "float32";
+export interface KeyValueBuffers {
   recordsA: StorageBufferAttribute;
   recordsB: StorageBufferAttribute;
 }
 
-export interface PackedIntersectionBuffers {
-  kind: "packed16";
-  recordsA: StorageBufferAttribute;
-  recordsB: StorageBufferAttribute;
-}
-
-export type IntersectionBuffers =
-  FloatIntersectionBuffers | PackedIntersectionBuffers;
+export type IntersectionBuffers = KeyValueBuffers;
 
 export interface DispatchResources {
   state: StorageBufferAttribute;
-  radix: IndirectStorageBufferAttribute;
   radixBlock: IndirectStorageBufferAttribute;
-  radixScan: IndirectStorageBufferAttribute;
+  radixReduce: IndirectStorageBufferAttribute;
   linear: IndirectStorageBufferAttribute;
 }

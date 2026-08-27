@@ -7,11 +7,11 @@ returns a texture node, and can be chained with normal Three.js node-based post-
 The implementation follows the same stages as the course Metal renderer:
 
 ```text
-project Gaussians
-→ exclusive scan of per-Gaussian tile counts
-→ GPU writes K and indirect dispatch arguments
-→ emit K tile/Gaussian intersections
-→ stable LSD radix sort
+project Gaussians and test tile/ellipse overlap
+→ compact visible Gaussians
+→ radix-sort N_visible Gaussian IDs by depth
+→ emit K intersections in depth order
+→ stable radix-sort K intersections by tile ID only
 → build per-tile ranges
 → front-to-back tile rasterization
 ```
@@ -35,8 +35,10 @@ src/
 ├── kernels/                        explicit WGSL strings used by wgslFn
 │   ├── projection.ts               projection, covariance and SH
 │   ├── scan.ts                     hierarchical exclusive scan
+│   ├── visibility.ts               visible compaction and depth ordering
+│   ├── tileContribution.ts         conservative tile/ellipse test
 │   ├── intersections.ts            emission and indirect arguments
-│   ├── radix.ts                    radix histogram/scan/scatter
+│   ├── radix.ts                    five-stage subgroup radix
 │   ├── tileOffsets.ts              sorted tile range construction
 │   └── rasterization.ts            color and optional depth writes
 ├── pipeline/
@@ -44,9 +46,11 @@ src/
 │   ├── AttributePool.ts            Three.js storage-attribute ownership
 │   ├── FrameUniforms.ts            camera and cloud transforms
 │   ├── ProjectionStage.ts          projection and tile coverage
-│   ├── ExclusiveScanStage.ts       hierarchical tile-count scan
+│   ├── ExclusiveScanStage.ts       reusable hierarchical scan
+│   ├── VisibleGaussianStage.ts     compaction and indirect arguments
+│   ├── DepthOrderedTileStage.ts    tile counts in depth order
 │   ├── IntersectionStage.ts        GPU count, indirect args, emission
-│   ├── RadixSorter.ts              float32 and packed16 sorting
+│   ├── RadixSorter.ts              stable uvec2 key/value sorting
 │   ├── TileOffsetBuilder.ts        per-tile sorted ranges
 │   └── TileRasterizer.ts           color/depth compositing
 └── demo.ts                         RenderPipeline example
@@ -159,38 +163,52 @@ Use `antialiasMode: "classic"` to reproduce the former fixed-footprint behavior.
 
 ## Sort modes
 
+Both modes use the same hybrid pipeline. Depth is sorted once per visible Gaussian, before intersections are
+emitted. Because emission follows that order, the later stable tile-ID sort preserves front-to-back order
+inside every tile. If `N_visible` Gaussians produce `K` intersections, the work is proportional to
+`depthPasses × N_visible + tilePasses × K`, rather than sorting depth `K` times.
+
 ### `float32`
 
-Reference-quality mode. Each intersection is one Three.js `uvec4` storage record:
+Reference-quality mode. The compact visible list stores:
 
 ```text
-tileId | bitcast<float32 depth> | gaussianId | padding
+bitcast<float32 depth> | gaussianId
 ```
 
-The stable radix sort performs eight 4-bit passes over positive float depth, followed by only the tile-ID
-passes required by the current render resolution. For a 13-bit tile ID this is 12 passes total.
+Depth needs eight 4-bit passes over `N_visible`. Emitted intersections are `uvec2(tileId, gaussianId)` and need
+only the tile-ID passes required by the current resolution. A 13-bit tile ID therefore means eight passes over
+`N_visible` and four passes over `K`.
 
 ### `packed16`
 
-Performance mode. Each intersection is one `uvec2` record whose first component is the key:
+Performance mode. The visible-list depth key is quantized between the camera near and far planes:
 
 ```text
-bits 31…16: tileId
-bits 15…0 : depth quantized between camera near and far
+quantizedDepth16 (stored in u32) | gaussianId
 ```
 
-It always needs eight 4-bit passes and reduces ping-pong record storage from 32 to 16 bytes per intersection.
-The mode supports at most 65,535 screen tiles. Close Gaussians can quantize to the same depth; stable emission
-order then breaks the tie.
+It needs four depth passes over `N_visible`, followed by the same tile-only passes over `K`. Both modes use
+8-byte intersection records and support the same tile counts. Close Gaussians can quantize to the same depth;
+stable sorting preserves their compacted input order as the tie-breaker.
+
+Each radix pass follows the Brush/FidelityFX-style five-stage layout: parallel 1024-record histogram,
+histogram reduction, global reduced scan, scan-add and stable scatter. A 256-invocation workgroup processes
+four records per invocation. Histogram reduction and scatter use WebGPU subgroup operations while supporting
+subgroup sizes from 8 through 64.
+
+Projection and emission share a conservative StopThePop tile-vs-ellipse test. Tiles inside the screen-space
+AABB that cannot reach alpha `1/255` are excluded from `K`, reducing both sort and raster work.
 
 ## Indirect dispatch and capacity
 
-After the scan, a one-invocation WGSL kernel writes GPU-owned count state plus two
-`IndirectStorageBufferAttribute` instances:
+GPU kernels write visible/intersection count state and persistent
+`IndirectStorageBufferAttribute` dispatch arguments:
 
 ```text
 state:           clamped K | requested K | radix block count | overflow
 radix dispatch:  workgroup count xyz
+reduce dispatch: workgroup count xyz
 linear dispatch: workgroup count xyz
 ```
 
@@ -202,9 +220,10 @@ created once at
 path itself performs no GPU-to-CPU synchronization.
 
 After the first rendered frame, `pass.getResources()` exposes the Three.js-owned intermediate attributes:
-projected means, conics and colors, tile counts, scan offsets, dispatch state, sorted intersection records and
-tile offsets. They can be wrapped with Three.js `storage(...)` and passed to another `wgslFn` kernel or node
-material without reaching into the WebGPU backend.
+projected means/conics/colors, visible flags and offsets, the depth-sorted Gaussian list, original and
+depth-ordered tile counts, intersection offsets, dispatch state, sorted intersection records and tile offsets.
+They can be wrapped with Three.js `storage(...)` and passed to another `wgslFn` kernel or node material without
+reaching into the WebGPU backend.
 
 ## Shader boundary
 
@@ -254,7 +273,9 @@ vertex data. Matching `lidar_sim`, it performs these boundary conversions:
 
 The HUD also reports CPU encoding time, Three.js compute-call count, GPU compute/present time (when the adapter
 supports timestamp queries), requested/emitted intersection counts, capacity overflow, tile-stage rebuilds and
-Three.js-tracked GPU memory. Expand **Kernel timings** for timestamp-query timings of every named compute group.
+Three.js-tracked GPU memory. It also reports `N_visible`, so the benefit of moving depth sorting from `K` to
+the compact visible set can be measured directly. Expand **Kernel timings** for timestamp-query timings of every
+named compute group.
 Append `?profile=kernels` to split the normally batched prepare/emit group into separate compute passes. Radix
 stages already require distinct passes because their direct and indirect dispatch dimensions differ. Profiling
 mode adds a pass boundary and should not be used as the final production-performance number.
@@ -274,6 +295,7 @@ passes receive working-linear RGB and `RenderPipeline` performs exactly one disp
 ## Current scope
 
 - WebGPU backend only; Three.js' WebGL fallback is intentionally rejected.
+- The optimized radix path requires the WebGPU `subgroups` feature.
 - Perspective cameras only.
 - One cloud per pass. Multiple clouds can use multiple passes and be composed as texture nodes.
 - The renderer outputs premultiplied Gaussian accumulation with a configurable background and an optional
