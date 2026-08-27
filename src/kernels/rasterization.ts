@@ -29,9 +29,9 @@ fn rasterize_tiles_${mode}${outputDepth ? "_with_depth" : ""}(
   projected_color: ptr<storage, array<vec4<f32>>, read>,
   records: ptr<storage, array<${recordType}>, read>,
   tile_offsets: ptr<storage, array<u32>, read>,
-  shared_mean: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>, read_write>,
-  shared_conic: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>, read_write>,
-  shared_color: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>, read_write>,
+  shared_mean: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
+  shared_conic: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
+  shared_color: ptr<workgroup, array<vec4<f32>, ${WORKGROUP_SIZE}>>,
   color_output: texture_storage_2d<rgba16float, write>${depthParameter}
 ) -> u32 {
   let local_x = local_index % ${TILE_SIZE}u;

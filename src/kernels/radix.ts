@@ -15,7 +15,7 @@ fn scan_radix_histogram_chunks(
   block_histograms: ptr<storage, array<u32>, read>,
   block_prefixes: ptr<storage, array<u32>, read_write>,
   chunk_sums: ptr<storage, array<u32>, read_write>,
-  scratch: ptr<workgroup, array<u32, ${RADIX_SCAN_CHUNK_ITEMS}>, read_write>
+  scratch: ptr<workgroup, array<u32, ${RADIX_SCAN_CHUNK_ITEMS}>>
 ) -> u32 {
   let chunk = group_id.x;
   let digit = group_id.y;
@@ -85,7 +85,7 @@ fn scan_radix_chunk_sums(
   chunk_sums: ptr<storage, array<u32>, read>,
   chunk_offsets: ptr<storage, array<u32>, read_write>,
   digit_totals: ptr<storage, array<u32>, read_write>,
-  scratch: ptr<workgroup, array<u32, ${RADIX_SCAN_CHUNK_ITEMS}>, read_write>
+  scratch: ptr<workgroup, array<u32, ${RADIX_SCAN_CHUNK_ITEMS}>>
 ) -> u32 {
   let chunk_count = ((*state)[0].z + ${RADIX_SCAN_CHUNK_ITEMS - 1}u) /
     ${RADIX_SCAN_CHUNK_ITEMS}u;
