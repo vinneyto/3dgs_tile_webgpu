@@ -52,6 +52,9 @@ src/
 └── demo.ts                         RenderPipeline example
 ```
 
+The repository also contains a full-screen Vite sandbox in `sandbox/`. Its canonical 3DGS PLY loader is kept
+outside the renderer package so the `GaussianData` boundary remains parser-agnostic.
+
 ## Usage
 
 ```ts
@@ -207,6 +210,32 @@ npm run dev
 ```
 
 Append `?sort=packed16` to the demo URL to switch from the default float32 mode.
+
+## PLY sandbox
+
+Run the full-screen PLY viewer with:
+
+```bash
+npm install
+npm run sandbox
+```
+
+The sandbox loads its small `sample.ply` by default and enables the standard Three.js `OrbitControls`. Use
+**Open PLY** or drag a canonical 3DGS PLY onto the canvas to inspect another cloud. A URL can also be supplied
+explicitly:
+
+```text
+http://localhost:5173/?ply=/my-cloud.ply&sort=packed16
+```
+
+Files addressed by URL belong in `sandbox/public/`; the file picker and drag-and-drop do not require copying
+the file into the repository. The loader accepts ASCII, binary little-endian, and binary big-endian scalar PLY
+vertex data. Matching `lidar_sim`, it performs these boundary conversions:
+
+- `scale_0..2`: `exp(logScale)`;
+- `opacity`: `sigmoid(opacityLogit)`;
+- `rot_0..3`: canonical PLY `wxyz` to normalized Three.js/renderer `xyzw`;
+- `f_dc_*` and channel-major `f_rest_*`: Gaussian-major SH coefficient vectors.
 
 ## Current scope
 

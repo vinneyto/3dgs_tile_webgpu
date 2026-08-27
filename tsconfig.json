@@ -18,5 +18,11 @@
     "noUnusedParameters": true,
     "noEmit": true
   },
-  "include": ["src", "test", "vite.config.ts"]
+  "include": [
+    "src",
+    "sandbox/src",
+    "test",
+    "vite.config.ts",
+    "vite.sandbox.config.ts"
+  ]
 }
