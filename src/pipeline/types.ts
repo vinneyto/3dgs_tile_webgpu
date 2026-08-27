@@ -23,7 +23,7 @@ export interface GaussianPassStats {
   overflow: boolean;
 }
 
-/** Three.js-owned intermediate attributes that can be reused by other TSL code. */
+/** Three.js-owned intermediate attributes reusable by other node code or wgslFn kernels. */
 export interface GaussianPassResources {
   projectedMean: StorageBufferAttribute;
   projectedConic: StorageBufferAttribute;

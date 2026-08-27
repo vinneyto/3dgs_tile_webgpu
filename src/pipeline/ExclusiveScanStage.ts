@@ -1,24 +1,21 @@
 import type {
   ComputeNode,
+  Node,
   StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
 import {
-  Fn,
-  If,
-  Loop,
   instanceIndex,
   invocationLocalIndex,
-  select,
   storage,
   uint,
+  wgslFn,
   workgroupArray,
-  workgroupBarrier,
   workgroupId,
 } from "three/tsl";
+import { addScanOffsetsWGSL, scanBlocksWGSL } from "../kernels/scan";
 import { AttributePool } from "./AttributePool";
 import { SCAN_BLOCK_ITEMS, WORKGROUP_SIZE } from "./constants";
-import { uintElement } from "./tslTypes";
 
 interface ScanLevel {
   length: number;
@@ -39,6 +36,8 @@ export class ExclusiveScanStage {
       "3dgs.intersection-offsets",
       length,
     );
+    const scanKernel = wgslFn<Record<string, Node>>(scanBlocksWGSL);
+    const addKernel = wgslFn<Record<string, Node>>(addScanOffsetsWGSL);
 
     let scanInput = input;
     let scanOutput = this.output;
@@ -49,76 +48,18 @@ export class ExclusiveScanStage {
         `3dgs.scan-sums-${this.levels.length}`,
         blockCount,
       );
-      const inputNode = storage(scanInput, "uint", scanLength).toReadOnly();
-      const outputNode = storage(scanOutput, "uint", scanLength);
-      const blockSumsNode = storage(blockSums, "uint", blockCount);
       const scratch = workgroupArray("uint", SCAN_BLOCK_ITEMS);
-
-      const scanKernel = Fn(() => {
-        const lane = invocationLocalIndex;
-        const base = workgroupId.x.mul(SCAN_BLOCK_ITEMS).toVar();
-        const first = base.add(lane).toVar();
-        const second = first.add(WORKGROUP_SIZE).toVar();
-        uintElement(scratch, lane).assign(
-          select(first.lessThan(scanLength), inputNode.element(first), uint(0)),
-        );
-        uintElement(scratch, lane.add(WORKGROUP_SIZE)).assign(
-          select(
-            second.lessThan(scanLength),
-            inputNode.element(second),
-            uint(0),
-          ),
-        );
-        workgroupBarrier();
-
-        const offset = uint(1).toVar();
-        const activeCount = uint(SCAN_BLOCK_ITEMS / 2).toVar();
-        Loop(9, () => {
-          If(lane.lessThan(activeCount), () => {
-            const left = offset.mul(lane.mul(2).add(1)).sub(1).toVar();
-            const right = offset.mul(lane.mul(2).add(2)).sub(1).toVar();
-            uintElement(scratch, right).addAssign(uintElement(scratch, left));
-          });
-          offset.mulAssign(2);
-          activeCount.divAssign(2);
-          workgroupBarrier();
-        });
-
-        If(lane.equal(0), () => {
-          blockSumsNode
-            .element(workgroupId.x)
-            .assign(uintElement(scratch, SCAN_BLOCK_ITEMS - 1));
-          uintElement(scratch, SCAN_BLOCK_ITEMS - 1).assign(0);
-        });
-        workgroupBarrier();
-
-        activeCount.assign(1);
-        offset.assign(SCAN_BLOCK_ITEMS / 2);
-        Loop(9, () => {
-          If(lane.lessThan(activeCount), () => {
-            const left = offset.mul(lane.mul(2).add(1)).sub(1).toVar();
-            const right = offset.mul(lane.mul(2).add(2)).sub(1).toVar();
-            const value = uintElement(scratch, left).toVar();
-            uintElement(scratch, left).assign(uintElement(scratch, right));
-            uintElement(scratch, right).addAssign(value);
-          });
-          activeCount.mulAssign(2);
-          offset.divAssign(2);
-          workgroupBarrier();
-        });
-
-        If(first.lessThan(scanLength), () => {
-          outputNode.element(first).assign(uintElement(scratch, lane));
-        });
-        If(second.lessThan(scanLength), () => {
-          outputNode
-            .element(second)
-            .assign(uintElement(scratch, lane.add(WORKGROUP_SIZE)));
-        });
-      });
-      const scanNode = scanKernel()
-        .compute(blockCount * WORKGROUP_SIZE, [WORKGROUP_SIZE])
-        .setName(`3DGS scan level ${this.levels.length}`);
+      const scanNode = scanKernel({
+        lane: invocationLocalIndex,
+        group_id: workgroupId.x,
+        length: uint(scanLength),
+        input_values: storage(scanInput, "uint", scanLength).toReadOnly(),
+        output_values: storage(scanOutput, "uint", scanLength),
+        block_sums: storage(blockSums, "uint", blockCount),
+        scratch,
+      })
+        .computeKernel([WORKGROUP_SIZE])
+        .setName(`3DGS scan WGSL level ${this.levels.length}`);
       this.levels.push({
         length: scanLength,
         blockCount,
@@ -137,30 +78,28 @@ export class ExclusiveScanStage {
     for (let level = 0; level < this.levels.length - 1; level++) {
       const current = this.levels[level]!;
       const parent = this.levels[level + 1]!;
-      const values = storage(current.output, "uint", current.length);
-      const blockOffsets = storage(
-        parent.output,
-        "uint",
-        parent.length,
-      ).toReadOnly();
-      const addKernel = Fn(() => {
-        values
-          .element(instanceIndex)
-          .addAssign(blockOffsets.element(instanceIndex.div(SCAN_BLOCK_ITEMS)));
-      });
-      current.addNode = addKernel()
+      current.addNode = addKernel({
+        index: instanceIndex,
+        length: uint(current.length),
+        values: storage(current.output, "uint", current.length),
+        block_offsets: storage(
+          parent.output,
+          "uint",
+          parent.length,
+        ).toReadOnly(),
+      })
         .compute(current.length, [WORKGROUP_SIZE])
-        .setName(`3DGS add scan offsets ${level}`);
+        .setName(`3DGS add scan offsets WGSL ${level}`);
     }
   }
 
   encode(renderer: WebGPURenderer): void {
-    renderer.compute(this.levels.map((level) => level.scanNode));
-    const addNodes: ComputeNode[] = [];
-    for (let level = this.levels.length - 2; level >= 0; level--) {
-      addNodes.push(this.levels[level]!.addNode!);
+    for (const level of this.levels) {
+      renderer.compute(level.scanNode, [level.blockCount, 1, 1]);
     }
-    if (addNodes.length > 0) renderer.compute(addNodes);
+    for (let level = this.levels.length - 2; level >= 0; level--) {
+      renderer.compute(this.levels[level]!.addNode!);
+    }
   }
 
   dispose(): void {

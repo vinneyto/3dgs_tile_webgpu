@@ -26,7 +26,7 @@ import type {
 const drawingBufferSize = new Vector2();
 
 /**
- * A single-cloud Three.js RenderPipeline pass backed by a tiled TSL compute pipeline.
+ * A single-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
  * The anchor is an ordinary Object3D; its world matrix is the cloud's local-to-world transform.
  */
 export class GaussianPass extends PassNode {

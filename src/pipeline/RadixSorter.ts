@@ -4,18 +4,13 @@ import type {
   StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
+import { instanceIndex, storage, wgslFn } from "three/tsl";
 import {
-  Fn,
-  If,
-  Loop,
-  Return,
-  instanceIndex,
-  invocationLocalIndex,
-  select,
-  storage,
-  uint,
-  workgroupArray,
-} from "three/tsl";
+  radixHistogramWGSL,
+  radixScatterWGSL,
+  scanBlockHistogramsWGSL,
+  scanDigitTotalsWGSL,
+} from "../kernels/radix";
 import { AttributePool } from "./AttributePool";
 import {
   RADIX_BITS,
@@ -28,7 +23,6 @@ import type {
   DispatchResources,
   IntersectionBuffers,
 } from "./types";
-import { uintElement } from "./tslTypes";
 
 interface RadixPass {
   histogram: ComputeNode;
@@ -72,56 +66,35 @@ export class RadixSorter {
       RADIX_SIZE,
     );
 
-    const blockHistograms = storage(
-      this.blockHistograms,
-      "uint",
-      maxRadixBlocks * RADIX_SIZE,
-    ).toReadOnly();
-    const blockPrefixes = storage(
-      this.blockPrefixes,
-      "uint",
-      maxRadixBlocks * RADIX_SIZE,
+    const state = storage(dispatch.state, "uvec4", 1).toReadOnly();
+    const scanBlocksKernel = wgslFn<Record<string, Node>>(
+      scanBlockHistogramsWGSL,
     );
-    const digitTotals = storage(this.digitTotals, "uint", RADIX_SIZE);
-    const state = storage(this.dispatch.state, "uvec4", 1).toReadOnly();
-    const scanBlocksKernel = Fn(() => {
-      const digit = instanceIndex;
-      const running = uint(0).toVar();
-      Loop(
-        {
-          start: uint(0),
-          end: state.element(0).z,
-          type: "uint",
-          condition: "<",
-        },
-        ({ i: blockIndex }) => {
-          const address = blockIndex.mul(RADIX_SIZE).add(digit).toVar();
-          blockPrefixes.element(address).assign(running);
-          running.addAssign(blockHistograms.element(address));
-        },
-      );
-      digitTotals.element(digit).assign(running);
-    });
-    this.scanBlockHistogramsNode = scanBlocksKernel()
+    this.scanBlockHistogramsNode = scanBlocksKernel({
+      digit: instanceIndex,
+      state,
+      block_histograms: storage(
+        this.blockHistograms,
+        "uint",
+        this.blockHistograms.count,
+      ).toReadOnly(),
+      block_prefixes: storage(
+        this.blockPrefixes,
+        "uint",
+        this.blockPrefixes.count,
+      ),
+      digit_totals: storage(this.digitTotals, "uint", RADIX_SIZE),
+    })
       .compute(RADIX_SIZE, [RADIX_SIZE])
-      .setName("3DGS radix scan block histograms");
+      .setName("3DGS radix scan block histograms WGSL");
 
-    const digitTotalsRead = storage(
-      this.digitTotals,
-      "uint",
-      RADIX_SIZE,
-    ).toReadOnly();
-    const digitOffsets = storage(this.digitOffsets, "uint", RADIX_SIZE);
-    const scanDigitsKernel = Fn(() => {
-      const running = uint(0).toVar();
-      Loop(RADIX_SIZE, ({ i }) => {
-        digitOffsets.element(i).assign(running);
-        running.addAssign(digitTotalsRead.element(i));
-      });
-    });
-    this.scanDigitTotalsNode = scanDigitsKernel()
+    const scanDigitsKernel = wgslFn<Record<string, Node>>(scanDigitTotalsWGSL);
+    this.scanDigitTotalsNode = scanDigitsKernel({
+      digit_totals: storage(this.digitTotals, "uint", RADIX_SIZE).toReadOnly(),
+      digit_offsets: storage(this.digitOffsets, "uint", RADIX_SIZE),
+    })
       .compute(1)
-      .setName("3DGS radix scan digit totals");
+      .setName("3DGS radix scan digit totals WGSL");
 
     this.sortedRecords = intersections.recordsA;
   }
@@ -147,10 +120,10 @@ export class RadixSorter {
     this.passes = descriptors.map(({ shift, keyKind }, passIndex) =>
       this.createPass(passIndex, shift, keyKind),
     );
-    const finalInputA = this.passes.length % 2 === 0;
-    this.sortedRecords = finalInputA
-      ? this.intersections.recordsA
-      : this.intersections.recordsB;
+    this.sortedRecords =
+      this.passes.length % 2 === 0
+        ? this.intersections.recordsA
+        : this.intersections.recordsB;
   }
 
   encode(): void {
@@ -177,156 +150,59 @@ export class RadixSorter {
     keyKind: number,
   ): RadixPass {
     const inputA = passIndex % 2 === 0;
-    const blockHistogram = storage(
-      this.blockHistograms,
-      "uint",
-      this.blockHistograms.count,
-    );
+    const recordsIn = inputA
+      ? this.intersections.recordsA
+      : this.intersections.recordsB;
+    const recordsOut = inputA
+      ? this.intersections.recordsB
+      : this.intersections.recordsA;
+    const recordType = this.mode === "float32" ? "uvec4" : "uvec2";
     const state = storage(this.dispatch.state, "uvec4", 1).toReadOnly();
-    const histogramScratch = workgroupArray(
-      "uint",
-      WORKGROUP_SIZE * RADIX_SIZE,
+    const recordsInput = storage(
+      recordsIn,
+      recordType,
+      this.capacity,
+    ).toReadOnly();
+
+    const histogramKernel = wgslFn<Record<string, Node>>(
+      radixHistogramWGSL(this.mode, shift, keyKind),
     );
+    const histogram = histogramKernel({
+      block_index: instanceIndex,
+      state,
+      records: recordsInput,
+      block_histograms: storage(
+        this.blockHistograms,
+        "uint",
+        this.blockHistograms.count,
+      ),
+    })
+      .computeKernel([WORKGROUP_SIZE])
+      .setName(`3DGS radix histogram WGSL ${passIndex}`);
 
-    let readKey: (index: Node<"uint">) => Node<"uint">;
-    let writeRecord: (
-      destination: Node<"uint">,
-      position: Node<"uint">,
-    ) => void;
-    if (this.intersections.kind === "float32") {
-      const inputRecords = storage(
-        inputA ? this.intersections.recordsA : this.intersections.recordsB,
-        "uvec4",
-        this.capacity,
-      ).toReadOnly();
-      const outputRecords = storage(
-        inputA ? this.intersections.recordsB : this.intersections.recordsA,
-        "uvec4",
-        this.capacity,
-      );
-      readKey = (index) =>
-        keyKind === 0
-          ? inputRecords.element(index).y
-          : inputRecords.element(index).x;
-      writeRecord = (destination, position) => {
-        outputRecords
-          .element(destination)
-          .assign(inputRecords.element(position));
-      };
-    } else {
-      const inputRecords = storage(
-        inputA ? this.intersections.recordsA : this.intersections.recordsB,
-        "uvec2",
-        this.capacity,
-      ).toReadOnly();
-      const outputRecords = storage(
-        inputA ? this.intersections.recordsB : this.intersections.recordsA,
-        "uvec2",
-        this.capacity,
-      );
-      readKey = (index) => inputRecords.element(index).x;
-      writeRecord = (destination, position) => {
-        outputRecords
-          .element(destination)
-          .assign(inputRecords.element(position));
-      };
-    }
+    const scatterKernel = wgslFn<Record<string, Node>>(
+      radixScatterWGSL(this.mode, shift, keyKind),
+    );
+    const scatter = scatterKernel({
+      block_index: instanceIndex,
+      state,
+      records_in: recordsInput,
+      records_out: storage(recordsOut, recordType, this.capacity),
+      block_prefixes: storage(
+        this.blockPrefixes,
+        "uint",
+        this.blockPrefixes.count,
+      ).toReadOnly(),
+      digit_offsets: storage(
+        this.digitOffsets,
+        "uint",
+        RADIX_SIZE,
+      ).toReadOnly(),
+    })
+      .computeKernel([WORKGROUP_SIZE])
+      .setName(`3DGS radix scatter WGSL ${passIndex}`);
 
-    const histogramKernel = Fn(() => {
-      const blockIndex = instanceIndex;
-      const blockStart = blockIndex.mul(RADIX_BLOCK_ITEMS).toVar();
-      If(blockStart.greaterThanEqual(state.element(0).x), () => Return());
-      const localBase = invocationLocalIndex.mul(RADIX_SIZE).toVar();
-      Loop(RADIX_SIZE, ({ i }) => {
-        uintElement(histogramScratch, localBase.add(uint(i))).assign(0);
-      });
-      const proposedEnd = blockStart.add(RADIX_BLOCK_ITEMS).toVar();
-      const blockEnd = select(
-        proposedEnd.lessThan(state.element(0).x),
-        proposedEnd,
-        state.element(0).x,
-      ).toVar();
-      Loop(
-        {
-          start: blockStart,
-          end: blockEnd,
-          type: "uint",
-          condition: "<",
-        },
-        ({ i: position }) => {
-          const digit = readKey(position)
-            .shiftRight(shift)
-            .bitAnd(RADIX_SIZE - 1)
-            .toVar();
-          uintElement(histogramScratch, localBase.add(digit)).addAssign(1);
-        },
-      );
-      const outputStart = blockIndex.mul(RADIX_SIZE).toVar();
-      Loop(RADIX_SIZE, ({ i }) => {
-        blockHistogram
-          .element(outputStart.add(uint(i)))
-          .assign(uintElement(histogramScratch, localBase.add(uint(i))));
-      });
-    });
-
-    const blockPrefixes = storage(
-      this.blockPrefixes,
-      "uint",
-      this.blockPrefixes.count,
-    ).toReadOnly();
-    const digitOffsets = storage(
-      this.digitOffsets,
-      "uint",
-      RADIX_SIZE,
-    ).toReadOnly();
-    const scatterScratch = workgroupArray("uint", WORKGROUP_SIZE * RADIX_SIZE);
-    const scatterKernel = Fn(() => {
-      const blockIndex = instanceIndex;
-      const blockStart = blockIndex.mul(RADIX_BLOCK_ITEMS).toVar();
-      If(blockStart.greaterThanEqual(state.element(0).x), () => Return());
-      const localBase = invocationLocalIndex.mul(RADIX_SIZE).toVar();
-      Loop(RADIX_SIZE, ({ i }) => {
-        uintElement(scatterScratch, localBase.add(uint(i))).assign(0);
-      });
-      const proposedEnd = blockStart.add(RADIX_BLOCK_ITEMS).toVar();
-      const blockEnd = select(
-        proposedEnd.lessThan(state.element(0).x),
-        proposedEnd,
-        state.element(0).x,
-      ).toVar();
-      const prefixStart = blockIndex.mul(RADIX_SIZE).toVar();
-      Loop(
-        {
-          start: blockStart,
-          end: blockEnd,
-          type: "uint",
-          condition: "<",
-        },
-        ({ i: position }) => {
-          const digit = readKey(position)
-            .shiftRight(shift)
-            .bitAnd(RADIX_SIZE - 1)
-            .toVar();
-          const localAddress = localBase.add(digit).toVar();
-          const destination = digitOffsets
-            .element(digit)
-            .add(blockPrefixes.element(prefixStart.add(digit)))
-            .add(uintElement(scatterScratch, localAddress))
-            .toVar();
-          uintElement(scatterScratch, localAddress).addAssign(1);
-          writeRecord(destination, position);
-        },
-      );
-    });
-
-    return {
-      histogram: histogramKernel()
-        .computeKernel([WORKGROUP_SIZE])
-        .setName(`3DGS radix histogram ${passIndex}`),
-      scatter: scatterKernel()
-        .computeKernel([WORKGROUP_SIZE])
-        .setName(`3DGS radix scatter ${passIndex}`),
-    };
+    return { histogram, scatter };
   }
 
   private disposePasses(): void {

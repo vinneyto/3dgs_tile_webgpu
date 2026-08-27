@@ -22,7 +22,7 @@ export interface GaussianDataOptions {
 /**
  * Gaussian storage expressed as normal Three.js storage attributes. Parsing and
  * source-format activation deliberately live outside the renderer. The same
- * attributes can be consumed by TSL materials, compute nodes, or geometries.
+ * attributes can be consumed by node materials, wgslFn compute nodes, or geometries.
  */
 export class GaussianData {
   readonly count: number;

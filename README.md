@@ -2,7 +2,7 @@
 
 A GPU-driven tiled 3D Gaussian Splatting renderer exposed as a Three.js
 [`RenderPipeline`](https://threejs.org/docs/#RenderPipeline) pass. The pass renders one Gaussian cloud,
-returns a texture node, and can be chained with normal TSL post-processing nodes.
+returns a texture node, and can be chained with normal Three.js node-based post-processing.
 
 The implementation follows the same stages as the course Metal renderer:
 
@@ -18,7 +18,9 @@ project Gaussians
 
 `K` never has to cross to JavaScript. Compute nodes whose useful work is proportional to `K` are launched with
 Three.js `IndirectStorageBufferAttribute`; only attributes with a fixed `intersectionCapacity` are allocated on
-the CPU. Internally the renderer uses TSL and `WebGPURenderer.compute()` rather than a raw `GPUDevice` API.
+the CPU. GPU resources and scheduling use the public Three.js API; the substantial shader algorithms are
+explicit WGSL strings wrapped with `wgslFn`, not TSL expression trees. `WebGPURenderer.compute()` performs the
+dispatches without direct `GPUDevice` or command-encoder access.
 
 ## Project structure
 
@@ -30,6 +32,13 @@ src/
 ├── GaussianData.ts                 external Gaussian buffer contract
 ├── GaussianPass.ts                 Three.js PassNode integration
 ├── createGaussianPass.ts           public pass factory
+├── kernels/                        explicit WGSL strings used by wgslFn
+│   ├── projection.ts               projection, covariance and SH
+│   ├── scan.ts                     hierarchical exclusive scan
+│   ├── intersections.ts            emission and indirect arguments
+│   ├── radix.ts                    radix histogram/scan/scatter
+│   ├── tileOffsets.ts              sorted tile range construction
+│   └── rasterization.ts            color and optional depth writes
 ├── pipeline/
 │   ├── TiledGaussianPipeline.ts    stage orchestration
 │   ├── AttributePool.ts            Three.js storage-attribute ownership
@@ -113,7 +122,7 @@ front-to-back tile list. Disable it by omitting `outputDepth` to avoid allocatin
 
 Parsing is deliberately not part of this package. A PLY/SOG/KSplat loader creates normal Three.js
 `StorageBufferAttribute` instances and passes them directly to `GaussianData`. This keeps ownership and upload
-inside Three.js, and lets the same attributes be read by TSL compute nodes, node materials, or other Three.js
+inside Three.js, and lets the same attributes be read by `wgslFn` kernels, node materials, or other Three.js
 code.
 
 | Attribute        | Three.js type                             | Expected values                                                 |
@@ -158,7 +167,7 @@ order then breaks the tie.
 
 ## Indirect dispatch and capacity
 
-After the scan, a one-invocation TSL compute node writes GPU-owned count state plus two
+After the scan, a one-invocation WGSL kernel writes GPU-owned count state plus two
 `IndirectStorageBufferAttribute` instances:
 
 ```text
@@ -176,8 +185,16 @@ path itself performs no GPU-to-CPU synchronization.
 
 After the first rendered frame, `pass.getResources()` exposes the Three.js-owned intermediate attributes:
 projected means, conics and colors, tile counts, scan offsets, dispatch state, sorted intersection records and
-tile offsets. They can be wrapped with TSL `storage(...)` by another compute node without reaching into the
-WebGPU backend.
+tile offsets. They can be wrapped with Three.js `storage(...)` and passed to another `wgslFn` kernel or node
+material without reaching into the WebGPU backend.
+
+## Shader boundary
+
+All non-trivial kernels live in `src/kernels/` as ordinary WGSL source. `wgslFn` only binds those functions to
+Three.js storage attributes, uniforms, storage textures, built-ins and compute nodes. This keeps Three.js in
+charge of resource lifetime and pipeline integration while preserving WGSL as the code that is read, reviewed
+and debugged. TSL control-flow builders are deliberately not used for projection, scan, sorting, binning or
+rasterization.
 
 ## Development
 

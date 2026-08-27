@@ -4,29 +4,14 @@ import type {
   StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
-import {
-  Continue,
-  Fn,
-  If,
-  Loop,
-  Return,
-  clamp,
-  floatBitsToUint,
-  floor,
-  instanceIndex,
-  int,
-  ivec2,
-  round,
-  select,
-  shiftLeft,
-  storage,
-  uint,
-  uvec2,
-  uvec4,
-} from "three/tsl";
+import { instanceIndex, storage, uint, uvec2, wgslFn } from "three/tsl";
 import type { GaussianData } from "../GaussianData";
+import {
+  emitIntersectionsWGSL,
+  prepareDispatchWGSL,
+} from "../kernels/intersections";
 import { AttributePool } from "./AttributePool";
-import { RADIX_BLOCK_ITEMS, TILE_SIZE, WORKGROUP_SIZE } from "./constants";
+import { WORKGROUP_SIZE } from "./constants";
 import type { FrameUniforms } from "./FrameUniforms";
 import type {
   DepthSortMode,
@@ -71,168 +56,45 @@ export class IntersectionStage {
       "uint",
       data.count,
     ).toReadOnly();
-    const state = storage(this.dispatch.state, "uvec4", 1);
-    const radixDispatch = storage(this.dispatch.radix, "uvec4", 1);
-    const linearDispatch = storage(this.dispatch.linear, "uvec4", 1);
-    const prepareKernel = Fn(() => {
-      const last = uint(data.count - 1);
-      const total = intersectionOffsets
-        .element(last)
-        .add(tileCounts.element(last))
-        .toVar();
-      const count = select(
-        total.lessThan(uint(capacity)),
-        total,
-        uint(capacity),
-      ).toVar();
-      const radixBlocks = count
-        .add(RADIX_BLOCK_ITEMS - 1)
-        .div(RADIX_BLOCK_ITEMS)
-        .toVar();
-      radixDispatch
-        .element(0)
-        .assign(
-          uvec4(
-            radixBlocks.add(WORKGROUP_SIZE - 1).div(WORKGROUP_SIZE),
-            uint(1),
-            uint(1),
-            uint(0),
-          ),
-        );
-      linearDispatch
-        .element(0)
-        .assign(
-          uvec4(
-            count.add(WORKGROUP_SIZE - 1).div(WORKGROUP_SIZE),
-            uint(1),
-            uint(1),
-            uint(0),
-          ),
-        );
-      state
-        .element(0)
-        .assign(
-          uvec4(
-            count,
-            total,
-            radixBlocks,
-            select(total.greaterThan(capacity), uint(1), uint(0)),
-          ),
-        );
-    });
-    this.prepareNode = prepareKernel()
+    const prepareKernel = wgslFn<Record<string, Node>>(prepareDispatchWGSL);
+    this.prepareNode = prepareKernel({
+      gaussian_count: uint(data.count),
+      capacity: uint(capacity),
+      tile_counts: tileCounts,
+      intersection_offsets: intersectionOffsets,
+      state: storage(this.dispatch.state, "uvec4", 1),
+      radix_dispatch: storage(this.dispatch.radix, "uvec4", 1),
+      linear_dispatch: storage(this.dispatch.linear, "uvec4", 1),
+    })
       .compute(1)
-      .setName("3DGS prepare indirect dispatch");
+      .setName("3DGS prepare indirect dispatch WGSL");
 
-    const projectedMean = storage(
-      projectedMeanAttribute,
-      "vec4",
-      data.count,
-    ).toReadOnly();
-    const projectedConic = storage(
-      projectedConicAttribute,
-      "vec4",
-      data.count,
-    ).toReadOnly();
-    const floatRecords =
-      this.buffers.kind === "float32"
-        ? storage(this.buffers.recordsA, "uvec4", capacity)
-        : null;
-    const packedRecords =
-      this.buffers.kind === "packed16"
-        ? storage(this.buffers.recordsA, "uvec2", capacity)
-        : null;
-
-    const emitKernel = Fn(() => {
-      const gid = instanceIndex;
-      If(tileCounts.element(gid).equal(0), () => Return());
-      const mean = projectedMean.element(gid).toVar();
-      const radius = projectedConic.element(gid).w;
-      const center = mean.xy;
-      const maxTileX = int(frame.tilesX).sub(1).toVar();
-      const maxTileY = int(frame.tilesY).sub(1).toVar();
-      const clampTile = (
-        value: ReturnType<typeof int>,
-        maximum: typeof maxTileX,
-      ) =>
-        select(
-          value.lessThan(0),
-          int(0),
-          select(value.greaterThan(maximum), maximum, value),
-        );
-      const tileMin = ivec2(
-        clampTile(int(floor(center.x.sub(radius).div(TILE_SIZE))), maxTileX),
-        clampTile(int(floor(center.y.sub(radius).div(TILE_SIZE))), maxTileY),
-      ).toVar();
-      const tileMax = ivec2(
-        clampTile(int(floor(center.x.add(radius).div(TILE_SIZE))), maxTileX),
-        clampTile(int(floor(center.y.add(radius).div(TILE_SIZE))), maxTileY),
-      ).toVar();
-      const localIndex = uint(0).toVar();
-      Loop(
-        {
-          start: tileMin.y,
-          end: tileMax.y,
-          type: "int",
-          condition: "<=",
-        },
-        ({ i: tileY }) => {
-          Loop(
-            {
-              start: tileMin.x,
-              end: tileMax.x,
-              type: "int",
-              condition: "<=",
-            },
-            ({ i: tileX }) => {
-              const destination = intersectionOffsets
-                .element(gid)
-                .add(localIndex)
-                .toVar();
-              localIndex.addAssign(1);
-              If(destination.greaterThanEqual(state.element(0).x), () =>
-                Continue(),
-              );
-              const tileId = uint(tileY)
-                .mul(frame.tilesX)
-                .add(uint(tileX))
-                .toVar();
-              if (mode === "float32") {
-                floatRecords!
-                  .element(destination)
-                  .assign(
-                    uvec4(
-                      tileId,
-                      floatBitsToUint(mean.z) as unknown as Node<"uint">,
-                      gid,
-                      uint(0),
-                    ),
-                  );
-              } else {
-                const normalizedDepth = clamp(
-                  mean.z
-                    .sub(frame.viewport.z)
-                    .div(frame.viewport.w.sub(frame.viewport.z)),
-                  0,
-                  1,
-                ).toVar();
-                const depth16 = uint(
-                  round(normalizedDepth.mul(65_535)),
-                ).toVar();
-                packedRecords!
-                  .element(destination)
-                  .assign(
-                    uvec2(shiftLeft(tileId, uint(16)).bitOr(depth16), gid),
-                  );
-              }
-            },
-          );
-        },
-      );
-    });
-    this.emitNode = emitKernel()
+    const recordType = mode === "float32" ? "uvec4" : "uvec2";
+    const emitKernel = wgslFn<Record<string, Node>>(
+      emitIntersectionsWGSL(mode),
+    );
+    this.emitNode = emitKernel({
+      gid: instanceIndex,
+      gaussian_count: uint(data.count),
+      tiles: uvec2(frame.tilesX, frame.tilesY),
+      viewport: frame.viewport,
+      projected_mean: storage(
+        projectedMeanAttribute,
+        "vec4",
+        data.count,
+      ).toReadOnly(),
+      projected_conic: storage(
+        projectedConicAttribute,
+        "vec4",
+        data.count,
+      ).toReadOnly(),
+      tile_counts: tileCounts,
+      intersection_offsets: intersectionOffsets,
+      state: storage(this.dispatch.state, "uvec4", 1).toReadOnly(),
+      records: storage(this.buffers.recordsA, recordType, capacity),
+    })
       .compute(data.count, [WORKGROUP_SIZE])
-      .setName(`3DGS emit intersections (${mode})`);
+      .setName(`3DGS emit intersections WGSL (${mode})`);
   }
 
   encode(): void {
@@ -257,33 +119,19 @@ export class IntersectionStage {
   }
 
   private createIntersectionBuffers(mode: DepthSortMode): IntersectionBuffers {
-    if (mode === "float32") {
-      return {
-        kind: "float32",
-        recordsA: this.attributes.createUint(
-          "3dgs.float-records-a",
-          this.capacity,
-          4,
-        ),
-        recordsB: this.attributes.createUint(
-          "3dgs.float-records-b",
-          this.capacity,
-          4,
-        ),
-      };
-    }
+    const itemSize = mode === "float32" ? 4 : 2;
     return {
-      kind: "packed16",
+      kind: mode,
       recordsA: this.attributes.createUint(
-        "3dgs.packed-records-a",
+        `3dgs.${mode}-records-a`,
         this.capacity,
-        2,
+        itemSize,
       ),
       recordsB: this.attributes.createUint(
-        "3dgs.packed-records-b",
+        `3dgs.${mode}-records-b`,
         this.capacity,
-        2,
+        itemSize,
       ),
-    };
+    } as IntersectionBuffers;
   }
 }
