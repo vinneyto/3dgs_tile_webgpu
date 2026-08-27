@@ -3,29 +3,19 @@ import {
   PerspectiveCamera,
   RenderPipeline,
   Scene,
+  StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GaussianData, gaussianPass, type DepthSortMode } from "./index";
 
-function upload(
-  device: GPUDevice,
+function storageAttribute(
   label: string,
   values: Float32Array,
-): GPUBuffer {
-  const buffer = device.createBuffer({
-    label,
-    size: values.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-  });
-  device.queue.writeBuffer(
-    buffer,
-    0,
-    values.buffer as ArrayBuffer,
-    values.byteOffset,
-    values.byteLength,
-  );
-  return buffer;
+): StorageBufferAttribute {
+  const attribute = new StorageBufferAttribute(values, 4);
+  attribute.name = label;
+  return attribute;
 }
 
 function vec4Rows(
@@ -50,8 +40,6 @@ async function main(): Promise<void> {
   renderer.setSize(innerWidth, innerHeight);
   document.body.appendChild(renderer.domElement);
 
-  const backend = renderer.backend as unknown as { device: GPUDevice };
-  const device = backend.device;
   const means = vec4Rows([
     [-0.9, -0.35, 0, 0],
     [-0.45, 0.35, 0.15, 0],
@@ -85,10 +73,10 @@ async function main(): Promise<void> {
 
   const data = new GaussianData(
     {
-      means: upload(device, "demo.means", means),
-      scalesOpacity: upload(device, "demo.scales-opacity", scalesOpacity),
-      rotations: upload(device, "demo.rotations", rotations),
-      shCoefficients: upload(device, "demo.sh", shCoefficients),
+      means: storageAttribute("demo.means", means),
+      scalesOpacity: storageAttribute("demo.scales-opacity", scalesOpacity),
+      rotations: storageAttribute("demo.rotations", rotations),
+      shCoefficients: storageAttribute("demo.sh", shCoefficients),
     },
     { count: 7, shDegree: 0, ownsBuffers: true },
   );

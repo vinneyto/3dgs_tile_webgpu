@@ -1,38 +1,38 @@
+import type { StorageBufferAttribute } from "three/webgpu";
+
 export interface GaussianBuffers {
   /** vec4<f32> per Gaussian. xyz is the local-space mean; w is unused. */
-  means: GPUBuffer;
+  means: StorageBufferAttribute;
   /** vec4<f32> per Gaussian. xyz is positive linear scale; w is opacity in [0, 1]. */
-  scalesOpacity: GPUBuffer;
+  scalesOpacity: StorageBufferAttribute;
   /** vec4<f32> per Gaussian, normalized quaternion in xyzw order. */
-  rotations: GPUBuffer;
+  rotations: StorageBufferAttribute;
   /** vec4<f32> per SH coefficient. xyz is canonical 3DGS RGB; w is unused. */
-  shCoefficients: GPUBuffer;
+  shCoefficients: StorageBufferAttribute;
 }
 
 export interface GaussianDataOptions {
   count: number;
   /** Canonical real spherical-harmonic degree. Supported values are 0 through 3. */
   shDegree?: 0 | 1 | 2 | 3;
-  /** Destroy the supplied buffers when dispose() is called. Defaults to false. */
+  /** Dispose the supplied Three.js attributes with this object. Defaults to false. */
   ownsBuffers?: boolean;
 }
 
-const FLOATS_PER_VEC4 = 4;
-const BYTES_PER_FLOAT = 4;
-const BYTES_PER_VEC4 = FLOATS_PER_VEC4 * BYTES_PER_FLOAT;
-
 /**
- * GPU-native Gaussian storage. Parsing and activation of PLY fields deliberately
- * live outside the renderer; this class only describes already uploaded buffers.
+ * Gaussian storage expressed as normal Three.js storage attributes. Parsing and
+ * source-format activation deliberately live outside the renderer. The same
+ * attributes can be consumed by TSL materials, compute nodes, or geometries.
  */
 export class GaussianData {
   readonly count: number;
   readonly shDegree: 0 | 1 | 2 | 3;
   readonly shCoefficientCount: number;
-  readonly means: GPUBuffer;
-  readonly scalesOpacity: GPUBuffer;
-  readonly rotations: GPUBuffer;
-  readonly shCoefficients: GPUBuffer;
+  readonly means: StorageBufferAttribute;
+  readonly scalesOpacity: StorageBufferAttribute;
+  readonly rotations: StorageBufferAttribute;
+  readonly shCoefficients: StorageBufferAttribute;
+
   private readonly ownsBuffers: boolean;
   private disposed = false;
 
@@ -55,39 +55,14 @@ export class GaussianData {
     this.shCoefficients = buffers.shCoefficients;
     this.ownsBuffers = options.ownsBuffers ?? false;
 
-    this.validateBuffer(this.means, "means", this.count * BYTES_PER_VEC4);
-    this.validateBuffer(
-      this.scalesOpacity,
-      "scalesOpacity",
-      this.count * BYTES_PER_VEC4,
-    );
-    this.validateBuffer(
-      this.rotations,
-      "rotations",
-      this.count * BYTES_PER_VEC4,
-    );
-    this.validateBuffer(
+    this.validateAttribute(this.means, "means", this.count);
+    this.validateAttribute(this.scalesOpacity, "scalesOpacity", this.count);
+    this.validateAttribute(this.rotations, "rotations", this.count);
+    this.validateAttribute(
       this.shCoefficients,
       "shCoefficients",
-      this.count * this.shCoefficientCount * BYTES_PER_VEC4,
+      this.count * this.shCoefficientCount,
     );
-  }
-
-  private validateBuffer(
-    buffer: GPUBuffer,
-    name: string,
-    minimumSize: number,
-  ): void {
-    if ((buffer.usage & GPUBufferUsage.STORAGE) === 0) {
-      throw new TypeError(
-        `GaussianData ${name} buffer must include GPUBufferUsage.STORAGE`,
-      );
-    }
-    if (buffer.size < minimumSize) {
-      throw new RangeError(
-        `GaussianData ${name} buffer is ${buffer.size} bytes; at least ${minimumSize} bytes are required`,
-      );
-    }
   }
 
   dispose(): void {
@@ -95,9 +70,34 @@ export class GaussianData {
     this.disposed = true;
     if (!this.ownsBuffers) return;
 
-    this.means.destroy();
-    this.scalesOpacity.destroy();
-    this.rotations.destroy();
-    this.shCoefficients.destroy();
+    this.means.dispose();
+    this.scalesOpacity.dispose();
+    this.rotations.dispose();
+    this.shCoefficients.dispose();
+  }
+
+  private validateAttribute(
+    attribute: StorageBufferAttribute,
+    name: string,
+    minimumCount: number,
+  ): void {
+    if (attribute.isStorageBufferAttribute !== true) {
+      throw new TypeError(
+        `GaussianData ${name} must be a Three.js StorageBufferAttribute`,
+      );
+    }
+    if (attribute.itemSize !== 4) {
+      throw new RangeError(
+        `GaussianData ${name} itemSize is ${attribute.itemSize}; vec4 data requires itemSize 4`,
+      );
+    }
+    if (!(attribute.array instanceof Float32Array)) {
+      throw new TypeError(`GaussianData ${name} must use Float32Array storage`);
+    }
+    if (attribute.count < minimumCount) {
+      throw new RangeError(
+        `GaussianData ${name} has ${attribute.count} items; at least ${minimumCount} are required`,
+      );
+    }
   }
 }

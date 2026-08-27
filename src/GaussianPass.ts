@@ -1,9 +1,13 @@
 import {
+  FloatType,
   HalfFloatType,
+  NearestFilter,
   Object3D,
   PassNode,
   PerspectiveCamera,
+  RedFormat,
   Scene,
+  StorageTexture,
   Vector2,
   type NodeFrame,
   type Texture,
@@ -15,14 +19,14 @@ import { WORKGROUP_SIZE } from "./pipeline/constants";
 import type {
   DepthSortMode,
   GaussianPassOptions,
+  GaussianPassResources,
   GaussianPassStats,
-  WebGPUBackendAccess,
 } from "./pipeline/types";
 
 const drawingBufferSize = new Vector2();
 
 /**
- * A single-cloud Three.js RenderPipeline pass backed by a GPU-driven tiled 3DGS renderer.
+ * A single-cloud Three.js RenderPipeline pass backed by a tiled TSL compute pipeline.
  * The anchor is an ordinary Object3D; its world matrix is the cloud's local-to-world transform.
  */
 export class GaussianPass extends PassNode {
@@ -31,6 +35,9 @@ export class GaussianPass extends PassNode {
   readonly depthSortMode: DepthSortMode;
   readonly intersectionCapacity: number;
   readonly background: readonly [number, number, number, number];
+  readonly outputDepth: boolean;
+  readonly colorTexture: StorageTexture;
+  readonly depthTexture: StorageTexture | null;
 
   private readonly ownerRenderer: WebGPURenderer;
   private pipeline: TiledGaussianPipeline | null = null;
@@ -74,15 +81,48 @@ export class GaussianPass extends PassNode {
     this.depthSortMode = depthSortMode;
     this.intersectionCapacity = intersectionCapacity;
     this.background = options.background ?? [0, 0, 0, 0];
-    this.renderTarget.texture.name = "GaussianPass.output";
-    this.renderTarget.texture.generateMipmaps = false;
+    this.outputDepth = options.outputDepth ?? false;
 
-    const storageTexture = this.renderTarget.texture as Texture & {
-      isStorageTexture: boolean;
-      mipmapsAutoUpdate: boolean;
-    };
-    storageTexture.isStorageTexture = true;
-    storageTexture.mipmapsAutoUpdate = false;
+    this.renderTarget.texture.dispose();
+    this.colorTexture = new StorageTexture(1, 1);
+    this.colorTexture.name = "GaussianPass.output";
+    this.colorTexture.type = HalfFloatType;
+    this.colorTexture.generateMipmaps = false;
+    Object.assign(this.colorTexture, { mipmapsAutoUpdate: false });
+    this.colorTexture.isRenderTargetTexture = true;
+    this.colorTexture.renderTarget = this.renderTarget;
+    this.renderTarget.texture = this.colorTexture;
+
+    if (this.outputDepth) {
+      this.depthTexture = new StorageTexture(1, 1);
+      this.depthTexture.name = "GaussianPass.depth";
+      this.depthTexture.format = RedFormat;
+      this.depthTexture.type = FloatType;
+      this.depthTexture.minFilter = NearestFilter;
+      this.depthTexture.magFilter = NearestFilter;
+      this.depthTexture.generateMipmaps = false;
+      Object.assign(this.depthTexture, { mipmapsAutoUpdate: false });
+    } else {
+      this.depthTexture = null;
+    }
+  }
+
+  override getTexture(name: string): Texture {
+    if (name === "output") return this.colorTexture;
+    if (name === "depth") {
+      if (this.depthTexture === null) {
+        throw new Error(
+          'GaussianPass depth output is disabled. Pass { outputDepth: true } and request getTextureNode("depth") again.',
+        );
+      }
+      return this.depthTexture;
+    }
+    return super.getTexture(name);
+  }
+
+  override setSize(width: number, height: number): void {
+    super.setSize(width, height);
+    this.depthTexture?.setSize(width, height, 1);
   }
 
   override updateBefore(frame: NodeFrame): boolean | undefined {
@@ -102,13 +142,6 @@ export class GaussianPass extends PassNode {
       );
     }
 
-    const backend = renderer.backend as unknown as WebGPUBackendAccess;
-    if (backend.isWebGPUBackend !== true || backend.device === null) {
-      throw new Error(
-        "GaussianPass requires an initialized WebGPURenderer with a WebGPU backend",
-      );
-    }
-
     renderer.getDrawingBufferSize(drawingBufferSize);
     const width = Math.max(1, Math.floor(drawingBufferSize.x));
     const height = Math.max(1, Math.floor(drawingBufferSize.y));
@@ -118,17 +151,10 @@ export class GaussianPass extends PassNode {
     ) {
       this.setSize(width, height);
     }
-    this.renderTarget.texture.type = HalfFloatType;
     renderer.initRenderTarget(this.renderTarget);
 
-    const outputTexture = backend.get(this.renderTarget.texture).texture;
-    if (outputTexture === undefined) {
-      throw new Error(
-        "Three.js did not initialize the GaussianPass output texture",
-      );
-    }
     this.pipeline ??= new TiledGaussianPipeline(
-      backend.device,
+      renderer,
       this.camera,
       this.gaussianData,
       this.anchor,
@@ -136,12 +162,22 @@ export class GaussianPass extends PassNode {
       this.intersectionCapacity,
       this.background,
     );
-    this.pipeline.prepareFrame(width, height, outputTexture);
+    this.pipeline.prepareFrame(
+      width,
+      height,
+      this.colorTexture,
+      this.depthTexture,
+    );
     this.pipeline.render();
     return undefined;
   }
 
-  /** Optional diagnostic readback. Normal rendering never maps or reads the GPU count. */
+  /** Three.js storage attributes produced by the renderer, available after the first frame. */
+  getResources(): GaussianPassResources | null {
+    return this.pipeline?.getResources() ?? null;
+  }
+
+  /** Optional diagnostic readback. Normal rendering never reads the GPU count. */
   readStats(): Promise<GaussianPassStats> {
     if (this.pipeline !== null) return this.pipeline.readStats();
     return Promise.resolve({
@@ -157,6 +193,7 @@ export class GaussianPass extends PassNode {
     this.disposed = true;
     this.pipeline?.dispose();
     this.pipeline = null;
+    this.depthTexture?.dispose();
     super.dispose();
   }
 }
@@ -164,5 +201,6 @@ export class GaussianPass extends PassNode {
 export type {
   DepthSortMode,
   GaussianPassOptions,
+  GaussianPassResources,
   GaussianPassStats,
 } from "./pipeline/types";

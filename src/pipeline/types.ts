@@ -1,3 +1,8 @@
+import type {
+  IndirectStorageBufferAttribute,
+  StorageBufferAttribute,
+} from "three/webgpu";
+
 export type DepthSortMode = "float32" | "packed16";
 
 export interface GaussianPassOptions {
@@ -7,6 +12,8 @@ export interface GaussianPassOptions {
   intersectionCapacity?: number;
   /** RGBA clear color composited behind the cloud. Defaults to transparent black. */
   background?: readonly [number, number, number, number];
+  /** Create a standard perspective-depth texture exposed as pass.getTextureNode("depth"). */
+  outputDepth?: boolean;
 }
 
 export interface GaussianPassStats {
@@ -16,29 +23,36 @@ export interface GaussianPassStats {
   overflow: boolean;
 }
 
-export interface WebGPUBackendAccess {
-  isWebGPUBackend?: boolean;
-  device: GPUDevice | null;
-  get(object: object): { texture?: GPUTexture };
+/** Three.js-owned intermediate attributes that can be reused by other TSL code. */
+export interface GaussianPassResources {
+  projectedMean: StorageBufferAttribute;
+  projectedConic: StorageBufferAttribute;
+  projectedColor: StorageBufferAttribute;
+  tileCounts: StorageBufferAttribute;
+  intersectionOffsets: StorageBufferAttribute;
+  dispatchState: StorageBufferAttribute;
+  /** float32: uvec4(tile, depthBits, gaussianId, 0); packed16: uvec2(key, gaussianId). */
+  sortedIntersections: StorageBufferAttribute;
+  tileOffsets: StorageBufferAttribute;
 }
 
 export interface FloatIntersectionBuffers {
   kind: "float32";
-  tileA: GPUBuffer;
-  depthA: GPUBuffer;
-  gaussianA: GPUBuffer;
-  tileB: GPUBuffer;
-  depthB: GPUBuffer;
-  gaussianB: GPUBuffer;
+  recordsA: StorageBufferAttribute;
+  recordsB: StorageBufferAttribute;
 }
 
 export interface PackedIntersectionBuffers {
   kind: "packed16";
-  keyA: GPUBuffer;
-  gaussianA: GPUBuffer;
-  keyB: GPUBuffer;
-  gaussianB: GPUBuffer;
+  recordsA: StorageBufferAttribute;
+  recordsB: StorageBufferAttribute;
 }
 
 export type IntersectionBuffers =
   FloatIntersectionBuffers | PackedIntersectionBuffers;
+
+export interface DispatchResources {
+  state: StorageBufferAttribute;
+  radix: IndirectStorageBufferAttribute;
+  linear: IndirectStorageBufferAttribute;
+}

@@ -1,116 +1,110 @@
-import { tileOffsetShaders } from "../shaders";
-import {
-  LINEAR_DISPATCH_OFFSET,
-  UINT_BYTES,
-  WORKGROUP_SIZE,
-} from "./constants";
-import { BufferPool } from "./BufferPool";
-import { dispatchState, storage } from "./gpu";
-import type { DepthSortMode } from "./types";
+import type {
+  ComputeNode,
+  Node,
+  StorageBufferAttribute,
+  WebGPURenderer,
+} from "three/webgpu";
+import { Fn, If, Loop, Return, instanceIndex, storage, uint } from "three/tsl";
+import { AttributePool } from "./AttributePool";
+import { WORKGROUP_SIZE } from "./constants";
+import type { DepthSortMode, DispatchResources } from "./types";
 
 export class TileOffsetBuilder {
-  readonly offsets: GPUBuffer;
+  readonly offsets: StorageBufferAttribute;
 
-  private readonly buffers: BufferPool;
-  private readonly clearPipeline: GPUComputePipeline;
-  private readonly clearBindGroup: GPUBindGroup;
-  private readonly findBoundariesPipeline: GPUComputePipeline;
-  private readonly findBoundariesBindGroup: GPUBindGroup;
-  private readonly fillGapsPipeline: GPUComputePipeline;
-  private readonly fillGapsBindGroup: GPUBindGroup;
+  private readonly attributes = new AttributePool();
+  private readonly clearNode: ComputeNode;
+  private readonly boundariesNode: ComputeNode;
+  private readonly fillNode: ComputeNode;
 
   constructor(
-    device: GPUDevice,
+    private readonly renderer: WebGPURenderer,
     mode: DepthSortMode,
-    private readonly tileCount: number,
-    sortedKey: GPUBuffer,
-    private readonly dispatchBuffer: GPUBuffer,
+    tileCount: number,
+    sortedRecordsAttribute: StorageBufferAttribute,
+    private readonly dispatch: DispatchResources,
   ) {
-    this.buffers = new BufferPool(device);
-    this.offsets = this.buffers.create(
+    this.offsets = this.attributes.createUint(
       "3dgs.tile-offsets",
-      (tileCount + 1) * UINT_BYTES,
+      tileCount + 1,
     );
-    const params = this.buffers.createUniform(
-      "3dgs.tile-offset-params",
-      new Uint32Array([tileCount + 1]),
-    );
-    const shaders = tileOffsetShaders(mode);
+    const offsets = storage(this.offsets, "uint", tileCount + 1);
+    const clearKernel = Fn(() => {
+      offsets.element(instanceIndex).assign(uint(0xffffffff));
+    });
+    this.clearNode = clearKernel()
+      .compute(tileCount + 1, [WORKGROUP_SIZE])
+      .setName("3DGS clear tile offsets");
 
-    this.clearPipeline = device.createComputePipeline({
-      label: "3dgs.clear-tile-offsets",
-      layout: "auto",
-      compute: {
-        module: device.createShaderModule({
-          label: "3dgs.clear-tile-offsets.wgsl",
-          code: shaders.clear,
-        }),
-      },
+    const floatRecords =
+      mode === "float32"
+        ? storage(
+            sortedRecordsAttribute,
+            "uvec4",
+            sortedRecordsAttribute.count,
+          ).toReadOnly()
+        : null;
+    const packedRecords =
+      mode === "packed16"
+        ? storage(
+            sortedRecordsAttribute,
+            "uvec2",
+            sortedRecordsAttribute.count,
+          ).toReadOnly()
+        : null;
+    const state = storage(dispatch.state, "uvec4", 1).toReadOnly();
+    const tileAt = (index: Node<"uint">) =>
+      mode === "float32"
+        ? floatRecords!.element(index).x
+        : packedRecords!.element(index).x.shiftRight(16);
+    const boundariesKernel = Fn(() => {
+      const index = instanceIndex;
+      If(index.greaterThanEqual(state.element(0).x), () => Return());
+      const tile = tileAt(index).toVar();
+      If(index.equal(0).or(tileAt(index.sub(1)).notEqual(tile)), () => {
+        offsets.element(tile).assign(index);
+      });
     });
-    this.clearBindGroup = device.createBindGroup({
-      label: "3dgs.clear-tile-offsets-bindings",
-      layout: this.clearPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: storage(this.offsets) },
-        { binding: 1, resource: { buffer: params } },
-      ],
+    this.boundariesNode = boundariesKernel()
+      .computeKernel([WORKGROUP_SIZE])
+      .setName("3DGS find tile boundaries");
+
+    const fillKernel = Fn(() => {
+      const running = state.element(0).x.toVar();
+      offsets.element(tileCount).assign(running);
+      Loop(
+        {
+          start: uint(tileCount),
+          end: uint(0),
+          type: "uint",
+          condition: ">",
+          update: "--",
+        },
+        ({ i }) => {
+          const index = i.sub(1).toVar();
+          If(offsets.element(index).equal(uint(0xffffffff)), () => {
+            offsets.element(index).assign(running);
+          }).Else(() => {
+            running.assign(offsets.element(index));
+          });
+        },
+      );
     });
-    this.findBoundariesPipeline = device.createComputePipeline({
-      label: "3dgs.find-tile-boundaries",
-      layout: "auto",
-      compute: {
-        module: device.createShaderModule({
-          label: "3dgs.find-tile-boundaries.wgsl",
-          code: shaders.boundaries,
-        }),
-      },
-    });
-    this.findBoundariesBindGroup = device.createBindGroup({
-      label: "3dgs.find-tile-boundaries-bindings",
-      layout: this.findBoundariesPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: storage(sortedKey) },
-        { binding: 1, resource: storage(this.offsets) },
-        { binding: 2, resource: dispatchState(dispatchBuffer) },
-      ],
-    });
-    this.fillGapsPipeline = device.createComputePipeline({
-      label: "3dgs.fill-tile-offset-gaps",
-      layout: "auto",
-      compute: {
-        module: device.createShaderModule({
-          label: "3dgs.fill-tile-offset-gaps.wgsl",
-          code: shaders.fill,
-        }),
-      },
-    });
-    this.fillGapsBindGroup = device.createBindGroup({
-      label: "3dgs.fill-tile-offset-gaps-bindings",
-      layout: this.fillGapsPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: storage(this.offsets) },
-        { binding: 1, resource: dispatchState(dispatchBuffer) },
-        { binding: 2, resource: { buffer: params } },
-      ],
-    });
+    this.fillNode = fillKernel()
+      .compute(1)
+      .setName("3DGS fill tile offset gaps");
   }
 
-  encode(pass: GPUComputePassEncoder): void {
-    pass.setPipeline(this.clearPipeline);
-    pass.setBindGroup(0, this.clearBindGroup);
-    pass.dispatchWorkgroups(Math.ceil((this.tileCount + 1) / WORKGROUP_SIZE));
-    pass.setPipeline(this.findBoundariesPipeline);
-    pass.setBindGroup(0, this.findBoundariesBindGroup);
-    pass.dispatchWorkgroupsIndirect(
-      this.dispatchBuffer,
-      LINEAR_DISPATCH_OFFSET,
-    );
-    pass.setPipeline(this.fillGapsPipeline);
-    pass.setBindGroup(0, this.fillGapsBindGroup);
-    pass.dispatchWorkgroups(1);
+  encode(): void {
+    this.renderer.compute(this.clearNode);
+    this.renderer.compute(this.boundariesNode, this.dispatch.linear);
+    this.renderer.compute(this.fillNode);
   }
 
   dispose(): void {
-    this.buffers.dispose();
+    this.clearNode.dispose();
+    this.boundariesNode.dispose();
+    this.fillNode.dispose();
+    this.attributes.dispose();
   }
 }

@@ -16,8 +16,9 @@ project Gaussians
 → front-to-back tile rasterization
 ```
 
-`K` never has to cross to JavaScript. Kernels whose useful work is proportional to `K` are launched with
-`dispatchWorkgroupsIndirect()`; only buffers with a fixed `intersectionCapacity` are allocated on the CPU.
+`K` never has to cross to JavaScript. Compute nodes whose useful work is proportional to `K` are launched with
+Three.js `IndirectStorageBufferAttribute`; only attributes with a fixed `intersectionCapacity` are allocated on
+the CPU. Internally the renderer uses TSL and `WebGPURenderer.compute()` rather than a raw `GPUDevice` API.
 
 ## Project structure
 
@@ -31,14 +32,15 @@ src/
 ├── createGaussianPass.ts           public pass factory
 ├── pipeline/
 │   ├── TiledGaussianPipeline.ts    stage orchestration
-│   ├── FrameUniformBuffer.ts       camera and cloud transforms
+│   ├── AttributePool.ts            Three.js storage-attribute ownership
+│   ├── FrameUniforms.ts            camera and cloud transforms
 │   ├── ProjectionStage.ts          projection and tile coverage
 │   ├── ExclusiveScanStage.ts       hierarchical tile-count scan
 │   ├── IntersectionStage.ts        GPU count, indirect args, emission
 │   ├── RadixSorter.ts              float32 and packed16 sorting
 │   ├── TileOffsetBuilder.ts        per-tile sorted ranges
-│   └── TileRasterizer.ts           front-to-back compositing
-└── shaders/                        WGSL grouped by matching stage
+│   └── TileRasterizer.ts           color/depth compositing
+└── demo.ts                         RenderPipeline example
 ```
 
 ## Usage
@@ -48,12 +50,19 @@ import {
   Object3D,
   PerspectiveCamera,
   RenderPipeline,
+  StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
 import { GaussianData, gaussianPass } from "3dgs-tile-webgpu";
 
 const renderer = new WebGPURenderer();
 await renderer.init();
+
+// A loader/parser can create these attributes directly. Each item is vec4<f32>.
+const means = new StorageBufferAttribute(meansArray, 4);
+const scalesOpacity = new StorageBufferAttribute(scalesOpacityArray, 4);
+const rotations = new StorageBufferAttribute(rotationsArray, 4);
+const shCoefficients = new StorageBufferAttribute(shArray, 4);
 
 const data = new GaussianData(
   {
@@ -72,6 +81,7 @@ const pass = gaussianPass(renderer, camera, data, cloudTransform, {
   depthSortMode: "float32",
   intersectionCapacity: 4_000_000,
   background: [0, 0, 0, 0],
+  outputDepth: true,
 });
 
 const pipeline = new RenderPipeline(renderer);
@@ -88,17 +98,30 @@ const bloomNode = bloom(pass, 0.25);
 pipeline.outputNode = pass.add(bloomNode);
 ```
 
+The named texture outputs are normal Three.js texture nodes:
+
+```ts
+const colorNode = pass.getTextureNode("output");
+const depthNode = pass.getTextureNode("depth"); // requires outputDepth: true
+```
+
+Depth is written in standard perspective-depth convention: `0` at the near plane, `1` at the far plane and
+`1` where no Gaussian contributes. The output is the center depth of the first contributing Gaussian in the
+front-to-back tile list. Disable it by omitting `outputDepth` to avoid allocating and writing the extra texture.
+
 ## `GaussianData` contract
 
-Parsing is deliberately not part of this package. A PLY/SOG/KSplat loader can upload its own buffers and pass
-them directly to `GaussianData`. Every input buffer must include `GPUBufferUsage.STORAGE`.
+Parsing is deliberately not part of this package. A PLY/SOG/KSplat loader creates normal Three.js
+`StorageBufferAttribute` instances and passes them directly to `GaussianData`. This keeps ownership and upload
+inside Three.js, and lets the same attributes be read by TSL compute nodes, node materials, or other Three.js
+code.
 
-| Buffer           | WGSL layout        | Expected values                                                 |
-| ---------------- | ------------------ | --------------------------------------------------------------- |
-| `means`          | `array<vec4<f32>>` | local-space xyz; w unused                                       |
-| `scalesOpacity`  | `array<vec4<f32>>` | positive linear xyz scale; opacity `[0, 1]` in w                |
-| `rotations`      | `array<vec4<f32>>` | normalized quaternion in `xyzw` order                           |
-| `shCoefficients` | `array<vec4<f32>>` | canonical real-SH RGB in xyz; Gaussian-major, coefficient-minor |
+| Attribute        | Three.js type                             | Expected values                                                 |
+| ---------------- | ----------------------------------------- | --------------------------------------------------------------- |
+| `means`          | `StorageBufferAttribute(Float32Array, 4)` | local-space xyz; w unused                                       |
+| `scalesOpacity`  | `StorageBufferAttribute(Float32Array, 4)` | positive linear xyz scale; opacity `[0, 1]` in w                |
+| `rotations`      | `StorageBufferAttribute(Float32Array, 4)` | normalized quaternion in `xyzw` order                           |
+| `shCoefficients` | `StorageBufferAttribute(Float32Array, 4)` | canonical real-SH RGB in xyz; Gaussian-major, coefficient-minor |
 
 The parser is responsible for applying source-format activations such as `exp(logScale)` and
 `sigmoid(opacityLogit)`. SH degrees 0–3 are supported (1, 4, 9, or 16 coefficients per Gaussian).
@@ -111,10 +134,10 @@ local space.
 
 ### `float32`
 
-Reference-quality mode. Each intersection uses three parallel `u32` arrays:
+Reference-quality mode. Each intersection is one Three.js `uvec4` storage record:
 
 ```text
-tileId | bitcast<float32 depth> | gaussianId
+tileId | bitcast<float32 depth> | gaussianId | padding
 ```
 
 The stable radix sort performs eight 4-bit passes over positive float depth, followed by only the tile-ID
@@ -122,33 +145,39 @@ passes required by the current render resolution. For a 13-bit tile ID this is 1
 
 ### `packed16`
 
-Performance mode. The key is:
+Performance mode. Each intersection is one `uvec2` record whose first component is the key:
 
 ```text
 bits 31…16: tileId
 bits 15…0 : depth quantized between camera near and far
 ```
 
-It always needs eight 4-bit passes and reduces ping-pong record storage from 24 to 16 bytes per intersection.
+It always needs eight 4-bit passes and reduces ping-pong record storage from 32 to 16 bytes per intersection.
 The mode supports at most 65,535 screen tiles. Close Gaussians can quantize to the same depth; stable emission
 order then breaks the tie.
 
 ## Indirect dispatch and capacity
 
-After the scan, a one-invocation kernel writes this GPU-owned structure:
+After the scan, a one-invocation TSL compute node writes GPU-owned count state plus two
+`IndirectStorageBufferAttribute` instances:
 
 ```text
-clamped K | requested K | radix block count | overflow
-padding to a 256-byte uniform/indirect boundary
-radix dispatch xyz | K
-linear dispatch xyz | K
+state:           clamped K | requested K | radix block count | overflow
+radix dispatch:  workgroup count xyz
+linear dispatch: workgroup count xyz
 ```
 
-Radix histogram/scatter and sorted-boundary detection consume it through `dispatchWorkgroupsIndirect`. WebGPU
-cannot allocate a new buffer from the GPU, so the intersection buffers are created once at
+`WebGPURenderer.compute(node, indirectAttribute)` maps these attributes to indirect workgroup dispatch without
+exposing a command encoder. WebGPU cannot allocate a new buffer from the GPU, so intersection attributes are
+created once at
 `intersectionCapacity`. If requested `K` exceeds capacity, writes and sorting are safely clamped and
 `await pass.readStats()` reports `overflow: true`. `readStats()` is optional diagnostic readback; the render
 path itself performs no GPU-to-CPU synchronization.
+
+After the first rendered frame, `pass.getResources()` exposes the Three.js-owned intermediate attributes:
+projected means, conics and colors, tile counts, scan offsets, dispatch state, sorted intersection records and
+tile offsets. They can be wrapped with TSL `storage(...)` by another compute node without reaching into the
+WebGPU backend.
 
 ## Development
 
@@ -167,7 +196,7 @@ Append `?sort=packed16` to the demo URL to switch from the default float32 mode.
 - WebGPU backend only; Three.js' WebGL fallback is intentionally rejected.
 - Perspective cameras only.
 - One cloud per pass. Multiple clouds can use multiple passes and be composed as texture nodes.
-- The renderer outputs premultiplied Gaussian accumulation with a configurable background.
-- The package uses Three.js' public pass API and its WebGPU backend/device boundary. Access to the underlying
-  `GPUTexture` is necessarily backend-specific until Three.js exposes custom compute-pass textures at a higher
-  level.
+- The renderer outputs premultiplied Gaussian accumulation with a configurable background and an optional
+  standard perspective-depth texture.
+- Input, intermediate, indirect-dispatch, color, and depth resources are represented by public Three.js
+  attributes/textures. No backend/device access is required.

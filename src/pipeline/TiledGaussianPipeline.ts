@@ -1,57 +1,52 @@
-import { Object3D, PerspectiveCamera } from "three/webgpu";
+import type {
+  Object3D,
+  PerspectiveCamera,
+  StorageTexture,
+  WebGPURenderer,
+} from "three/webgpu";
 import type { GaussianData } from "../GaussianData";
 import { ExclusiveScanStage } from "./ExclusiveScanStage";
-import { FrameUniformBuffer } from "./FrameUniformBuffer";
+import { FrameUniforms } from "./FrameUniforms";
 import { IntersectionStage } from "./IntersectionStage";
 import { ProjectionStage } from "./ProjectionStage";
 import { RadixSorter } from "./RadixSorter";
 import { TileOffsetBuilder } from "./TileOffsetBuilder";
 import { TileRasterizer } from "./TileRasterizer";
 import { TILE_SIZE } from "./constants";
-import type { DepthSortMode, GaussianPassStats } from "./types";
+import type {
+  DepthSortMode,
+  GaussianPassResources,
+  GaussianPassStats,
+} from "./types";
 
 export class TiledGaussianPipeline {
-  private readonly frameUniforms: FrameUniformBuffer;
-  private readonly projection: ProjectionStage;
-  private readonly scan: ExclusiveScanStage;
-  private readonly intersections: IntersectionStage;
-  private readonly sorter: RadixSorter;
+  readonly frame: FrameUniforms;
+  readonly projection: ProjectionStage;
+  readonly scan: ExclusiveScanStage;
+  readonly intersections: IntersectionStage;
+  readonly sorter: RadixSorter;
+
   private tileOffsets: TileOffsetBuilder | null = null;
   private rasterizer: TileRasterizer | null = null;
   private width = 0;
   private height = 0;
   private tilesX = 0;
   private tilesY = 0;
-  private outputTexture: GPUTexture | null = null;
 
   constructor(
-    private readonly device: GPUDevice,
+    private readonly renderer: WebGPURenderer,
     camera: PerspectiveCamera,
-    data: GaussianData,
+    private readonly data: GaussianData,
     anchor: Object3D,
     private readonly mode: DepthSortMode,
-    capacity: number,
+    private readonly capacity: number,
     background: readonly [number, number, number, number],
   ) {
-    this.frameUniforms = new FrameUniformBuffer(
-      device,
-      camera,
-      data,
-      anchor,
-      background,
-    );
-    this.projection = new ProjectionStage(
-      device,
-      data,
-      this.frameUniforms.buffer,
-    );
-    this.scan = new ExclusiveScanStage(
-      device,
-      this.projection.tileCounts,
-      data.count,
-    );
+    this.frame = new FrameUniforms(camera, data, anchor, background);
+    this.projection = new ProjectionStage(data, this.frame);
+    this.scan = new ExclusiveScanStage(this.projection.tileCounts, data.count);
     this.intersections = new IntersectionStage(
-      device,
+      renderer,
       data,
       mode,
       capacity,
@@ -59,23 +54,27 @@ export class TiledGaussianPipeline {
       this.scan.output,
       this.projection.projectedMean,
       this.projection.projectedConic,
-      this.frameUniforms.buffer,
+      this.frame,
     );
     this.sorter = new RadixSorter(
-      device,
+      renderer,
       mode,
       capacity,
       this.intersections.buffers,
-      this.intersections.dispatchBuffer,
+      this.intersections.dispatch,
     );
   }
 
-  prepareFrame(width: number, height: number, outputTexture: GPUTexture): void {
-    const textureChanged = outputTexture !== this.outputTexture;
-    if (width !== this.width || height !== this.height || textureChanged) {
-      this.rebuildTileStages(width, height, outputTexture);
+  prepareFrame(
+    width: number,
+    height: number,
+    colorTexture: StorageTexture,
+    depthTexture: StorageTexture | null,
+  ): void {
+    if (width !== this.width || height !== this.height) {
+      this.rebuildTileStages(width, height, colorTexture, depthTexture);
     }
-    this.frameUniforms.update(width, height, this.tilesX, this.tilesY);
+    this.frame.update(width, height, this.tilesX, this.tilesY);
   }
 
   render(): void {
@@ -84,48 +83,54 @@ export class TiledGaussianPipeline {
         "TiledGaussianPipeline must be prepared before rendering",
       );
     }
-    const encoder = this.device.createCommandEncoder({ label: "3dgs.frame" });
-    const pass = encoder.beginComputePass({ label: "3dgs.tiled-render" });
-    this.projection.encode(pass);
-    this.scan.encode(pass);
-    this.intersections.encode(pass);
-    this.sorter.encode(pass);
-    this.tileOffsets.encode(pass);
-    this.rasterizer.encode(pass, this.tilesX, this.tilesY);
-    pass.end();
-    this.device.queue.submit([encoder.finish()]);
+    this.projection.encode(this.renderer);
+    this.scan.encode(this.renderer);
+    this.intersections.encode();
+    this.sorter.encode();
+    this.tileOffsets.encode();
+    this.rasterizer.encode(this.tilesX, this.tilesY);
   }
 
   readStats(): Promise<GaussianPassStats> {
     return this.intersections.readStats();
   }
 
+  getResources(): GaussianPassResources | null {
+    if (this.tileOffsets === null) return null;
+    return {
+      projectedMean: this.projection.projectedMean,
+      projectedConic: this.projection.projectedConic,
+      projectedColor: this.projection.projectedColor,
+      tileCounts: this.projection.tileCounts,
+      intersectionOffsets: this.scan.output,
+      dispatchState: this.intersections.dispatch.state,
+      sortedIntersections: this.sorter.sortedRecords,
+      tileOffsets: this.tileOffsets.offsets,
+    };
+  }
+
   dispose(): void {
     this.tileOffsets?.dispose();
     this.tileOffsets = null;
+    this.rasterizer?.dispose();
     this.rasterizer = null;
     this.sorter.dispose();
     this.intersections.dispose();
     this.scan.dispose();
     this.projection.dispose();
-    this.frameUniforms.dispose();
   }
 
   private rebuildTileStages(
     width: number,
     height: number,
-    outputTexture: GPUTexture,
+    colorTexture: StorageTexture,
+    depthTexture: StorageTexture | null,
   ): void {
     const tilesX = Math.ceil(width / TILE_SIZE);
     const tilesY = Math.ceil(height / TILE_SIZE);
     const tileCount = tilesX * tilesY;
-    if (
-      tilesX > this.device.limits.maxComputeWorkgroupsPerDimension ||
-      tilesY > this.device.limits.maxComputeWorkgroupsPerDimension
-    ) {
-      throw new RangeError(
-        "Render size exceeds the device's tile dispatch limit",
-      );
+    if (tilesX > 65_535 || tilesY > 65_535) {
+      throw new RangeError("Render size exceeds WebGPU's tile dispatch limit");
     }
     if (this.mode === "packed16" && tileCount > 65_535) {
       throw new RangeError(
@@ -134,28 +139,32 @@ export class TiledGaussianPipeline {
     }
 
     this.tileOffsets?.dispose();
+    this.rasterizer?.dispose();
     this.sorter.configure(tileCount);
     this.tileOffsets = new TileOffsetBuilder(
-      this.device,
+      this.renderer,
       this.mode,
       tileCount,
-      this.sorter.sortedKey,
-      this.intersections.dispatchBuffer,
+      this.sorter.sortedRecords,
+      this.intersections.dispatch,
     );
     this.rasterizer = new TileRasterizer(
-      this.device,
+      this.renderer,
+      this.data.count,
+      this.capacity,
+      this.mode,
       this.projection.projectedMean,
       this.projection.projectedConic,
       this.projection.projectedColor,
-      this.sorter.sortedGaussianIds,
+      this.sorter.sortedRecords,
       this.tileOffsets.offsets,
-      outputTexture,
-      this.frameUniforms.buffer,
+      colorTexture,
+      depthTexture,
+      this.frame,
     );
     this.width = width;
     this.height = height;
     this.tilesX = tilesX;
     this.tilesY = tilesY;
-    this.outputTexture = outputTexture;
   }
 }

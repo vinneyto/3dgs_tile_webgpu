@@ -1,74 +1,72 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { StorageBufferAttribute } from "three/webgpu";
 import { GaussianData } from "../src/GaussianData";
 
-const STORAGE = 0x80;
-
-function buffer(size: number, usage = STORAGE): GPUBuffer {
-  return { size, usage, destroy: vi.fn() } as unknown as GPUBuffer;
+function attribute(items: number, itemSize = 4): StorageBufferAttribute {
+  return new StorageBufferAttribute(
+    new Float32Array(items * itemSize),
+    itemSize,
+  );
 }
 
-beforeAll(() => {
-  Object.defineProperty(globalThis, "GPUBufferUsage", {
-    configurable: true,
-    value: { STORAGE },
-  });
-});
-
 describe("GaussianData", () => {
-  it("accepts externally owned canonical buffers", () => {
+  it("accepts shareable Three.js storage attributes", () => {
     const data = new GaussianData(
       {
-        means: buffer(32),
-        scalesOpacity: buffer(32),
-        rotations: buffer(32),
-        shCoefficients: buffer(32 * 16),
+        means: attribute(2),
+        scalesOpacity: attribute(2),
+        rotations: attribute(2),
+        shCoefficients: attribute(2 * 16),
       },
       { count: 2, shDegree: 3 },
     );
     expect(data.shCoefficientCount).toBe(16);
-    data.dispose();
-    expect(data.means.destroy).not.toHaveBeenCalled();
+    expect(data.means.isStorageBufferAttribute).toBe(true);
   });
 
-  it("rejects undersized or non-storage buffers", () => {
-    const valid = buffer(16);
+  it("rejects undersized or non-vec4 attributes", () => {
+    const valid = attribute(1);
     expect(
       () =>
         new GaussianData(
           {
-            means: buffer(12),
+            means: attribute(1, 3),
             scalesOpacity: valid,
             rotations: valid,
             shCoefficients: valid,
           },
           { count: 1 },
         ),
-    ).toThrow(/means buffer/);
+    ).toThrow(/itemSize 4/);
     expect(
       () =>
         new GaussianData(
           {
-            means: buffer(16, 0),
+            means: attribute(1),
             scalesOpacity: valid,
             rotations: valid,
-            shCoefficients: valid,
+            shCoefficients: attribute(1),
           },
-          { count: 1 },
+          { count: 1, shDegree: 1 },
         ),
-    ).toThrow(/GPUBufferUsage.STORAGE/);
+    ).toThrow(/at least 4/);
   });
 
-  it("destroys owned buffers exactly once", () => {
+  it("disposes owned attributes exactly once", () => {
     const buffers = {
-      means: buffer(16),
-      scalesOpacity: buffer(16),
-      rotations: buffer(16),
-      shCoefficients: buffer(16),
+      means: attribute(1),
+      scalesOpacity: attribute(1),
+      rotations: attribute(1),
+      shCoefficients: attribute(1),
     };
+    for (const value of Object.values(buffers)) {
+      vi.spyOn(value, "dispose");
+    }
     const data = new GaussianData(buffers, { count: 1, ownsBuffers: true });
     data.dispose();
     data.dispose();
-    for (const value of Object.values(buffers))
-      expect(value.destroy).toHaveBeenCalledOnce();
+    for (const value of Object.values(buffers)) {
+      expect(value.dispose).toHaveBeenCalledOnce();
+    }
   });
 });
