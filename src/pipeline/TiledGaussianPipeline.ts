@@ -21,6 +21,7 @@ import type {
   GaussianPassDebugInfo,
   GaussianPassResources,
   GaussianPassStats,
+  ResolvedRadixBackend,
 } from "./types";
 
 export class TiledGaussianPipeline {
@@ -52,6 +53,7 @@ export class TiledGaussianPipeline {
     private readonly capacity: number,
     background: readonly [number, number, number, number],
     private readonly profileKernels: boolean,
+    private readonly radixBackend: ResolvedRadixBackend,
   ) {
     this.frame = new FrameUniforms(camera, data, anchor, background);
     this.projection = new ProjectionStage(data, this.frame, antialiasMode);
@@ -75,6 +77,7 @@ export class TiledGaussianPipeline {
       data.count,
       this.visible.buffers,
       this.visible.dispatch,
+      radixBackend,
     );
     this.depthSorter.configure(mode === "float32" ? 32 : 16);
     this.orderedTiles = new DepthOrderedTileStage(
@@ -108,6 +111,7 @@ export class TiledGaussianPipeline {
       capacity,
       this.intersections.buffers,
       this.intersections.dispatch,
+      radixBackend,
     );
   }
 
@@ -159,6 +163,7 @@ export class TiledGaussianPipeline {
       radixPasses: this.depthSorter.passCount + this.sorter.passCount,
       depthRadixPasses: this.depthSorter.passCount,
       tileRadixPasses: this.sorter.passCount,
+      radixBackend: this.radixBackend,
       profileKernels: this.profileKernels,
     };
   }

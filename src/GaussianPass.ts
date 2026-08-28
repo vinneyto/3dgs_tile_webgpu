@@ -22,6 +22,7 @@ import { colorSpaceToWorking } from "three/tsl";
 import { GaussianData } from "./GaussianData";
 import { TiledGaussianPipeline } from "./pipeline/TiledGaussianPipeline";
 import { WORKGROUP_SIZE } from "./pipeline/constants";
+import { resolveRadixBackend } from "./pipeline/radixBackend";
 import type {
   AntialiasMode,
   DepthSortMode,
@@ -29,6 +30,7 @@ import type {
   GaussianPassOptions,
   GaussianPassResources,
   GaussianPassStats,
+  ResolvedRadixBackend,
 } from "./pipeline/types";
 
 const drawingBufferSize = new Vector2();
@@ -47,6 +49,7 @@ export class GaussianPass extends PassNode {
   readonly outputDepth: boolean;
   readonly colorSpace: ColorSpace;
   readonly profileKernels: boolean;
+  readonly radixBackend: ResolvedRadixBackend;
   readonly colorTexture: StorageTexture;
   readonly depthTexture: StorageTexture | null;
 
@@ -71,11 +74,16 @@ export class GaussianPass extends PassNode {
 
     const depthSortMode = options.depthSortMode ?? "float32";
     const antialiasMode = options.antialiasMode ?? "compensated";
+    const requestedRadixBackend = options.radixBackend ?? "auto";
     if (antialiasMode !== "compensated" && antialiasMode !== "classic") {
       throw new RangeError(
         'antialiasMode must be either "compensated" or "classic"',
       );
     }
+    const radixBackend = resolveRadixBackend(
+      requestedRadixBackend,
+      renderer.hasFeature("subgroups"),
+    );
     const intersectionCapacity =
       options.intersectionCapacity ?? gaussianData.count * 16;
     if (!Number.isInteger(intersectionCapacity) || intersectionCapacity <= 0) {
@@ -103,6 +111,7 @@ export class GaussianPass extends PassNode {
     this.outputDepth = options.outputDepth ?? false;
     this.colorSpace = options.colorSpace ?? SRGBColorSpace;
     this.profileKernels = options.profileKernels ?? false;
+    this.radixBackend = radixBackend;
 
     this.renderTarget.texture.dispose();
     this.colorTexture = new StorageTexture(1, 1);
@@ -204,6 +213,7 @@ export class GaussianPass extends PassNode {
       this.intersectionCapacity,
       this.background,
       this.profileKernels,
+      this.radixBackend,
     );
     this.pipeline.prepareFrame(
       width,
@@ -245,6 +255,7 @@ export class GaussianPass extends PassNode {
         radixPasses: 0,
         depthRadixPasses: 0,
         tileRadixPasses: 0,
+        radixBackend: this.radixBackend,
         profileKernels: this.profileKernels,
       }
     );
@@ -267,4 +278,6 @@ export type {
   GaussianPassOptions,
   GaussianPassResources,
   GaussianPassStats,
+  RadixBackend,
+  ResolvedRadixBackend,
 } from "./pipeline/types";

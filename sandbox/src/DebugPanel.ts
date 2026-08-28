@@ -125,7 +125,7 @@ export class DebugPanel {
     const stagesLine =
       debug === null
         ? "stages         —"
-        : `stages         rebuilds ${debug.tileStageRebuilds}  radix depth ${debug.depthRadixPasses} + tile ${debug.tileRadixPasses}`;
+        : `stages         rebuilds ${debug.tileStageRebuilds}  radix ${debug.radixBackend} depth ${debug.depthRadixPasses} + tile ${debug.tileRadixPasses}`;
 
     this.element.textContent = [
       `FPS ${fps.toFixed(1).padStart(5)}  frame ${formatMs(this.averageFrameMs)}`,

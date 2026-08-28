@@ -96,6 +96,7 @@ scene.add(cloudTransform); // an empty positioning object; it has no geometry
 const pass = gaussianPass(renderer, camera, data, cloudTransform, {
   depthSortMode: "float32",
   antialiasMode: "compensated",
+  radixBackend: "auto",
   intersectionCapacity: 4_000_000,
   background: [0, 0, 0, 0],
   outputDepth: true,
@@ -192,10 +193,13 @@ It needs four depth passes over `N_visible`, followed by the same tile-only pass
 8-byte intersection records and support the same tile counts. Close Gaussians can quantize to the same depth;
 stable sorting preserves their compacted input order as the tie-breaker.
 
-Each radix pass follows the Brush/FidelityFX-style five-stage layout: parallel 1024-record histogram,
-histogram reduction, global reduced scan, scan-add and stable scatter. A 256-invocation workgroup processes
-four records per invocation. Histogram reduction and scatter use WebGPU subgroup operations while supporting
-subgroup sizes from 8 through 64.
+Each radix pass follows the same five-stage layout: parallel 1024-record histogram, histogram reduction,
+global reduced scan, scan-add and stable scatter. A 256-invocation workgroup processes four records per
+invocation. With the default `radixBackend: "auto"`, the pass selects the subgroup-accelerated
+Brush/FidelityFX-style kernels when `renderer.hasFeature("subgroups")` is true, otherwise it uses portable
+workgroup atomics, masks and barriers. Both backends produce the same stable order. `"subgroup"` and
+`"workgroup"` can be selected explicitly for testing; forcing `"subgroup"` without the WebGPU feature throws
+before pipeline creation. The sandbox accepts `?radix=subgroup` and `?radix=workgroup`.
 
 Projection and emission share a conservative StopThePop tile-vs-ellipse test. Tiles inside the screen-space
 AABB that cannot reach alpha `1/255` are excluded from `K`, reducing both sort and raster work.
@@ -295,7 +299,8 @@ passes receive working-linear RGB and `RenderPipeline` performs exactly one disp
 ## Current scope
 
 - WebGPU backend only; Three.js' WebGL fallback is intentionally rejected.
-- The optimized radix path requires the WebGPU `subgroups` feature.
+- The subgroup radix backend uses the optional WebGPU `subgroups` feature; a portable workgroup backend is
+  selected automatically when it is unavailable.
 - Perspective cameras only.
 - One cloud per pass. Multiple clouds can use multiple passes and be composed as texture nodes.
 - The renderer outputs premultiplied Gaussian accumulation with a configurable background and an optional
