@@ -10,6 +10,7 @@ import {
   gaussianPass,
   type GaussianData,
   type GaussianPass,
+  type RadixBackend,
 } from "../../src/index";
 import { CanonicalGaussianPlyLoader } from "./CanonicalGaussianPlyLoader";
 import { DebugPanel } from "./DebugPanel";
@@ -147,6 +148,7 @@ export class GaussianSandbox {
       background: [0.018, 0.022, 0.032, 1],
       profileKernels:
         new URLSearchParams(location.search).get("profile") === "kernels",
+      radixBackend: readRadixBackend(),
     });
     this.debugPanel.setPass(this.pass);
     this.pipeline = new RenderPipeline(this.renderer);
@@ -221,4 +223,12 @@ function readRenderPixelRatio(): number {
   );
   if (!Number.isFinite(requested)) return 1;
   return Math.min(2, Math.max(0.25, requested));
+}
+
+function readRadixBackend(): RadixBackend {
+  const requested = new URLSearchParams(location.search).get("radix");
+  if (requested === "subgroup" || requested === "workgroup") {
+    return requested;
+  }
+  return "auto";
 }

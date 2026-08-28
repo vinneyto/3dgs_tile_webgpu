@@ -6,6 +6,11 @@ import {
   scanAddRadixHistogramsWGSL,
   scanRadixReducedWGSL,
 } from "../src/kernels/radix";
+import {
+  radixWorkgroupHistogramWGSL,
+  radixWorkgroupScatterWGSL,
+  reduceRadixHistogramsWorkgroupWGSL,
+} from "../src/kernels/radixWorkgroup";
 import { emitIntersectionsWGSL } from "../src/kernels/intersections";
 import { projectionWGSL } from "../src/kernels/projection";
 import { scanBlocksWGSL, scanVisibilityBlocksWGSL } from "../src/kernels/scan";
@@ -13,6 +18,7 @@ import {
   RADIX_BLOCK_ITEMS,
   RADIX_ELEMENTS_PER_THREAD,
 } from "../src/pipeline/constants";
+import { resolveRadixBackend } from "../src/pipeline/radixBackend";
 
 describe("depth/tile radix pipeline", () => {
   it("processes four records per thread with subgroup-stable scatter", () => {
@@ -27,6 +33,29 @@ describe("depth/tile radix pipeline", () => {
     expect(reduceRadixHistogramsWGSL).toContain("reduce_radix_histograms");
     expect(scanRadixReducedWGSL).toContain("scan_radix_reduced");
     expect(scanAddRadixHistogramsWGSL).toContain("scan_add_radix_histograms");
+  });
+
+  it("provides a subgroup-free workgroup radix path", () => {
+    const sources = [
+      radixWorkgroupHistogramWGSL(0),
+      reduceRadixHistogramsWorkgroupWGSL,
+      radixWorkgroupScatterWGSL(0),
+    ];
+
+    expect(sources.join("\n")).not.toMatch(/subgroup/i);
+    expect(sources[0]).toContain("atomicAdd(&(*histogram)[digit], 1u)");
+    expect(sources[1]).toContain("(*scratch)[lane + active_count]");
+    expect(sources[2]).toContain("shared_digit_masks");
+    expect(sources[2]).toContain("local_digit_counts");
+  });
+
+  it("selects radix backend from the WebGPU subgroup feature", () => {
+    expect(resolveRadixBackend("auto", true)).toBe("subgroup");
+    expect(resolveRadixBackend("auto", false)).toBe("workgroup");
+    expect(resolveRadixBackend("workgroup", true)).toBe("workgroup");
+    expect(() => resolveRadixBackend("subgroup", false)).toThrow(
+      'requires the WebGPU "subgroups" feature',
+    );
   });
 
   it("shares the conservative tile contribution test", () => {

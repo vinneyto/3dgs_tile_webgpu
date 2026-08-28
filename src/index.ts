@@ -11,5 +11,7 @@ export {
   type GaussianPassOptions,
   type GaussianPassResources,
   type GaussianPassStats,
+  type RadixBackend,
+  type ResolvedRadixBackend,
 } from "./GaussianPass";
 export { gaussianPass } from "./createGaussianPass";

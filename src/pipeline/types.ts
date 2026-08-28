@@ -6,6 +6,8 @@ import type {
 
 export type DepthSortMode = "float32" | "packed16";
 export type AntialiasMode = "compensated" | "classic";
+export type RadixBackend = "auto" | "subgroup" | "workgroup";
+export type ResolvedRadixBackend = Exclude<RadixBackend, "auto">;
 
 export interface GaussianPassOptions {
   /** Exact float32 or quantized 16-bit depth for the visible-Gaussian pre-sort. */
@@ -22,6 +24,8 @@ export interface GaussianPassOptions {
   colorSpace?: ColorSpace;
   /** Split normally batched compute groups so timestamp tools can measure every kernel. */
   profileKernels?: boolean;
+  /** Select subgroup-accelerated or portable workgroup radix. Defaults to feature-based auto detection. */
+  radixBackend?: RadixBackend;
 }
 
 export interface GaussianPassStats {
@@ -43,6 +47,7 @@ export interface GaussianPassDebugInfo {
   radixPasses: number;
   depthRadixPasses: number;
   tileRadixPasses: number;
+  radixBackend: ResolvedRadixBackend;
   profileKernels: boolean;
 }
 

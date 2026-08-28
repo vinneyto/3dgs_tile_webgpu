@@ -22,6 +22,11 @@ import {
   scanAddRadixHistogramsWGSL,
   scanRadixReducedWGSL,
 } from "../kernels/radix";
+import {
+  radixWorkgroupHistogramWGSL,
+  radixWorkgroupScatterWGSL,
+  reduceRadixHistogramsWorkgroupWGSL,
+} from "../kernels/radixWorkgroup";
 import { AttributePool } from "./AttributePool";
 import {
   RADIX_BITS,
@@ -31,7 +36,11 @@ import {
   RADIX_SIZE,
   WORKGROUP_SIZE,
 } from "./constants";
-import type { DispatchResources, KeyValueBuffers } from "./types";
+import type {
+  DispatchResources,
+  KeyValueBuffers,
+  ResolvedRadixBackend,
+} from "./types";
 
 interface RadixPass {
   histogram: ComputeNode;
@@ -59,6 +68,7 @@ export class RadixSorter {
     private readonly capacity: number,
     private readonly buffers: KeyValueBuffers,
     private readonly dispatch: DispatchResources,
+    private readonly backend: ResolvedRadixBackend,
   ) {
     this.maxRadixBlocks = Math.ceil(capacity / RADIX_BLOCK_ITEMS);
     this.maxReduceChunks = Math.ceil(this.maxRadixBlocks / RADIX_REDUCE_ITEMS);
@@ -82,21 +92,28 @@ export class RadixSorter {
       this.blockHistograms.count,
     ).toReadOnly();
     const reduceKernel = wgslFn<Record<string, Node>>(
-      reduceRadixHistogramsWGSL,
+      backend === "subgroup"
+        ? reduceRadixHistogramsWGSL
+        : reduceRadixHistogramsWorkgroupWGSL,
     );
-    this.reduceNode = reduceKernel({
+    const reduceParameters: Record<string, Node> = {
       lane: invocationLocalIndex,
       group_id: workgroupId,
-      subgroup_index: subgroupIndex,
-      subgroup_lane: invocationSubgroupIndex,
-      subgroup_size: subgroupSize,
       block_stride: uint(this.maxRadixBlocks),
       chunk_stride: uint(this.maxReduceChunks),
       state,
       block_histograms: histograms,
       reduced: storage(this.reduced, "uint", this.reduced.count),
-      partials: workgroupArray("uint", RADIX_MAX_SUBGROUPS),
-    })
+    };
+    if (backend === "subgroup") {
+      reduceParameters.subgroup_index = subgroupIndex;
+      reduceParameters.subgroup_lane = invocationSubgroupIndex;
+      reduceParameters.subgroup_size = subgroupSize;
+      reduceParameters.partials = workgroupArray("uint", RADIX_MAX_SUBGROUPS);
+    } else {
+      reduceParameters.scratch = workgroupArray("uint", WORKGROUP_SIZE);
+    }
+    this.reduceNode = reduceKernel(reduceParameters)
       .computeKernel([WORKGROUP_SIZE])
       .setName(`3DGS ${label} radix reduce WGSL`);
 
@@ -177,14 +194,13 @@ export class RadixSorter {
     ).toReadOnly();
 
     const histogramKernel = wgslFn<Record<string, Node>>(
-      radixHistogramWGSL(shift),
+      this.backend === "subgroup"
+        ? radixHistogramWGSL(shift)
+        : radixWorkgroupHistogramWGSL(shift),
     );
-    const histogram = histogramKernel({
+    const histogramParameters: Record<string, Node> = {
       lane: invocationLocalIndex,
       block_index: workgroupId.x,
-      subgroup_index: subgroupIndex,
-      subgroup_lane: invocationSubgroupIndex,
-      subgroup_size: subgroupSize,
       block_stride: uint(this.maxRadixBlocks),
       state,
       records: recordsInput,
@@ -193,18 +209,30 @@ export class RadixSorter {
         "uint",
         this.blockHistograms.count,
       ),
-      partials: workgroupArray("uint", RADIX_SIZE * RADIX_MAX_SUBGROUPS),
-    })
+    };
+    if (this.backend === "subgroup") {
+      histogramParameters.subgroup_index = subgroupIndex;
+      histogramParameters.subgroup_lane = invocationSubgroupIndex;
+      histogramParameters.subgroup_size = subgroupSize;
+      histogramParameters.partials = workgroupArray(
+        "uint",
+        RADIX_SIZE * RADIX_MAX_SUBGROUPS,
+      );
+    } else {
+      histogramParameters.histogram = workgroupArray("atomic<u32>", RADIX_SIZE);
+    }
+    const histogram = histogramKernel(histogramParameters)
       .computeKernel([WORKGROUP_SIZE])
       .setName(`3DGS ${this.label} radix histogram WGSL ${passIndex}`);
 
-    const scatterKernel = wgslFn<Record<string, Node>>(radixScatterWGSL(shift));
-    const scatter = scatterKernel({
+    const scatterKernel = wgslFn<Record<string, Node>>(
+      this.backend === "subgroup"
+        ? radixScatterWGSL(shift)
+        : radixWorkgroupScatterWGSL(shift),
+    );
+    const scatterParameters: Record<string, Node> = {
       lane: invocationLocalIndex,
       block_index: workgroupId.x,
-      subgroup_index: subgroupIndex,
-      subgroup_lane: invocationSubgroupIndex,
-      subgroup_size: subgroupSize,
       block_stride: uint(this.maxRadixBlocks),
       state,
       records_in: recordsInput,
@@ -216,8 +244,23 @@ export class RadixSorter {
       ).toReadOnly(),
       block_bases: workgroupArray("uint", RADIX_SIZE),
       local_digit_counts: workgroupArray("uint", RADIX_SIZE),
-      partials: workgroupArray("uint", RADIX_SIZE * RADIX_MAX_SUBGROUPS),
-    })
+    };
+    if (this.backend === "subgroup") {
+      scatterParameters.subgroup_index = subgroupIndex;
+      scatterParameters.subgroup_lane = invocationSubgroupIndex;
+      scatterParameters.subgroup_size = subgroupSize;
+      scatterParameters.partials = workgroupArray(
+        "uint",
+        RADIX_SIZE * RADIX_MAX_SUBGROUPS,
+      );
+    } else {
+      scatterParameters.shared_digits = workgroupArray("uint", WORKGROUP_SIZE);
+      scatterParameters.shared_digit_masks = workgroupArray(
+        "uint",
+        RADIX_SIZE * (WORKGROUP_SIZE / 32),
+      );
+    }
+    const scatter = scatterKernel(scatterParameters)
       .computeKernel([WORKGROUP_SIZE])
       .setName(`3DGS ${this.label} radix scatter WGSL ${passIndex}`);
     return { histogram, scatter };
