@@ -1,14 +1,15 @@
 import type {
-  Object3D,
   PerspectiveCamera,
   StorageTexture,
   WebGPURenderer,
 } from "three/webgpu";
 import type { GaussianData } from "../GaussianData";
+import type { GaussianStore } from "../GaussianStore";
 import { DepthOrderedTileStage } from "./DepthOrderedTileStage";
 import { ExclusiveScanStage } from "./ExclusiveScanStage";
 import { FrameUniforms } from "./FrameUniforms";
 import { IntersectionStage } from "./IntersectionStage";
+import { ObjectFrameState } from "./ObjectFrameState";
 import { ProjectionStage } from "./ProjectionStage";
 import { RadixSorter } from "./RadixSorter";
 import { TileOffsetBuilder } from "./TileOffsetBuilder";
@@ -26,6 +27,7 @@ import type {
 
 export class TiledGaussianPipeline {
   readonly frame: FrameUniforms;
+  readonly objects: ObjectFrameState;
   readonly projection: ProjectionStage;
   readonly visibleScan: ExclusiveScanStage;
   readonly visible: VisibleGaussianStage;
@@ -47,7 +49,7 @@ export class TiledGaussianPipeline {
     private readonly renderer: WebGPURenderer,
     camera: PerspectiveCamera,
     private readonly data: GaussianData,
-    anchor: Object3D,
+    store: GaussianStore,
     private readonly mode: DepthSortMode,
     antialiasMode: AntialiasMode,
     private readonly capacity: number,
@@ -55,8 +57,14 @@ export class TiledGaussianPipeline {
     private readonly profileKernels: boolean,
     private readonly radixBackend: ResolvedRadixBackend,
   ) {
-    this.frame = new FrameUniforms(camera, data, anchor, background);
-    this.projection = new ProjectionStage(data, this.frame, antialiasMode);
+    this.frame = new FrameUniforms(camera, background);
+    this.objects = new ObjectFrameState(camera, store, data.count);
+    this.projection = new ProjectionStage(
+      data,
+      this.frame,
+      this.objects,
+      antialiasMode,
+    );
     this.visibleScan = new ExclusiveScanStage(
       this.projection.projectedMean,
       data.count,
@@ -122,6 +130,7 @@ export class TiledGaussianPipeline {
     depthTexture: StorageTexture | null,
   ): void {
     this.frame.update(width, height, this.tilesX, this.tilesY);
+    this.objects.update();
     if (width !== this.width || height !== this.height) {
       this.rebuildTileStages(width, height, colorTexture, depthTexture);
     }
@@ -198,6 +207,7 @@ export class TiledGaussianPipeline {
     this.visible.dispose();
     this.visibleScan.dispose();
     this.projection.dispose();
+    this.objects.dispose();
   }
 
   private rebuildTileStages(

@@ -1,5 +1,5 @@
-import { Object3D, PerspectiveCamera, type WebGPURenderer } from "three/webgpu";
-import type { GaussianData } from "./GaussianData";
+import { PerspectiveCamera, type WebGPURenderer } from "three/webgpu";
+import type { GaussianStore } from "./GaussianStore";
 import { GaussianPass } from "./GaussianPass";
 import type { GaussianPassOptions } from "./pipeline/types";
 
@@ -7,9 +7,8 @@ import type { GaussianPassOptions } from "./pipeline/types";
 export function gaussianPass(
   renderer: WebGPURenderer,
   camera: PerspectiveCamera,
-  gaussianData: GaussianData,
-  anchor: Object3D,
+  gaussianStore: GaussianStore,
   options?: GaussianPassOptions,
 ): GaussianPass {
-  return new GaussianPass(renderer, camera, gaussianData, anchor, options);
+  return new GaussianPass(renderer, camera, gaussianStore, options);
 }

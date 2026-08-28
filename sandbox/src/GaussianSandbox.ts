@@ -1,5 +1,4 @@
 import {
-  Object3D,
   PerspectiveCamera,
   RenderPipeline,
   Scene,
@@ -7,12 +6,13 @@ import {
 } from "three/webgpu";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
+  CanonicalGaussianPlyLoader,
   gaussianPass,
   type GaussianData,
+  GaussianStore,
   type GaussianPass,
   type RadixBackend,
 } from "../../src/index";
-import { CanonicalGaussianPlyLoader } from "./CanonicalGaussianPlyLoader";
 import { DebugPanel } from "./DebugPanel";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 
@@ -20,12 +20,12 @@ const MAX_INDIRECT_CAPACITY = 256 * 65_535;
 
 export class GaussianSandbox {
   private readonly loader = new CanonicalGaussianPlyLoader();
-  private readonly anchor = new Object3D();
+  private readonly scene = new Scene();
   private readonly controls: OrbitControls;
   private readonly debugPanel: DebugPanel;
   private pipeline: RenderPipeline | null = null;
   private pass: GaussianPass | null = null;
-  private data: GaussianData | null = null;
+  private store: GaussianStore | null = null;
 
   private constructor(
     private readonly renderer: WebGPURenderer,
@@ -37,9 +37,6 @@ export class GaussianSandbox {
     debugEnabled: boolean,
     statsEnabled: boolean,
   ) {
-    const scene = new Scene();
-    scene.add(this.anchor);
-    this.anchor.name = "PLY Gaussian cloud transform";
     this.controls = new OrbitControls(camera, renderer.domElement);
     this.controls.enableDamping = true;
     this.debugPanel = new DebugPanel(
@@ -126,16 +123,20 @@ export class GaussianSandbox {
   private show(data: GaussianData, source: string): void {
     this.pass?.dispose();
     this.pipeline?.dispose();
-    this.data?.dispose();
-
-    this.data = data;
     this.frameCloud(data);
+    this.store?.dispose();
+    this.store = new GaussianStore();
+    const cloud = this.store.add(data, {
+      name: `${source} Gaussian cloud`,
+      ownsData: true,
+    });
+    this.scene.add(cloud);
     const requestedCapacity = Math.max(65_536, data.count * 16);
     const intersectionCapacity = Math.min(
       MAX_INDIRECT_CAPACITY,
       requestedCapacity,
     );
-    this.pass = gaussianPass(this.renderer, this.camera, data, this.anchor, {
+    this.pass = gaussianPass(this.renderer, this.camera, this.store, {
       depthSortMode:
         new URLSearchParams(location.search).get("sort") === "packed16"
           ? "packed16"

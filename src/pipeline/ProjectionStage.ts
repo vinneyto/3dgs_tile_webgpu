@@ -10,6 +10,7 @@ import { projectionWGSL } from "../kernels/projection";
 import { AttributePool } from "./AttributePool";
 import { WORKGROUP_SIZE } from "./constants";
 import type { FrameUniforms } from "./FrameUniforms";
+import type { ObjectFrameState } from "./ObjectFrameState";
 import type { AntialiasMode } from "./types";
 
 export class ProjectionStage {
@@ -24,12 +25,10 @@ export class ProjectionStage {
   constructor(
     data: GaussianData,
     frame: FrameUniforms,
+    objects: ObjectFrameState,
     antialiasMode: AntialiasMode,
   ) {
-    this.projectedMean = this.attributes.createFloat(
-      "3dgs.projected-mean",
-      data.count,
-    );
+    this.projectedMean = objects.attribute;
     this.projectedConic = this.attributes.createFloat(
       "3dgs.projected-conic",
       data.count,
@@ -48,9 +47,7 @@ export class ProjectionStage {
       gid: instanceIndex,
       gaussian_count: uint(data.count),
       sh_degree: uint(data.shDegree),
-      model_view: frame.modelView,
       projection: frame.projection,
-      camera_local: frame.cameraLocal,
       viewport: frame.viewport,
       tiles: uvec2(frame.tilesX, frame.tilesY),
       means: storage(data.means, "vec4", data.count).toReadOnly(),
@@ -65,7 +62,11 @@ export class ProjectionStage {
         "vec4",
         data.count * data.shCoefficientCount,
       ).toReadOnly(),
-      projected_mean: storage(this.projectedMean, "vec4", data.count),
+      projected_mean: storage(
+        this.projectedMean,
+        "vec4",
+        this.projectedMean.count,
+      ),
       projected_conic: storage(this.projectedConic, "vec4", data.count),
       projected_color: storage(this.projectedColor, "vec4", data.count),
       tile_counts: storage(this.tileCounts, "uint", data.count),

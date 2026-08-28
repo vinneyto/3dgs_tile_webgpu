@@ -53,6 +53,7 @@ export interface GaussianPassDebugInfo {
 
 /** Three.js-owned intermediate attributes reusable by other node code or wgslFn kernels. */
 export interface GaussianPassResources {
+  /** Gaussian results occupy the first store.count rows; camera-specific object frames use the private tail. */
   projectedMean: StorageBufferAttribute;
   projectedConic: StorageBufferAttribute;
   projectedColor: StorageBufferAttribute;

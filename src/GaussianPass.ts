@@ -3,7 +3,6 @@ import {
   HalfFloatType,
   NearestFilter,
   NoColorSpace,
-  Object3D,
   PassNode,
   PerspectiveCamera,
   RedFormat,
@@ -19,7 +18,7 @@ import {
   type WebGPURenderer,
 } from "three/webgpu";
 import { colorSpaceToWorking } from "three/tsl";
-import { GaussianData } from "./GaussianData";
+import { GaussianStore } from "./GaussianStore";
 import { TiledGaussianPipeline } from "./pipeline/TiledGaussianPipeline";
 import { WORKGROUP_SIZE } from "./pipeline/constants";
 import { resolveRadixBackend } from "./pipeline/radixBackend";
@@ -36,12 +35,10 @@ import type {
 const drawingBufferSize = new Vector2();
 
 /**
- * A single-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
- * The anchor is an ordinary Object3D; its world matrix is the cloud's local-to-world transform.
+ * A multi-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
  */
 export class GaussianPass extends PassNode {
-  readonly gaussianData: GaussianData;
-  readonly anchor: Object3D;
+  readonly gaussianStore: GaussianStore;
   readonly depthSortMode: DepthSortMode;
   readonly antialiasMode: AntialiasMode;
   readonly intersectionCapacity: number;
@@ -56,13 +53,13 @@ export class GaussianPass extends PassNode {
   private readonly ownerRenderer: WebGPURenderer;
   private workingColorNode: Node | null = null;
   private pipeline: TiledGaussianPipeline | null = null;
+  private pipelineLayoutVersion = -1;
   private disposed = false;
 
   constructor(
     renderer: WebGPURenderer,
     camera: PerspectiveCamera,
-    gaussianData: GaussianData,
-    anchor: Object3D,
+    gaussianStore: GaussianStore,
     options: GaussianPassOptions = {},
   ) {
     super(PassNode.COLOR, new Scene(), camera, {
@@ -84,6 +81,7 @@ export class GaussianPass extends PassNode {
       requestedRadixBackend,
       renderer.hasFeature("subgroups"),
     );
+    const gaussianData = gaussianStore.getPackedData();
     const intersectionCapacity =
       options.intersectionCapacity ?? gaussianData.count * 16;
     if (!Number.isInteger(intersectionCapacity) || intersectionCapacity <= 0) {
@@ -102,8 +100,7 @@ export class GaussianPass extends PassNode {
 
     this.name = "GaussianPass";
     this.ownerRenderer = renderer;
-    this.gaussianData = gaussianData;
-    this.anchor = anchor;
+    this.gaussianStore = gaussianStore;
     this.depthSortMode = depthSortMode;
     this.antialiasMode = antialiasMode;
     this.intersectionCapacity = intersectionCapacity;
@@ -203,18 +200,31 @@ export class GaussianPass extends PassNode {
     }
     renderer.initRenderTarget(this.renderTarget);
 
-    this.pipeline ??= new TiledGaussianPipeline(
-      renderer,
-      this.camera,
-      this.gaussianData,
-      this.anchor,
-      this.depthSortMode,
-      this.antialiasMode,
-      this.intersectionCapacity,
-      this.background,
-      this.profileKernels,
-      this.radixBackend,
-    );
+    if (
+      this.pipeline === null ||
+      this.pipelineLayoutVersion !== this.gaussianStore.layoutVersion
+    ) {
+      this.pipeline?.dispose();
+      const data = this.gaussianStore.getPackedData();
+      if (data.count > WORKGROUP_SIZE * 65_535) {
+        throw new RangeError(
+          "Gaussian count exceeds the one-dimensional projection dispatch limit",
+        );
+      }
+      this.pipeline = new TiledGaussianPipeline(
+        renderer,
+        this.camera,
+        data,
+        this.gaussianStore,
+        this.depthSortMode,
+        this.antialiasMode,
+        this.intersectionCapacity,
+        this.background,
+        this.profileKernels,
+        this.radixBackend,
+      );
+      this.pipelineLayoutVersion = this.gaussianStore.layoutVersion;
+    }
     this.pipeline.prepareFrame(
       width,
       height,
