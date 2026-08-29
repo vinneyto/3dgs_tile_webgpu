@@ -16,13 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 0
           lfs: false
 
       - name: Recreate and upload the LFS objects
         run: |
           git lfs install --local
-          git show HEAD^:sandbox/public/sample.ply > /tmp/sample.ply
+          git show 7a8219f4934c6d3b8994093613d7c4ef5b5a487d:sandbox/public/sample.ply > /tmp/sample.ply
           curl --fail --location \
             --output /tmp/dolphins_colored.ply \
             https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/ply/ascii/dolphins_colored.ply
