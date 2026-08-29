@@ -33,4 +33,6 @@ jobs:
           git add --renormalize \
             sandbox/public/sample.ply \
             sandbox/public/assets/dolphins-colored-3dgs.ply
-          git lfs push origin HEAD
+          git lfs push --object-id origin \
+            5fec2dedb49d6a25a11fc6c2195e6be83b41ba61e7f5eba8e430cfab1466b9ee \
+            ddce06fc4ef5b30a4cbcf348b5b0bea5a3ebd20b78e08a4dddb004543863c5a8
