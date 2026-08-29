@@ -86,6 +86,45 @@ small {
   color: #a9d4b2;
 }
 
+#spatial-debug {
+  color: #b9c3d8;
+  font-size: 12px;
+}
+
+#spatial-debug[open] {
+  display: grid;
+  gap: 7px;
+}
+
+#spatial-debug summary {
+  cursor: pointer;
+}
+
+#spatial-debug label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.lod-levels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+[data-lod-level="0"] {
+  accent-color: #ff4d6d;
+}
+
+[data-lod-level="1"] {
+  accent-color: #ffb703;
+}
+
+[data-lod-level="2"] {
+  accent-color: #38d996;
+}
+
 #kernel-profile[open] {
   display: flex;
   flex-direction: column;

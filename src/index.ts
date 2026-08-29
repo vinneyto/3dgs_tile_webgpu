@@ -12,6 +12,7 @@ export {
   type GaussianOctreeRaycastHit,
   type GaussianOctreeRaycastOptions,
 } from "./GaussianOctree";
+export { OctreeHelper, type OctreeHelperOptions } from "./OctreeHelper";
 export {
   GaussianLod,
   GaussianLodNode,
@@ -19,6 +20,7 @@ export {
   type GaussianLodLevelOptions,
   type GaussianLodPacking,
 } from "./GaussianLod";
+export { LodHelper, type LodHelperOptions } from "./LodHelper";
 export {
   createMaximumLodPackingStrategy,
   createRadialLodPackingStrategy,

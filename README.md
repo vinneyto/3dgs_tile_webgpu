@@ -35,6 +35,8 @@ src/
 ├── GaussianOctree.ts               full CPU spatial index and raycasts
 ├── GaussianLod.ts                  nested per-cell LOD representations
 ├── GaussianLodPacking.ts           pluggable static packing strategies
+├── OctreeHelper.ts                 local-space octree wireframe helper
+├── LodHelper.ts                    color-coded active LOD volumes
 ├── GaussianStore.ts                packed multi-cloud buffer ownership
 ├── GaussianPass.ts                 Three.js PassNode integration
 ├── createGaussianPass.ts           public pass factory
@@ -175,6 +177,29 @@ const cloud = store.addLod(lod, {
 the compact active cell/level cut used both to fill the GPU buffers and, through
 `GaussianCloud.raycastMode = "rendered"`, to keep raycasts synchronized with the
 rendered LOD. Set the mode to `"full"` to raycast the complete source octree.
+
+Both spatial structures have local-space Three.js debug helpers. Attach them as
+children of the cloud so they inherit its position, rotation and scale:
+
+```ts
+import { LodHelper, OctreeHelper } from "3dgs-tile-webgpu";
+
+const octreeHelper = new OctreeHelper(cloud.lod!.octree, {
+  leavesOnly: false,
+});
+const lodHelper = new LodHelper(cloud.lod!, cloud.lodPacking!, {
+  levels: [0, 2],
+});
+
+cloud.add(octreeHelper, lodHelper);
+
+// Change the visible color-coded LOD volumes later.
+lodHelper.setLevels([1]);
+```
+
+`OctreeHelper` draws the complete adaptive cell grid. `LodHelper` creates one
+instanced, translucent volume set per active LOD level and can update its compact
+packing with `setPacking()`. Call `dispose()` on helpers when they are removed.
 
 A different source format can be injected with `new GaussianStore({ loader })` as long as its loader returns
 `GaussianData`.
@@ -350,6 +375,9 @@ explicitly:
 ```text
 http://localhost:5173/?ply=/my-cloud.ply&sort=packed16&dpr=1
 ```
+
+Open **Octree / LOD visualization** in the sandbox HUD to toggle the local
+octree grid and any combination of the color-coded LOD 0, 1 and 2 volumes.
 
 Files addressed by URL belong in `sandbox/public/`; the file picker and drag-and-drop do not require copying
 the file into the repository. The loader accepts ASCII, binary little-endian, and binary big-endian scalar PLY

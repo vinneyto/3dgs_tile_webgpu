@@ -13,6 +13,19 @@
       <button id="open-ply" type="button">Open PLY</button>
       <input id="ply-file" type="file" accept=".ply" hidden />
       <small>Orbit: drag · Zoom: wheel · Drop a canonical 3DGS PLY</small>
+      <details id="spatial-debug">
+        <summary>Octree / LOD visualization</summary>
+        <label>
+          <input id="show-octree" type="checkbox" />
+          Octree grid
+        </label>
+        <span>LOD volumes</span>
+        <div class="lod-levels">
+          <label><input data-lod-level="0" type="checkbox" /> LOD 0</label>
+          <label><input data-lod-level="1" type="checkbox" /> LOD 1</label>
+          <label><input data-lod-level="2" type="checkbox" /> LOD 2</label>
+        </div>
+      </details>
       <pre id="metrics" aria-label="WebGPU diagnostics"></pre>
       <details id="kernel-profile">
         <summary>Kernel timings</summary>

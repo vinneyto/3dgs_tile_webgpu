@@ -12,11 +12,14 @@ import {
   type GaussianData,
   type GaussianCloud,
   GaussianLod,
+  LodHelper,
+  OctreeHelper,
   GaussianOctree,
   GaussianStore,
   type GaussianPass,
   type RadixBackend,
 } from "../../src/index";
+import { blendColor, pass as scenePass } from "three/tsl";
 import { DebugPanel } from "./DebugPanel";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 
@@ -60,6 +63,11 @@ export class GaussianSandbox {
   private pipeline: RenderPipeline | null = null;
   private pass: GaussianPass | null = null;
   private store: GaussianStore | null = null;
+  private helperPass: ReturnType<typeof scenePass> | null = null;
+  private readonly octreeHelpers: OctreeHelper[] = [];
+  private readonly lodHelpers: LodHelper[] = [];
+  private octreeHelpersVisible = false;
+  private lodHelperLevels: readonly number[] = [];
   private animatedCloud: GaussianCloud | null = null;
   private animatedOriginX = 0;
   private animatedAmplitude = 0;
@@ -112,6 +120,7 @@ export class GaussianSandbox {
       trackTimestamp: debugEnabled,
     });
     await renderer.init();
+    renderer.setClearColor(0x000000, 0);
     const timingInspector =
       debugEnabled && renderer.hasFeature("timestamp-query")
         ? new KernelTimingInspector()
@@ -136,6 +145,19 @@ export class GaussianSandbox {
     );
     sandbox.resize();
     return sandbox;
+  }
+
+  setOctreeHelperVisible(visible: boolean): void {
+    this.octreeHelpersVisible = visible;
+    for (const helper of this.octreeHelpers) helper.visible = visible;
+  }
+
+  setLodHelperLevels(levels: readonly number[]): void {
+    this.lodHelperLevels = [...levels];
+    for (const helper of this.lodHelpers) {
+      helper.setLevels(levels);
+      helper.visible = levels.length > 0;
+    }
   }
 
   async loadUrl(url: string): Promise<void> {
@@ -192,7 +214,9 @@ export class GaussianSandbox {
     animatedCloud: GaussianCloud,
   ): void {
     this.pass?.dispose();
+    this.helperPass?.dispose();
     this.pipeline?.dispose();
+    this.disposeSpatialHelpers();
     this.store?.dispose();
     this.animatedCloud = null;
 
@@ -202,6 +226,8 @@ export class GaussianSandbox {
     const animatedBounds = measureCloud(animatedData);
     this.store = store;
     this.scene.add(primaryCloud, animatedCloud);
+    this.addSpatialHelpers(primaryCloud);
+    this.addSpatialHelpers(animatedCloud);
     this.placeAnimatedCloud(primaryBounds, animatedBounds, animatedCloud);
     this.frameClouds(primaryBounds, animatedBounds, animatedCloud);
 
@@ -227,7 +253,10 @@ export class GaussianSandbox {
     });
     this.debugPanel.setPass(this.pass);
     this.pipeline = new RenderPipeline(this.renderer);
-    this.pipeline.outputNode = this.pass;
+    this.helperPass = scenePass(this.scene, this.camera);
+    this.helperPass.opaque = false;
+    this.helperPass.transparent = true;
+    this.pipeline.outputNode = blendColor(this.pass, this.helperPass);
     this.setStatus(
       `${source}: ${primaryData.count.toLocaleString()}→${primaryCloud.gaussianCount.toLocaleString()} + ${animatedData.count.toLocaleString()}→${animatedCloud.gaussianCount.toLocaleString()} animated dolphin Gaussians · packed SH degree ${store.shDegree}`,
     );
@@ -300,6 +329,29 @@ export class GaussianSandbox {
       (timeMilliseconds * 0.001 * Math.PI * 2) / ANIMATION_CYCLE_SECONDS;
     this.animatedCloud.position.x =
       this.animatedOriginX + Math.sin(phase) * this.animatedAmplitude;
+  }
+
+  private addSpatialHelpers(cloud: GaussianCloud): void {
+    if (cloud.lod === null || cloud.lodPacking === null) return;
+    const octreeHelper = new OctreeHelper(cloud.lod.octree, {
+      opacity: 0.42,
+    });
+    octreeHelper.visible = this.octreeHelpersVisible;
+    const lodHelper = new LodHelper(cloud.lod, cloud.lodPacking, {
+      levels: this.lodHelperLevels,
+      opacity: 0.12,
+    });
+    lodHelper.visible = this.lodHelperLevels.length > 0;
+    cloud.add(octreeHelper, lodHelper);
+    this.octreeHelpers.push(octreeHelper);
+    this.lodHelpers.push(lodHelper);
+  }
+
+  private disposeSpatialHelpers(): void {
+    for (const helper of this.octreeHelpers) helper.dispose();
+    for (const helper of this.lodHelpers) helper.dispose();
+    this.octreeHelpers.length = 0;
+    this.lodHelpers.length = 0;
   }
 
   private resize(): void {
