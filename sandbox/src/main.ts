@@ -31,21 +31,23 @@ const sandbox = await GaussianSandbox.create(
   metrics,
   kernelTimings,
 );
+
+const applySpatialDebugState = () => {
+  sandbox.setOctreeHelperVisible(octreeToggle.checked);
+  sandbox.setLodHelperLevels(
+    lodToggles
+      .filter((candidate) => candidate.checked)
+      .map((candidate) => Number(candidate.dataset.lodLevel)),
+  );
+};
+
+octreeToggle.addEventListener("change", applySpatialDebugState);
+for (const toggle of lodToggles)
+  toggle.addEventListener("change", applySpatialDebugState);
+
+applySpatialDebugState();
 const parameters = new URLSearchParams(location.search);
 await sandbox.loadUrl(parameters.get("ply") ?? "/sample.ply");
-
-octreeToggle.addEventListener("change", () => {
-  sandbox.setOctreeHelperVisible(octreeToggle.checked);
-});
-for (const toggle of lodToggles) {
-  toggle.addEventListener("change", () => {
-    sandbox.setLodHelperLevels(
-      lodToggles
-        .filter((candidate) => candidate.checked)
-        .map((candidate) => Number(candidate.dataset.lodLevel)),
-    );
-  });
-}
 
 openButton.addEventListener("click", () => fileInput.click());
 fileInput.addEventListener("change", () => {

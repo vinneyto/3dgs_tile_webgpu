@@ -56,6 +56,7 @@ export class LodHelper extends Object3D {
     this.wireframe = options.wireframe ?? false;
     this.depthTest = options.depthTest ?? false;
     this.name = "Gaussian LOD helper";
+    this.frustumCulled = false;
     lod.indicesForPacking(packing);
     this.rebuildMeshes();
     this.setLevels(
@@ -156,6 +157,7 @@ export class LodHelper extends Object3D {
       mesh.instanceMatrix.needsUpdate = true;
       mesh.computeBoundingSphere();
       mesh.name = `Gaussian LOD ${level} volumes`;
+      mesh.frustumCulled = false;
       mesh.renderOrder = 900 + level;
       mesh.userData.lodLevel = level;
       this.levelMeshes.set(level, mesh);

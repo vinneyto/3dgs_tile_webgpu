@@ -17,6 +17,7 @@ describe("Gaussian debug helpers", () => {
       helper.cellCount * 24,
     );
     expect(helper.position.toArray()).toEqual([0, 0, 0]);
+    expect(helper.frustumCulled).toBe(false);
 
     helper.dispose();
   });
@@ -44,6 +45,8 @@ describe("Gaussian debug helpers", () => {
       nodeIds.length,
     );
     expect(helper.visibleLevels).toEqual([0, 2]);
+    expect(helper.frustumCulled).toBe(false);
+    expect(helper.children.every((child) => !child.frustumCulled)).toBe(true);
     helper.setLevels([1]);
     expect(helper.visibleLevels).toEqual([1]);
 

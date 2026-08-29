@@ -75,6 +75,7 @@ export class OctreeHelper extends LineSegments<
     super(geometry, material);
     this.cellCount = nodes.length;
     this.name = "Gaussian octree helper";
+    this.frustumCulled = false;
     this.renderOrder = 1_000;
   }
 
