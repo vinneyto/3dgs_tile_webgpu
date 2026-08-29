@@ -1,7 +1,7 @@
 # 3dgs_tile_webgpu
 
 A GPU-driven tiled 3D Gaussian Splatting renderer exposed as a Three.js
-[`RenderPipeline`](https://threejs.org/docs/#RenderPipeline) pass. The pass renders one Gaussian cloud,
+[`RenderPipeline`](https://threejs.org/docs/#RenderPipeline) pass. The pass renders multiple transformed Gaussian clouds from one packed store,
 returns a texture node, and can be chained with normal Three.js node-based post-processing.
 
 The implementation follows the same stages as the course Metal renderer:
@@ -30,6 +30,9 @@ types and GPU binding helpers stay grouped:
 ```text
 src/
 ├── GaussianData.ts                 external Gaussian buffer contract
+├── CanonicalGaussianPlyLoader.ts   canonical PLY parsing and activation
+├── GaussianCloud.ts                transformable Three.js scene object
+├── GaussianStore.ts                packed multi-cloud buffer ownership
 ├── GaussianPass.ts                 Three.js PassNode integration
 ├── createGaussianPass.ts           public pass factory
 ├── kernels/                        explicit WGSL strings used by wgslFn
@@ -56,20 +59,20 @@ src/
 └── demo.ts                         RenderPipeline example
 ```
 
-The repository also contains a full-screen Vite sandbox in `sandbox/`. Its canonical 3DGS PLY loader is kept
-outside the renderer package so the `GaussianData` boundary remains parser-agnostic.
+The repository also contains a full-screen Vite sandbox in `sandbox/`. The package includes a canonical 3DGS
+PLY loader for the default `GaussianStore.load()` path, while custom loaders can still return the same
+parser-agnostic `GaussianData` boundary.
 
 ## Usage
 
 ```ts
 import {
-  Object3D,
   PerspectiveCamera,
   RenderPipeline,
   StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
-import { GaussianData, gaussianPass } from "3dgs-tile-webgpu";
+import { GaussianData, GaussianStore, gaussianPass } from "3dgs-tile-webgpu";
 
 const renderer = new WebGPURenderer();
 await renderer.init();
@@ -90,10 +93,11 @@ const data = new GaussianData(
   { count: gaussianCount, shDegree: 3 },
 );
 
-const cloudTransform = new Object3D();
-scene.add(cloudTransform); // an empty positioning object; it has no geometry
+const store = new GaussianStore();
+const cloud = store.add(data, { name: "cat" });
+scene.add(cloud); // GaussianCloud is an ordinary transformable Object3D
 
-const pass = gaussianPass(renderer, camera, data, cloudTransform, {
+const pass = gaussianPass(renderer, camera, store, {
   depthSortMode: "float32",
   antialiasMode: "compensated",
   radixBackend: "auto",
@@ -107,6 +111,26 @@ pipeline.outputNode = pass;
 
 renderer.setAnimationLoop(() => pipeline.render());
 ```
+
+The store uses the canonical 3DGS PLY loader by default:
+
+```ts
+const store = new GaussianStore();
+const cat = await store.load("cat.ply");
+const dog = await store.load("dog.ply");
+
+cat.position.x = -1;
+dog.position.x = 1;
+scene.add(cat, dog);
+```
+
+A different source format can be injected with `new GaussianStore({ loader })` as long as its loader returns
+`GaussianData`.
+
+All clouds share one projection, global depth sort, intersection list and tile rasterizer, so transparent
+Gaussians from different objects remain correctly ordered. Adding or removing a cloud changes
+`store.layoutVersion` and lazily rebuilds count-dependent pass stages. Transform and visibility changes only
+update a small camera-specific object-frame range and do not rebuild the pipeline.
 
 The `GaussianPass` is itself a `PassNode`, so its result can be used anywhere a texture-producing pass is
 accepted:
@@ -132,14 +156,14 @@ front-to-back tile list. Disable it by omitting `outputDepth` to avoid allocatin
 
 ## `GaussianData` contract
 
-Parsing is deliberately not part of this package. A PLY/SOG/KSplat loader creates normal Three.js
-`StorageBufferAttribute` instances and passes them directly to `GaussianData`. This keeps ownership and upload
-inside Three.js, and lets the same attributes be read by `wgslFn` kernels, node materials, or other Three.js
+`CanonicalGaussianPlyLoader` handles the common PLY path. A custom SOG/KSplat loader can create normal Three.js
+`StorageBufferAttribute` instances and pass them through `GaussianData`. This keeps the storage contract
+format-independent and lets the same attributes be read by `wgslFn` kernels, node materials, or other Three.js
 code.
 
 | Attribute        | Three.js type                             | Expected values                                                 |
 | ---------------- | ----------------------------------------- | --------------------------------------------------------------- |
-| `means`          | `StorageBufferAttribute(Float32Array, 4)` | local-space xyz; w unused                                       |
+| `means`          | `StorageBufferAttribute(Float32Array, 4)` | local-space xyz; source w ignored                               |
 | `scalesOpacity`  | `StorageBufferAttribute(Float32Array, 4)` | positive linear xyz scale; opacity `[0, 1]` in w                |
 | `rotations`      | `StorageBufferAttribute(Float32Array, 4)` | normalized quaternion in `xyzw` order                           |
 | `shCoefficients` | `StorageBufferAttribute(Float32Array, 4)` | canonical real-SH RGB in xyz; Gaussian-major, coefficient-minor |
@@ -147,9 +171,16 @@ code.
 The parser is responsible for applying source-format activations such as `exp(logScale)` and
 `sigmoid(opacityLogit)`. SH degrees 0–3 are supported (1, 4, 9, or 16 coefficients per Gaussian).
 
-The empty `Object3D` passed to the pass supplies the cloud's full local-to-world transform. Translation,
-rotation, and non-uniform scale are included in projected covariance; the source Gaussian buffers remain in
-local space.
+`GaussianStore` packs clouds sequentially and writes each stable numeric `objectId` into `means.w`, avoiding a
+separate per-Gaussian ID buffer. It selects the maximum SH degree of all clouds and zero-pads lower-degree SH
+rows to the common coefficient stride. Each `GaussianCloud` supplies its full local-to-world transform through
+the normal Three.js scene graph. Translation, rotation and non-uniform scale are included in projected
+covariance; source means remain in local space.
+
+Every pass owns its camera-specific object frames (`modelView`, camera position in cloud-local space and
+effective visibility). This allows one store to be rendered by multiple cameras without one pass overwriting
+another pass's transforms. Effective visibility follows `Object3D.visible`, parent visibility, scene attachment
+and camera layers.
 
 ## Antialiasing
 
@@ -226,7 +257,9 @@ path itself performs no GPU-to-CPU synchronization.
 After the first rendered frame, `pass.getResources()` exposes the Three.js-owned intermediate attributes:
 projected means/conics/colors, visible offsets, the depth-sorted Gaussian list, original and
 depth-ordered tile counts, intersection offsets, dispatch state, sorted intersection records and tile offsets.
-They can be wrapped with Three.js `storage(...)` and passed to another `wgslFn` kernel or node material without
+The first `store.count` rows of `projectedMean` are Gaussian results; its private tail stores camera-specific
+object frames so projection remains within WebGPU's guaranteed eight storage-buffer bindings. The resources
+can be wrapped with Three.js `storage(...)` and passed to another `wgslFn` kernel or node material without
 reaching into the WebGPU backend.
 
 ## Shader boundary
@@ -258,7 +291,7 @@ npm install
 npm run sandbox
 ```
 
-The sandbox loads its small `sample.ply` by default and enables the standard Three.js `OrbitControls`. Use
+The sandbox loads its small `sample.ply` plus a bundled animated dolphin cloud by default and enables the standard Three.js `OrbitControls`. Use
 **Open PLY** or drag a canonical 3DGS PLY onto the canvas to inspect another cloud. A URL can also be supplied
 explicitly:
 
@@ -302,7 +335,7 @@ passes receive working-linear RGB and `RenderPipeline` performs exactly one disp
 - The subgroup radix backend uses the optional WebGPU `subgroups` feature; a portable workgroup backend is
   selected automatically when it is unavailable.
 - Perspective cameras only.
-- One cloud per pass. Multiple clouds can use multiple passes and be composed as texture nodes.
+- Multiple transformed clouds from one packed `GaussianStore` per pass.
 - The renderer outputs premultiplied Gaussian accumulation with a configurable background and an optional
   standard perspective-depth texture.
 - Input, intermediate, indirect-dispatch, color, and depth resources are represented by public Three.js

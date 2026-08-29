@@ -1,5 +1,5 @@
 import { StorageBufferAttribute } from "three/webgpu";
-import { GaussianData } from "../../src/GaussianData";
+import { GaussianData } from "./GaussianData";
 
 type PlyFormat = "ascii" | "binary_little_endian" | "binary_big_endian";
 type PlyScalarType =

@@ -36,9 +36,7 @@ fn project_gaussians(
   gid: u32,
   gaussian_count: u32,
   sh_degree: u32,
-  model_view: mat4x4<f32>,
   projection: mat4x4<f32>,
-  camera_local: vec4<f32>,
   viewport: vec4<f32>,
   tiles: vec2<u32>,
   means: ptr<storage, array<vec4<f32>>, read>,
@@ -54,7 +52,20 @@ fn project_gaussians(
   (*tile_counts)[gid] = 0u;
   // Opacity zero is also the visibility predicate consumed by the compact scan.
   (*projected_mean)[gid] = vec4<f32>(0.0);
-  let mean_local = (*means)[gid].xyz;
+  let mean_object = (*means)[gid];
+  let mean_local = mean_object.xyz;
+  let object_id = u32(mean_object.w);
+  // Camera-specific object frames occupy the tail of projected_mean so the
+  // projection stage stays within WebGPU's guaranteed eight storage bindings.
+  let object_base = gaussian_count + object_id * 6u;
+  if ((*projected_mean)[object_base + 5u].x <= 0.0) { return 0u; }
+  let model_view = mat4x4<f32>(
+    (*projected_mean)[object_base],
+    (*projected_mean)[object_base + 1u],
+    (*projected_mean)[object_base + 2u],
+    (*projected_mean)[object_base + 3u]
+  );
+  let camera_local = (*projected_mean)[object_base + 4u];
   let view = model_view * vec4<f32>(mean_local, 1.0);
   let depth = -view.z;
   if (!(depth > viewport.z && depth < viewport.w)) { return 0u; }

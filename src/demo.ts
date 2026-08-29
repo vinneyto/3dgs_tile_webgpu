@@ -1,5 +1,4 @@
 import {
-  Object3D,
   PerspectiveCamera,
   RenderPipeline,
   Scene,
@@ -7,7 +6,12 @@ import {
   WebGPURenderer,
 } from "three/webgpu";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { GaussianData, gaussianPass, type DepthSortMode } from "./index";
+import {
+  GaussianData,
+  GaussianStore,
+  gaussianPass,
+  type DepthSortMode,
+} from "./index";
 
 function storageAttribute(
   label: string,
@@ -82,9 +86,9 @@ async function main(): Promise<void> {
   );
 
   const scene = new Scene();
-  const anchor = new Object3D();
-  anchor.name = "Gaussian cloud transform";
-  scene.add(anchor);
+  const store = new GaussianStore();
+  const cloud = store.add(data, { name: "Demo Gaussian cloud" });
+  scene.add(cloud);
 
   const camera = new PerspectiveCamera(48, innerWidth / innerHeight, 0.05, 100);
   camera.position.set(0, 0.25, 4.5);
@@ -95,7 +99,7 @@ async function main(): Promise<void> {
     new URLSearchParams(location.search).get("sort") === "packed16"
       ? "packed16"
       : "float32";
-  const pass = gaussianPass(renderer, camera, data, anchor, {
+  const pass = gaussianPass(renderer, camera, store, {
     depthSortMode: mode,
     intersectionCapacity: 16_384,
     background: [0.025, 0.035, 0.06, 1],
@@ -105,7 +109,7 @@ async function main(): Promise<void> {
 
   renderer.setAnimationLoop(() => {
     controls.update();
-    anchor.rotation.y += 0.002;
+    cloud.rotation.y += 0.002;
     pipeline.render();
   });
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CanonicalGaussianPlyLoader } from "../sandbox/src/CanonicalGaussianPlyLoader";
+import { CanonicalGaussianPlyLoader } from "../src/CanonicalGaussianPlyLoader";
 
 describe("CanonicalGaussianPlyLoader", () => {
   it("activates scales and opacity, converts wxyz, and interleaves SH channels", () => {

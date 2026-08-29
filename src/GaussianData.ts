@@ -1,7 +1,7 @@
 import type { StorageBufferAttribute } from "three/webgpu";
 
 export interface GaussianBuffers {
-  /** vec4<f32> per Gaussian. xyz is the local-space mean; w is unused. */
+  /** vec4<f32> per Gaussian. xyz is the local-space mean; GaussianStore writes objectId to w. */
   means: StorageBufferAttribute;
   /** vec4<f32> per Gaussian. xyz is positive linear scale; w is opacity in [0, 1]. */
   scalesOpacity: StorageBufferAttribute;
