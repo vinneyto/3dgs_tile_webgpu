@@ -7,9 +7,12 @@ import {
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
   CanonicalGaussianPlyLoader,
+  createRadialLodPackingStrategy,
   gaussianPass,
   type GaussianData,
   type GaussianCloud,
+  GaussianLod,
+  GaussianOctree,
   GaussianStore,
   type GaussianPass,
   type RadixBackend,
@@ -20,6 +23,21 @@ import { KernelTimingInspector } from "./KernelTimingInspector";
 const MAX_INDIRECT_CAPACITY = 256 * 65_535;
 const ANIMATED_CLOUD_URL = "/assets/dolphins-colored-3dgs.ply";
 const ANIMATION_CYCLE_SECONDS = 4;
+const PRIMARY_GAUSSIAN_BUDGET = 350_000;
+const ANIMATED_GAUSSIAN_BUDGET = 60_000;
+const LOD_LEVELS = [
+  { retention: 0.2 },
+  { retention: 0.5 },
+  { retention: 1 },
+] as const;
+const RADIAL_LOD_PACKING = createRadialLodPackingStrategy({
+  center: "bounds-center",
+  regions: [
+    { maxNormalizedRadius: 0.35, budgetShare: 0.6 },
+    { maxNormalizedRadius: 0.7, budgetShare: 0.2 },
+    { maxNormalizedRadius: Infinity, budgetShare: 0.2 },
+  ],
+});
 
 interface CloudBounds {
   minX: number;
@@ -122,67 +140,77 @@ export class GaussianSandbox {
 
   async loadUrl(url: string): Promise<void> {
     this.setStatus(`Loading ${url} and the animated dolphin…`);
+    const store = new GaussianStore({ loader: this.loader });
     try {
-      const data = await this.loader.load(url);
-      try {
-        const animatedData = await this.loader.load(ANIMATED_CLOUD_URL);
-        this.show(data, url, animatedData);
-      } catch (error) {
-        data.dispose();
-        throw error;
-      }
+      const primaryCloud = await store.load(url, {
+        name: `${url} Gaussian cloud`,
+        lod: { levels: LOD_LEVELS },
+        budget: { maxGaussians: PRIMARY_GAUSSIAN_BUDGET },
+        packingStrategy: RADIAL_LOD_PACKING,
+      });
+      const animatedCloud = await store.load(ANIMATED_CLOUD_URL, {
+        name: "Animated dolphin Gaussian cloud",
+        lod: { levels: LOD_LEVELS },
+        budget: { maxGaussians: ANIMATED_GAUSSIAN_BUDGET },
+        packingStrategy: RADIAL_LOD_PACKING,
+      });
+      this.show(store, url, primaryCloud, animatedCloud);
     } catch (error) {
+      store.dispose();
       this.setError(error);
     }
   }
 
   async loadFile(file: File): Promise<void> {
     this.setStatus(`Parsing ${file.name}…`);
+    const store = new GaussianStore({ loader: this.loader });
     try {
       const data = this.loader.parse(await file.arrayBuffer());
-      try {
-        const animatedData = await this.loader.load(ANIMATED_CLOUD_URL);
-        this.show(data, file.name, animatedData);
-      } catch (error) {
-        data.dispose();
-        throw error;
-      }
+      const primaryCloud = addDataWithSandboxLod(
+        store,
+        data,
+        `${file.name} Gaussian cloud`,
+        PRIMARY_GAUSSIAN_BUDGET,
+      );
+      const animatedCloud = await store.load(ANIMATED_CLOUD_URL, {
+        name: "Animated dolphin Gaussian cloud",
+        lod: { levels: LOD_LEVELS },
+        budget: { maxGaussians: ANIMATED_GAUSSIAN_BUDGET },
+        packingStrategy: RADIAL_LOD_PACKING,
+      });
+      this.show(store, file.name, primaryCloud, animatedCloud);
     } catch (error) {
+      store.dispose();
       this.setError(error);
     }
   }
 
   private show(
-    data: GaussianData,
+    store: GaussianStore,
     source: string,
-    animatedData: GaussianData,
+    primaryCloud: GaussianCloud,
+    animatedCloud: GaussianCloud,
   ): void {
     this.pass?.dispose();
     this.pipeline?.dispose();
     this.store?.dispose();
     this.animatedCloud = null;
 
-    const primaryBounds = measureCloud(data);
+    const primaryData = primaryCloud.lod!.octree.data;
+    const animatedData = animatedCloud.lod!.octree.data;
+    const primaryBounds = measureCloud(primaryData);
     const animatedBounds = measureCloud(animatedData);
-    this.store = new GaussianStore();
-    const primaryCloud = this.store.add(data, {
-      name: `${source} Gaussian cloud`,
-      ownsData: true,
-    });
-    const animatedCloud = this.store.add(animatedData, {
-      name: "Animated dolphin Gaussian cloud",
-      ownsData: true,
-    });
+    this.store = store;
     this.scene.add(primaryCloud, animatedCloud);
     this.placeAnimatedCloud(primaryBounds, animatedBounds, animatedCloud);
     this.frameClouds(primaryBounds, animatedBounds, animatedCloud);
 
-    const requestedCapacity = Math.max(65_536, this.store.count * 16);
+    const requestedCapacity = Math.max(65_536, store.count * 16);
     const intersectionCapacity = Math.min(
       MAX_INDIRECT_CAPACITY,
       requestedCapacity,
     );
-    this.pass = gaussianPass(this.renderer, this.camera, this.store, {
+    this.pass = gaussianPass(this.renderer, this.camera, store, {
       depthSortMode:
         new URLSearchParams(location.search).get("sort") === "packed16"
           ? "packed16"
@@ -201,7 +229,7 @@ export class GaussianSandbox {
     this.pipeline = new RenderPipeline(this.renderer);
     this.pipeline.outputNode = this.pass;
     this.setStatus(
-      `${source}: ${data.count.toLocaleString()} + ${animatedData.count.toLocaleString()} animated dolphin Gaussians · packed SH degree ${this.store.shDegree}`,
+      `${source}: ${primaryData.count.toLocaleString()}→${primaryCloud.gaussianCount.toLocaleString()} + ${animatedData.count.toLocaleString()}→${animatedCloud.gaussianCount.toLocaleString()} animated dolphin Gaussians · packed SH degree ${store.shDegree}`,
     );
   }
 
@@ -333,6 +361,32 @@ function measureCloud(data: GaussianData): CloudBounds {
       0.1,
     ),
   };
+}
+
+function addDataWithSandboxLod(
+  store: GaussianStore,
+  data: GaussianData,
+  name: string,
+  maxGaussians: number,
+): GaussianCloud {
+  const octree = GaussianOctree.build(data, { ownsData: true });
+  let lod: GaussianLod | null = null;
+  try {
+    lod = GaussianLod.build(octree, {
+      levels: LOD_LEVELS,
+      ownsOctree: true,
+    });
+    return store.addLod(lod, {
+      name,
+      budget: { maxGaussians },
+      packingStrategy: RADIAL_LOD_PACKING,
+      ownsLod: true,
+    });
+  } catch (error) {
+    if (lod !== null) lod.dispose();
+    else octree.dispose();
+    throw error;
+  }
 }
 
 function readRenderPixelRatio(): number {

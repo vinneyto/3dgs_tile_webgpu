@@ -32,6 +32,9 @@ src/
 ├── GaussianData.ts                 external Gaussian buffer contract
 ├── CanonicalGaussianPlyLoader.ts   canonical PLY parsing and activation
 ├── GaussianCloud.ts                transformable Three.js scene object
+├── GaussianOctree.ts               full CPU spatial index and raycasts
+├── GaussianLod.ts                  nested per-cell LOD representations
+├── GaussianLodPacking.ts           pluggable static packing strategies
 ├── GaussianStore.ts                packed multi-cloud buffer ownership
 ├── GaussianPass.ts                 Three.js PassNode integration
 ├── createGaussianPass.ts           public pass factory
@@ -123,6 +126,55 @@ cat.position.x = -1;
 dog.position.x = 1;
 scene.add(cat, dog);
 ```
+
+`load()` expands to `loader → GaussianOctree → GaussianLod → GaussianStore`.
+The default maximum-LOD packing strategy selects every source Gaussian, preserving
+the full-detail behavior. Large objects can instead request a static radial LOD:
+
+```ts
+import {
+  createRadialLodPackingStrategy,
+  GaussianLod,
+  GaussianOctree,
+  GaussianStore,
+} from "3dgs-tile-webgpu";
+
+const radialPacking = createRadialLodPackingStrategy({
+  center: "bounds-center",
+  regions: [
+    { maxNormalizedRadius: 0.35, budgetShare: 0.6 },
+    { maxNormalizedRadius: 0.7, budgetShare: 0.2 },
+    { maxNormalizedRadius: Infinity, budgetShare: 0.2 },
+  ],
+});
+
+const mug = await store.load("mug.ply", {
+  lod: {
+    levels: [{ retention: 0.2 }, { retention: 0.5 }, { retention: 1 }],
+  },
+  budget: { maxGaussians: 350_000 },
+  packingStrategy: radialPacking,
+});
+```
+
+The same pipeline is available atomically when source data is already loaded:
+
+```ts
+const data = await loader.load("mug.ply");
+const octree = GaussianOctree.build(data);
+const lod = GaussianLod.build(octree, {
+  levels: [{ retention: 0.2 }, { retention: 0.5 }, { retention: 1 }],
+});
+const cloud = store.addLod(lod, {
+  budget: { maxGaussians: 350_000 },
+  packingStrategy: radialPacking,
+});
+```
+
+`GaussianOctree` retains the complete CPU source. `GaussianLodPacking` is only
+the compact active cell/level cut used both to fill the GPU buffers and, through
+`GaussianCloud.raycastMode = "rendered"`, to keep raycasts synchronized with the
+rendered LOD. Set the mode to `"full"` to raycast the complete source octree.
 
 A different source format can be injected with `new GaussianStore({ loader })` as long as its loader returns
 `GaussianData`.

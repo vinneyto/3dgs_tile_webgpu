@@ -3,6 +3,19 @@ import { StorageBufferAttribute } from "three/webgpu";
 import { CanonicalGaussianPlyLoader } from "./CanonicalGaussianPlyLoader";
 import { GaussianCloud } from "./GaussianCloud";
 import { GaussianData } from "./GaussianData";
+import {
+  GaussianLod,
+  type GaussianLodBuildOptions,
+  type GaussianLodPacking,
+} from "./GaussianLod";
+import {
+  createMaximumLodPackingStrategy,
+  type GaussianLodPackingStrategy,
+} from "./GaussianLodPacking";
+import {
+  GaussianOctree,
+  type GaussianOctreeBuildOptions,
+} from "./GaussianOctree";
 
 export interface GaussianDataLoader {
   load(url: string): Promise<GaussianData>;
@@ -19,12 +32,37 @@ export interface GaussianStoreAddOptions {
   ownsData?: boolean;
 }
 
+export interface GaussianLodBudget {
+  maxGaussians: number;
+}
+
+export interface GaussianStoreAddLodOptions {
+  name?: string;
+  /** Defaults to the full source count. */
+  budget?: GaussianLodBudget;
+  /** Defaults to createMaximumLodPackingStrategy(). */
+  packingStrategy?: GaussianLodPackingStrategy;
+  /** Dispose the supplied GaussianLod when its cloud is removed. Defaults to false. */
+  ownsLod?: boolean;
+}
+
+export interface GaussianStoreLoadOptions {
+  name?: string;
+  octree?: Omit<GaussianOctreeBuildOptions, "ownsData">;
+  lod?: Omit<GaussianLodBuildOptions, "ownsOctree">;
+  budget?: GaussianLodBudget;
+  packingStrategy?: GaussianLodPackingStrategy;
+}
+
 interface StoreEntry {
   readonly cloud: GaussianCloud;
   readonly count: number;
   readonly sourceDegree: 0 | 1 | 2 | 3;
   source: GaussianData | null;
   ownsSource: boolean;
+  lod: GaussianLod | null;
+  ownsLod: boolean;
+  packing: GaussianLodPacking | null;
   packedOffset: number;
 }
 
@@ -72,13 +110,33 @@ export class GaussianStore {
     return this.cloudList;
   }
 
-  async load(url: string): Promise<GaussianCloud> {
+  async load(
+    url: string,
+    options: GaussianStoreLoadOptions = {},
+  ): Promise<GaussianCloud> {
     this.assertUsable();
     const data = await this.loader.load(url);
+    let octree: GaussianOctree | null = null;
+    let lod: GaussianLod | null = null;
     try {
-      return this.add(data, { name: sourceName(url), ownsData: true });
+      octree = GaussianOctree.build(data, {
+        ...options.octree,
+        ownsData: true,
+      });
+      lod = GaussianLod.build(octree, {
+        ...options.lod,
+        ownsOctree: true,
+      });
+      return this.addLod(lod, {
+        name: options.name ?? sourceName(url),
+        budget: options.budget,
+        packingStrategy: options.packingStrategy,
+        ownsLod: true,
+      });
     } catch (error) {
-      data.dispose();
+      if (lod !== null) lod.dispose();
+      else if (octree !== null) octree.dispose();
+      else data.dispose();
       throw error;
     }
   }
@@ -88,12 +146,7 @@ export class GaussianStore {
     options: GaussianStoreAddOptions = {},
   ): GaussianCloud {
     this.assertUsable();
-    const objectId = this.nextObjectId++;
-    if (objectId >= MAX_EXACT_FLOAT_INTEGER) {
-      throw new RangeError(
-        "GaussianStore exhausted object IDs exactly representable in means.w",
-      );
-    }
+    const objectId = this.allocateObjectId();
     const cloud = new GaussianCloud(this, objectId, data.count, options.name);
     this.entries.push({
       cloud,
@@ -101,6 +154,46 @@ export class GaussianStore {
       sourceDegree: data.shDegree,
       source: data,
       ownsSource: options.ownsData ?? false,
+      lod: null,
+      ownsLod: false,
+      packing: null,
+      packedOffset: -1,
+    });
+    this.cloudList.push(cloud);
+    this.markDirty();
+    return cloud;
+  }
+
+  addLod(
+    lod: GaussianLod,
+    options: GaussianStoreAddLodOptions = {},
+  ): GaussianCloud {
+    this.assertUsable();
+    const maxGaussians = options.budget?.maxGaussians ?? lod.octree.data.count;
+    const strategy =
+      options.packingStrategy ?? createMaximumLodPackingStrategy();
+    const packing = strategy({ lod, maxGaussians });
+    // Validate overlap, levels and declared count before mutating the store.
+    lod.indicesForPacking(packing);
+
+    const objectId = this.allocateObjectId();
+    const cloud = new GaussianCloud(
+      this,
+      objectId,
+      packing.gaussianCount,
+      options.name,
+      lod,
+      packing,
+    );
+    this.entries.push({
+      cloud,
+      count: packing.gaussianCount,
+      sourceDegree: lod.octree.data.shDegree,
+      source: null,
+      ownsSource: false,
+      lod,
+      ownsLod: options.ownsLod ?? false,
+      packing,
       packedOffset: -1,
     });
     this.cloudList.push(cloud);
@@ -117,6 +210,7 @@ export class GaussianStore {
     if (entry?.source !== null && entry?.ownsSource === true) {
       entry.source.dispose();
     }
+    if (entry?.lod !== null && entry?.ownsLod === true) entry.lod.dispose();
     cloud.removeFromParent();
     this.markDirty();
   }
@@ -136,6 +230,7 @@ export class GaussianStore {
     this.disposed = true;
     for (const entry of this.entries) {
       if (entry.source !== null && entry.ownsSource) entry.source.dispose();
+      if (entry.lod !== null && entry.ownsLod) entry.lod.dispose();
       entry.cloud.removeFromParent();
     }
     this.entries.length = 0;
@@ -157,38 +252,43 @@ export class GaussianStore {
 
     let destinationGaussian = 0;
     for (const entry of this.entries) {
-      const source = entry.source ?? oldData;
+      const source = entry.lod?.octree.data ?? entry.source ?? oldData;
       if (source === null) {
         throw new Error("GaussianStore lost the source for a packed cloud");
       }
-      const sourceGaussian = entry.source === null ? entry.packedOffset : 0;
+      const selectedIndices =
+        entry.lod !== null && entry.packing !== null
+          ? entry.lod.indicesForPacking(entry.packing)
+          : null;
+      const sourceGaussian =
+        entry.lod === null && entry.source === null ? entry.packedOffset : 0;
       const sourceCoefficientCount =
-        entry.source === null ? oldCoefficientCount : source.shCoefficientCount;
-      copyVec4Range(
-        source.means.array as Float32Array,
-        sourceGaussian,
-        means,
-        destinationGaussian,
-        entry.count,
-      );
-      copyVec4Range(
-        source.scalesOpacity.array as Float32Array,
-        sourceGaussian,
-        scalesOpacity,
-        destinationGaussian,
-        entry.count,
-      );
-      copyVec4Range(
-        source.rotations.array as Float32Array,
-        sourceGaussian,
-        rotations,
-        destinationGaussian,
-        entry.count,
-      );
+        entry.lod === null && entry.source === null
+          ? oldCoefficientCount
+          : source.shCoefficientCount;
       for (let local = 0; local < entry.count; local++) {
+        const selectedSource =
+          selectedIndices?.[local] ?? sourceGaussian + local;
+        copyVec4Item(
+          source.means.array as Float32Array,
+          selectedSource,
+          means,
+          destinationGaussian + local,
+        );
+        copyVec4Item(
+          source.scalesOpacity.array as Float32Array,
+          selectedSource,
+          scalesOpacity,
+          destinationGaussian + local,
+        );
+        copyVec4Item(
+          source.rotations.array as Float32Array,
+          selectedSource,
+          rotations,
+          destinationGaussian + local,
+        );
         means[(destinationGaussian + local) * 4 + 3] = entry.cloud.objectId;
-        const sourceBase =
-          (sourceGaussian + local) * sourceCoefficientCount * 4;
+        const sourceBase = selectedSource * sourceCoefficientCount * 4;
         const destinationBase =
           (destinationGaussian + local) * coefficientCount * 4;
         const copiedCoefficientCount = Math.min(
@@ -218,9 +318,11 @@ export class GaussianStore {
     );
 
     for (const entry of this.entries) {
-      if (entry.source !== null && entry.ownsSource) entry.source.dispose();
-      entry.source = null;
-      entry.ownsSource = false;
+      if (entry.lod === null) {
+        if (entry.source !== null && entry.ownsSource) entry.source.dispose();
+        entry.source = null;
+        entry.ownsSource = false;
+      }
     }
     this.packedData = packed;
     this.packedDegree = degree;
@@ -231,6 +333,16 @@ export class GaussianStore {
   private markDirty(): void {
     this.dirty = true;
     this.layoutVersion++;
+  }
+
+  private allocateObjectId(): number {
+    const objectId = this.nextObjectId++;
+    if (objectId >= MAX_EXACT_FLOAT_INTEGER) {
+      throw new RangeError(
+        "GaussianStore exhausted object IDs exactly representable in means.w",
+      );
+    }
+    return objectId;
   }
 
   private assertUsable(): void {
@@ -244,15 +356,14 @@ function attribute(name: string, array: Float32Array): StorageBufferAttribute {
   return result;
 }
 
-function copyVec4Range(
+function copyVec4Item(
   source: Float32Array,
   sourceItem: number,
   destination: Float32Array,
   destinationItem: number,
-  itemCount: number,
 ): void {
   destination.set(
-    source.subarray(sourceItem * 4, (sourceItem + itemCount) * 4),
+    source.subarray(sourceItem * 4, sourceItem * 4 + 4),
     destinationItem * 4,
   );
 }

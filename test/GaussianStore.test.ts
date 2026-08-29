@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { StorageBufferAttribute } from "three/webgpu";
 
 import { GaussianData } from "../src/GaussianData";
+import { GaussianLod } from "../src/GaussianLod";
+import { createRadialLodPackingStrategy } from "../src/GaussianLodPacking";
+import { GaussianOctree } from "../src/GaussianOctree";
 import { GaussianStore } from "../src/GaussianStore";
 
 describe("GaussianStore", () => {
@@ -65,7 +68,7 @@ describe("GaussianStore", () => {
     ]);
   });
 
-  it("loads through an injected parser and owns the resulting source", async () => {
+  it("loads through an injected parser and retains the source for octree raycasts", async () => {
     const source = data(1, 0, 1, [1]);
     const dispose = vi.spyOn(source, "dispose");
     const loader = { load: vi.fn(async () => source) };
@@ -76,7 +79,31 @@ describe("GaussianStore", () => {
     expect(loader.load).toHaveBeenCalledWith("/models/cat.ply?cache=1");
 
     store.getPackedData();
+    expect(dispose).not.toHaveBeenCalled();
+
+    store.dispose();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it("packs only the LOD selection while retaining the full source tree", () => {
+    const source = data(10, 0, 1, [1]);
+    const octree = GaussianOctree.build(source, { leafCapacity: 20 });
+    const lod = GaussianLod.build(octree, {
+      levels: [{ retention: 0.2 }, { retention: 1 }],
+    });
+    const strategy = createRadialLodPackingStrategy({
+      center: "bounds-center",
+      regions: [{ maxNormalizedRadius: Infinity, budgetShare: 1 }],
+    });
+    const store = new GaussianStore();
+    const cloud = store.addLod(lod, {
+      budget: { maxGaussians: 2 },
+      packingStrategy: strategy,
+    });
+
+    expect(cloud.gaussianCount).toBe(2);
+    expect(cloud.lod?.octree.data.count).toBe(10);
+    expect(store.getPackedData().count).toBe(2);
   });
 });
 
