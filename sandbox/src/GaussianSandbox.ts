@@ -9,6 +9,7 @@ import {
   CanonicalGaussianPlyLoader,
   gaussianPass,
   type GaussianData,
+  type GaussianCloud,
   GaussianStore,
   type GaussianPass,
   type RadixBackend,
@@ -17,6 +18,21 @@ import { DebugPanel } from "./DebugPanel";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 
 const MAX_INDIRECT_CAPACITY = 256 * 65_535;
+const ANIMATED_CLOUD_URL = "/assets/dolphins-colored-3dgs.ply";
+const ANIMATION_CYCLE_SECONDS = 4;
+
+interface CloudBounds {
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
+  centerX: number;
+  centerY: number;
+  centerZ: number;
+  radius: number;
+}
 
 export class GaussianSandbox {
   private readonly loader = new CanonicalGaussianPlyLoader();
@@ -26,6 +42,9 @@ export class GaussianSandbox {
   private pipeline: RenderPipeline | null = null;
   private pass: GaussianPass | null = null;
   private store: GaussianStore | null = null;
+  private animatedCloud: GaussianCloud | null = null;
+  private animatedOriginX = 0;
+  private animatedAmplitude = 0;
 
   private constructor(
     private readonly renderer: WebGPURenderer,
@@ -50,6 +69,7 @@ export class GaussianSandbox {
 
     renderer.setAnimationLoop((time) => {
       const encodeStart = performance.now();
+      this.updateAnimation(time);
       this.controls.update();
       this.pipeline?.render();
       this.debugPanel.update(time, performance.now() - encodeStart);
@@ -101,10 +121,16 @@ export class GaussianSandbox {
   }
 
   async loadUrl(url: string): Promise<void> {
-    this.setStatus(`Loading ${url}…`);
+    this.setStatus(`Loading ${url} and the animated dolphin…`);
     try {
       const data = await this.loader.load(url);
-      this.show(data, url);
+      try {
+        const animatedData = await this.loader.load(ANIMATED_CLOUD_URL);
+        this.show(data, url, animatedData);
+      } catch (error) {
+        data.dispose();
+        throw error;
+      }
     } catch (error) {
       this.setError(error);
     }
@@ -114,24 +140,44 @@ export class GaussianSandbox {
     this.setStatus(`Parsing ${file.name}…`);
     try {
       const data = this.loader.parse(await file.arrayBuffer());
-      this.show(data, file.name);
+      try {
+        const animatedData = await this.loader.load(ANIMATED_CLOUD_URL);
+        this.show(data, file.name, animatedData);
+      } catch (error) {
+        data.dispose();
+        throw error;
+      }
     } catch (error) {
       this.setError(error);
     }
   }
 
-  private show(data: GaussianData, source: string): void {
+  private show(
+    data: GaussianData,
+    source: string,
+    animatedData: GaussianData,
+  ): void {
     this.pass?.dispose();
     this.pipeline?.dispose();
-    this.frameCloud(data);
     this.store?.dispose();
+    this.animatedCloud = null;
+
+    const primaryBounds = measureCloud(data);
+    const animatedBounds = measureCloud(animatedData);
     this.store = new GaussianStore();
-    const cloud = this.store.add(data, {
+    const primaryCloud = this.store.add(data, {
       name: `${source} Gaussian cloud`,
       ownsData: true,
     });
-    this.scene.add(cloud);
-    const requestedCapacity = Math.max(65_536, data.count * 16);
+    const animatedCloud = this.store.add(animatedData, {
+      name: "Animated dolphin Gaussian cloud",
+      ownsData: true,
+    });
+    this.scene.add(primaryCloud, animatedCloud);
+    this.placeAnimatedCloud(primaryBounds, animatedBounds, animatedCloud);
+    this.frameClouds(primaryBounds, animatedBounds, animatedCloud);
+
+    const requestedCapacity = Math.max(65_536, this.store.count * 16);
     const intersectionCapacity = Math.min(
       MAX_INDIRECT_CAPACITY,
       requestedCapacity,
@@ -155,31 +201,54 @@ export class GaussianSandbox {
     this.pipeline = new RenderPipeline(this.renderer);
     this.pipeline.outputNode = this.pass;
     this.setStatus(
-      `${source}: ${data.count.toLocaleString()} Gaussians · SH degree ${data.shDegree}`,
+      `${source}: ${data.count.toLocaleString()} + ${animatedData.count.toLocaleString()} animated dolphin Gaussians · packed SH degree ${this.store.shDegree}`,
     );
   }
 
-  private frameCloud(data: GaussianData): void {
-    const means = data.means.array as Float32Array;
-    let minX = Infinity;
-    let minY = Infinity;
-    let minZ = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    let maxZ = -Infinity;
-    for (let gaussian = 0; gaussian < data.count; gaussian++) {
-      const offset = gaussian * 4;
-      const x = means[offset]!;
-      const y = means[offset + 1]!;
-      const z = means[offset + 2]!;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      minZ = Math.min(minZ, z);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-      maxZ = Math.max(maxZ, z);
-    }
+  private placeAnimatedCloud(
+    primary: CloudBounds,
+    animated: CloudBounds,
+    cloud: GaussianCloud,
+  ): void {
+    const scale = (primary.radius * 0.45) / animated.radius;
+    const targetX = primary.centerX + primary.radius * 1.4;
+    cloud.scale.setScalar(scale);
+    cloud.position.set(
+      targetX - animated.centerX * scale,
+      primary.centerY - animated.centerY * scale,
+      primary.centerZ - animated.centerZ * scale,
+    );
+    this.animatedCloud = cloud;
+    this.animatedOriginX = cloud.position.x;
+    this.animatedAmplitude = primary.radius * 0.25;
+  }
 
+  private frameClouds(
+    primary: CloudBounds,
+    animated: CloudBounds,
+    animatedCloud: GaussianCloud,
+  ): void {
+    const scale = animatedCloud.scale.x;
+    const animatedMinX = animated.minX * scale + animatedCloud.position.x;
+    const animatedMaxX = animated.maxX * scale + animatedCloud.position.x;
+    const minX = Math.min(primary.minX, animatedMinX - this.animatedAmplitude);
+    const maxX = Math.max(primary.maxX, animatedMaxX + this.animatedAmplitude);
+    const minY = Math.min(
+      primary.minY,
+      animated.minY * scale + animatedCloud.position.y,
+    );
+    const maxY = Math.max(
+      primary.maxY,
+      animated.maxY * scale + animatedCloud.position.y,
+    );
+    const minZ = Math.min(
+      primary.minZ,
+      animated.minZ * scale + animatedCloud.position.z,
+    );
+    const maxZ = Math.max(
+      primary.maxZ,
+      animated.maxZ * scale + animatedCloud.position.z,
+    );
     const centerX = (minX + maxX) * 0.5;
     const centerY = (minY + maxY) * 0.5;
     const centerZ = (minZ + maxZ) * 0.5;
@@ -195,6 +264,14 @@ export class GaussianSandbox {
     this.camera.updateProjectionMatrix();
     this.controls.target.set(centerX, centerY, centerZ);
     this.controls.update();
+  }
+
+  private updateAnimation(timeMilliseconds: number): void {
+    if (this.animatedCloud === null) return;
+    const phase =
+      (timeMilliseconds * 0.001 * Math.PI * 2) / ANIMATION_CYCLE_SECONDS;
+    this.animatedCloud.position.x =
+      this.animatedOriginX + Math.sin(phase) * this.animatedAmplitude;
   }
 
   private resize(): void {
@@ -216,6 +293,46 @@ export class GaussianSandbox {
     this.status.dataset.error = "true";
     console.error(error);
   }
+}
+
+function measureCloud(data: GaussianData): CloudBounds {
+  const means = data.means.array as Float32Array;
+  let minX = Infinity;
+  let minY = Infinity;
+  let minZ = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let maxZ = -Infinity;
+  for (let gaussian = 0; gaussian < data.count; gaussian++) {
+    const offset = gaussian * 4;
+    const x = means[offset]!;
+    const y = means[offset + 1]!;
+    const z = means[offset + 2]!;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    minZ = Math.min(minZ, z);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+    maxZ = Math.max(maxZ, z);
+  }
+  const centerX = (minX + maxX) * 0.5;
+  const centerY = (minY + maxY) * 0.5;
+  const centerZ = (minZ + maxZ) * 0.5;
+  return {
+    minX,
+    minY,
+    minZ,
+    maxX,
+    maxY,
+    maxZ,
+    centerX,
+    centerY,
+    centerZ,
+    radius: Math.max(
+      Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.5,
+      0.1,
+    ),
+  };
 }
 
 function readRenderPixelRatio(): number {

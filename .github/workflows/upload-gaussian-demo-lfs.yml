@@ -1,0 +1,36 @@
+name: Upload Gaussian demo LFS objects
+
+on:
+  push:
+    branches:
+      - feat/gaussian-store
+    paths:
+      - .github/workflows/upload-gaussian-demo-lfs.yml
+
+permissions:
+  contents: write
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          lfs: false
+
+      - name: Recreate and upload the LFS objects
+        run: |
+          git lfs install --local
+          git show HEAD^:sandbox/public/sample.ply > /tmp/sample.ply
+          curl --fail --location \
+            --output /tmp/dolphins_colored.ply \
+            https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/ply/ascii/dolphins_colored.ply
+          python scripts/generate_dolphins_3dgs.py \
+            /tmp/dolphins_colored.ply \
+            sandbox/public/assets/dolphins-colored-3dgs.ply
+          cp /tmp/sample.ply sandbox/public/sample.ply
+          git add --renormalize \
+            sandbox/public/sample.ply \
+            sandbox/public/assets/dolphins-colored-3dgs.ply
+          git lfs push origin HEAD

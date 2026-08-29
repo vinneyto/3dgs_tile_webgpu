@@ -291,7 +291,7 @@ npm install
 npm run sandbox
 ```
 
-The sandbox loads its small `sample.ply` by default and enables the standard Three.js `OrbitControls`. Use
+The sandbox loads its small `sample.ply` plus a bundled animated dolphin cloud by default and enables the standard Three.js `OrbitControls`. Use
 **Open PLY** or drag a canonical 3DGS PLY onto the canvas to inspect another cloud. A URL can also be supplied
 explicitly:
 
@@ -335,7 +335,7 @@ passes receive working-linear RGB and `RenderPipeline` performs exactly one disp
 - The subgroup radix backend uses the optional WebGPU `subgroups` feature; a portable workgroup backend is
   selected automatically when it is unavailable.
 - Perspective cameras only.
-- One cloud per pass. Multiple clouds can use multiple passes and be composed as texture nodes.
+- Multiple transformed clouds from one packed `GaussianStore` per pass.
 - The renderer outputs premultiplied Gaussian accumulation with a configurable background and an optional
   standard perspective-depth texture.
 - Input, intermediate, indirect-dispatch, color, and depth resources are represented by public Three.js
