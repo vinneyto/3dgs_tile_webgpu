@@ -13,6 +13,8 @@ from pathlib import Path
 SH_C0 = 0.28209479177387814
 DEFAULT_SPLAT_COUNT = 60_000
 RANDOM_SEED = 20_260_829
+DOLPHIN_COLOR = (0.30, 0.52, 0.62)
+LIGHT_DIRECTION = (0.35, 0.75, 0.56)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -39,8 +41,8 @@ def load_ascii_mesh(path: Path) -> tuple[list[tuple[float, ...]], list[tuple[int
 
     vertices = []
     for line in vertex_lines:
-        x, y, z, red, green, blue, _alpha = map(float, line.split())
-        vertices.append((x, y, z, red / 255.0, green / 255.0, blue / 255.0))
+        x, y, z, _red, _green, _blue, _alpha = map(float, line.split())
+        vertices.append((x, y, z))
 
     faces = []
     for line in face_lines:
@@ -74,11 +76,8 @@ def normalize(vertices: list[tuple[float, ...]]) -> list[tuple[float, ...]]:
             (x - center[0]) * scale,
             (y - center[1]) * scale,
             (z - center[2]) * scale,
-            red,
-            green,
-            blue,
         )
-        for x, y, z, red, green, blue in vertices
+        for x, y, z in vertices
     ]
 
 
@@ -103,6 +102,20 @@ def normalized(vector: tuple[float, float, float]) -> tuple[float, float, float]
     if magnitude == 0:
         return (1.0, 0.0, 0.0)
     return tuple(component / magnitude for component in vector)  # type: ignore[return-value]
+
+
+def dolphin_color(normal: tuple[float, float, float]) -> tuple[float, float, float]:
+    light = normalized(LIGHT_DIRECTION)
+    diffuse = abs(
+        sum(
+            component * light_component
+            for component, light_component in zip(normal, light)
+        )
+    )
+    brightness = 0.72 + diffuse * 0.28
+    return tuple(  # type: ignore[return-value]
+        min(component * brightness, 1.0) for component in DOLPHIN_COLOR
+    )
 
 
 def quaternion_from_basis(
@@ -195,21 +208,21 @@ def write_gaussians(
             weight_a = 1.0 - root_u
             weight_b = root_u * (1.0 - random_generator.random())
             weight_c = 1.0 - weight_a - weight_b
-            values = tuple(
+            position = tuple(
                 a[index] * weight_a + b[index] * weight_b + c[index] * weight_c
-                for index in range(6)
+                for index in range(3)
             )
 
             tangent = normalized(subtract(b, a))
             normal = normalized(cross(subtract(b, a), subtract(c, a)))
             bitangent = normalized(cross(normal, tangent))
             rotation = quaternion_from_basis(tangent, bitangent, normal)
-            color = tuple((component - 0.5) / SH_C0 for component in values[3:6])
+            color = tuple((component - 0.5) / SH_C0 for component in dolphin_color(normal))
             output.write(
                 record.pack(
-                    values[0],
-                    values[1],
-                    values[2],
+                    position[0],
+                    position[1],
+                    position[2],
                     color[0],
                     color[1],
                     color[2],
