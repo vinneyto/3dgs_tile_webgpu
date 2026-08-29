@@ -3,6 +3,7 @@ import {
   RenderPipeline,
   Scene,
   WebGPURenderer,
+  type Node,
 } from "three/webgpu";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
@@ -19,7 +20,7 @@ import {
   type GaussianPass,
   type RadixBackend,
 } from "../../src/index";
-import { blendColor, pass as scenePass } from "three/tsl";
+import { pass as scenePass, vec4 } from "three/tsl";
 import { DebugPanel } from "./DebugPanel";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 
@@ -256,7 +257,10 @@ export class GaussianSandbox {
     this.helperPass = scenePass(this.scene, this.camera);
     this.helperPass.opaque = false;
     this.helperPass.transparent = true;
-    this.pipeline.outputNode = blendColor(this.pass, this.helperPass);
+    this.pipeline.outputNode = compositePremultipliedOver(
+      this.pass,
+      this.helperPass,
+    );
     this.setStatus(
       `${source}: ${primaryData.count.toLocaleString()}→${primaryCloud.gaussianCount.toLocaleString()} + ${animatedData.count.toLocaleString()}→${animatedCloud.gaussianCount.toLocaleString()} animated dolphin Gaussians · packed SH degree ${store.shDegree}`,
     );
@@ -373,6 +377,26 @@ export class GaussianSandbox {
     this.status.dataset.error = "true";
     console.error(error);
   }
+}
+
+/** Composite a regular transparent Three.js pass over another pass.
+ *
+ * Normal material blending stores premultiplied RGB in a transparent render
+ * target. `blendColor()` expects straight-alpha RGB, which would apply helper
+ * opacity twice and make thin octree lines and low-opacity LOD volumes nearly
+ * invisible.
+ */
+function compositePremultipliedOver(
+  base: Node<"vec4">,
+  overlay: Node<"vec4">,
+): Node<"vec4"> {
+  const baseColor = vec4(base);
+  const overlayColor = vec4(overlay);
+  const inverseOverlayAlpha = overlayColor.a.oneMinus();
+  return vec4(
+    overlayColor.rgb.add(baseColor.rgb.mul(inverseOverlayAlpha)),
+    overlayColor.a.add(baseColor.a.mul(inverseOverlayAlpha)),
+  );
 }
 
 function measureCloud(data: GaussianData): CloudBounds {
