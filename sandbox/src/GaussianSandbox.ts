@@ -255,8 +255,6 @@ export class GaussianSandbox {
     this.debugPanel.setPass(this.pass);
     this.pipeline = new RenderPipeline(this.renderer);
     this.helperPass = scenePass(this.scene, this.camera);
-    this.helperPass.opaque = false;
-    this.helperPass.transparent = true;
     this.pipeline.outputNode = compositePremultipliedOver(
       this.pass,
       this.helperPass,
