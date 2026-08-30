@@ -20,7 +20,6 @@ import {
   OctreeHelper,
   GaussianOctree,
   GaussianStore,
-  MaximumLodPackingStrategy,
   TieredRadialLodPackingStrategy,
   type GaussianStorePackLimits,
   type GaussianPass,
@@ -31,8 +30,6 @@ import { DebugPanel } from "./DebugPanel";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 
 const MAX_INDIRECT_CAPACITY = 256 * 65_535;
-const ANIMATED_CLOUD_URL = "/assets/dolphins-colored-3dgs.ply";
-const ANIMATION_CYCLE_SECONDS = 4;
 const PACKING_CENTER_CYCLE_SECONDS = 12;
 const PACKING_CENTER_AMPLITUDE = 5;
 const REPACK_DISTANCE = 0.5;
@@ -41,7 +38,6 @@ const LOD_LEVELS = [
   { retention: 0.5 },
   { retention: 1 },
 ] as const;
-const DOLPHIN_PACKING = new MaximumLodPackingStrategy();
 
 interface CloudBounds {
   minX: number;
@@ -69,9 +65,6 @@ export class GaussianSandbox {
   private readonly lodHelpers: LodHelper[] = [];
   private octreeHelpersVisible = false;
   private lodHelperLevels: readonly number[] = [];
-  private animatedCloud: GaussianCloud | null = null;
-  private animatedOriginX = 0;
-  private animatedAmplitude = 0;
   private primaryCloud: GaussianCloud | null = null;
   private primaryPackingStrategy: TieredRadialLodPackingStrategy | null = null;
   private primaryLodHelper: LodHelper | null = null;
@@ -181,7 +174,7 @@ export class GaussianSandbox {
   }
 
   async loadUrl(url: string): Promise<void> {
-    this.setStatus(`Loading ${url} and the animated dolphin…`);
+    this.setStatus(`Loading ${url}…`);
     const primaryPackingStrategy = createPrimaryPackingStrategy();
     const store = new GaussianStore({
       loader: this.loader,
@@ -192,22 +185,9 @@ export class GaussianSandbox {
         name: `${url} Gaussian cloud`,
         lod: { levels: LOD_LEVELS },
       });
-      const animatedCloud = await store.load(ANIMATED_CLOUD_URL, {
-        name: "Animated dolphin Gaussian cloud",
-        lod: { levels: LOD_LEVELS },
-        priority: -1,
-        packingStrategy: DOLPHIN_PACKING,
-      });
       const limits = webGpuDeviceLimits(this.renderer);
       store.pack({ limits });
-      this.show(
-        store,
-        url,
-        primaryCloud,
-        animatedCloud,
-        primaryPackingStrategy,
-        limits,
-      );
+      this.show(store, url, primaryCloud, primaryPackingStrategy, limits);
     } catch (error) {
       store.dispose();
       this.setError(error);
@@ -228,22 +208,9 @@ export class GaussianSandbox {
         data,
         `${file.name} Gaussian cloud`,
       );
-      const animatedCloud = await store.load(ANIMATED_CLOUD_URL, {
-        name: "Animated dolphin Gaussian cloud",
-        lod: { levels: LOD_LEVELS },
-        priority: -1,
-        packingStrategy: DOLPHIN_PACKING,
-      });
       const limits = webGpuDeviceLimits(this.renderer);
       store.pack({ limits });
-      this.show(
-        store,
-        file.name,
-        primaryCloud,
-        animatedCloud,
-        primaryPackingStrategy,
-        limits,
-      );
+      this.show(store, file.name, primaryCloud, primaryPackingStrategy, limits);
     } catch (error) {
       store.dispose();
       this.setError(error);
@@ -254,7 +221,6 @@ export class GaussianSandbox {
     store: GaussianStore,
     source: string,
     primaryCloud: GaussianCloud,
-    animatedCloud: GaussianCloud,
     primaryPackingStrategy: TieredRadialLodPackingStrategy,
     limits: GaussianStorePackLimits,
   ): void {
@@ -263,27 +229,22 @@ export class GaussianSandbox {
     this.pipeline?.dispose();
     this.disposeSpatialHelpers();
     this.store?.dispose();
-    this.animatedCloud = null;
     this.primaryCloud = null;
     this.primaryPackingStrategy = null;
     this.primaryLodHelper = null;
     this.packingCenterMarker = null;
 
     const primaryData = primaryCloud.lod!.octree.data;
-    const animatedData = animatedCloud.lod!.octree.data;
     const primaryBounds = measureCloud(primaryData);
-    const animatedBounds = measureCloud(animatedData);
     this.store = store;
     this.deviceLimits = limits;
     this.primaryCloud = primaryCloud;
     this.primaryPackingStrategy = primaryPackingStrategy;
     this.lastPackedCenterX = 0;
-    this.scene.add(primaryCloud, animatedCloud);
+    this.scene.add(primaryCloud);
     this.primaryLodHelper = this.addSpatialHelpers(primaryCloud);
-    this.addSpatialHelpers(animatedCloud);
     this.addPackingCenterMarker(primaryCloud, primaryBounds);
-    this.placeAnimatedCloud(primaryBounds, animatedBounds, animatedCloud);
-    this.frameClouds(primaryBounds, animatedBounds, animatedCloud);
+    this.frameCloud(primaryBounds);
 
     const requestedCapacity = Math.max(65_536, store.count * 16);
     const intersectionCapacity = Math.min(
@@ -313,78 +274,25 @@ export class GaussianSandbox {
       this.helperPass,
     );
     this.setStatus(
-      `${source}: ${primaryData.count.toLocaleString()}→${primaryCloud.gaussianCount.toLocaleString()} + ${animatedData.count.toLocaleString()}→${animatedCloud.gaussianCount.toLocaleString()} animated dolphin Gaussians · packed SH degree ${store.shDegree}`,
+      `${source}: ${primaryData.count.toLocaleString()}→${primaryCloud.gaussianCount.toLocaleString()} Gaussians · packed SH degree ${store.shDegree}`,
     );
   }
 
-  private placeAnimatedCloud(
-    primary: CloudBounds,
-    animated: CloudBounds,
-    cloud: GaussianCloud,
-  ): void {
-    const scale = (primary.radius * 0.45) / animated.radius;
-    const targetX = primary.centerX + primary.radius * 1.4;
-    cloud.scale.setScalar(scale);
-    cloud.position.set(
-      targetX - animated.centerX * scale,
-      primary.centerY - animated.centerY * scale,
-      primary.centerZ - animated.centerZ * scale,
-    );
-    this.animatedCloud = cloud;
-    this.animatedOriginX = cloud.position.x;
-    this.animatedAmplitude = primary.radius * 0.25;
-  }
-
-  private frameClouds(
-    primary: CloudBounds,
-    animated: CloudBounds,
-    animatedCloud: GaussianCloud,
-  ): void {
-    const scale = animatedCloud.scale.x;
-    const animatedMinX = animated.minX * scale + animatedCloud.position.x;
-    const animatedMaxX = animated.maxX * scale + animatedCloud.position.x;
-    const minX = Math.min(primary.minX, animatedMinX - this.animatedAmplitude);
-    const maxX = Math.max(primary.maxX, animatedMaxX + this.animatedAmplitude);
-    const minY = Math.min(
-      primary.minY,
-      animated.minY * scale + animatedCloud.position.y,
-    );
-    const maxY = Math.max(
-      primary.maxY,
-      animated.maxY * scale + animatedCloud.position.y,
-    );
-    const minZ = Math.min(
-      primary.minZ,
-      animated.minZ * scale + animatedCloud.position.z,
-    );
-    const maxZ = Math.max(
-      primary.maxZ,
-      animated.maxZ * scale + animatedCloud.position.z,
-    );
-    const centerX = (minX + maxX) * 0.5;
-    const centerY = (minY + maxY) * 0.5;
-    const centerZ = (minZ + maxZ) * 0.5;
-    const diagonal = Math.hypot(maxX - minX, maxY - minY, maxZ - minZ);
-    const radius = Math.max(diagonal * 0.5, 0.1);
+  private frameCloud(bounds: CloudBounds): void {
+    const radius = Math.max(bounds.radius, 0.1);
     this.camera.near = Math.max(radius / 10_000, 0.0001);
     this.camera.far = Math.max(radius * 20, 100);
     this.camera.position.set(
-      centerX + radius * 0.15,
-      centerY + radius * 0.35,
-      centerZ + radius * 2.4,
+      bounds.centerX + radius * 0.15,
+      bounds.centerY + radius * 0.35,
+      bounds.centerZ + radius * 2.4,
     );
     this.camera.updateProjectionMatrix();
-    this.controls.target.set(centerX, centerY, centerZ);
+    this.controls.target.set(bounds.centerX, bounds.centerY, bounds.centerZ);
     this.controls.update();
   }
 
   private updateAnimation(timeMilliseconds: number): void {
-    const phase =
-      (timeMilliseconds * 0.001 * Math.PI * 2) / ANIMATION_CYCLE_SECONDS;
-    if (this.animatedCloud !== null) {
-      this.animatedCloud.position.x =
-        this.animatedOriginX + Math.sin(phase) * this.animatedAmplitude;
-    }
     this.updatePackingCenter(timeMilliseconds);
   }
 

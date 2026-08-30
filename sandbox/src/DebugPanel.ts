@@ -180,7 +180,7 @@ export class DebugPanel {
 
   private packStatsLines(): string[] {
     const stats = this.packStats;
-    if (stats === null) return ["LOD repack     waiting for animated center"];
+    if (stats === null) return ["LOD repack     waiting for moving center"];
     return [
       `LOD repack     #${this.packCount}  CPU ${formatMs(this.packDurationMs)}  center.x ${this.packingCenterX.toFixed(2)} m`,
       `pack phases    plan ${formatMs(stats.planningMs)}  slots ${formatMs(stats.slotUpdateMs)}`,
