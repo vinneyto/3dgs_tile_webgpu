@@ -7,6 +7,10 @@ const metrics = document.querySelector<HTMLElement>("#metrics");
 const kernelTimings = document.querySelector<HTMLElement>("#kernel-timings");
 const openButton = document.querySelector<HTMLButtonElement>("#open-ply");
 const fileInput = document.querySelector<HTMLInputElement>("#ply-file");
+const octreeToggle = document.querySelector<HTMLInputElement>("#show-octree");
+const lodToggles = Array.from(
+  document.querySelectorAll<HTMLInputElement>("[data-lod-level]"),
+);
 
 if (
   viewport === null ||
@@ -14,7 +18,9 @@ if (
   metrics === null ||
   kernelTimings === null ||
   openButton === null ||
-  fileInput === null
+  fileInput === null ||
+  octreeToggle === null ||
+  lodToggles.length === 0
 ) {
   throw new Error("Sandbox markup is incomplete");
 }
@@ -25,6 +31,21 @@ const sandbox = await GaussianSandbox.create(
   metrics,
   kernelTimings,
 );
+
+const applySpatialDebugState = () => {
+  sandbox.setOctreeHelperVisible(octreeToggle.checked);
+  sandbox.setLodHelperLevels(
+    lodToggles
+      .filter((candidate) => candidate.checked)
+      .map((candidate) => Number(candidate.dataset.lodLevel)),
+  );
+};
+
+octreeToggle.addEventListener("change", applySpatialDebugState);
+for (const toggle of lodToggles)
+  toggle.addEventListener("change", applySpatialDebugState);
+
+applySpatialDebugState();
 const parameters = new URLSearchParams(location.search);
 await sandbox.loadUrl(parameters.get("ply") ?? "/sample.ply");
 

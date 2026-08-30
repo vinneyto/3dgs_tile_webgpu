@@ -23,6 +23,9 @@ describe("projectionWGSL antialias specialization", () => {
 
     expect(source).toContain("(*projected_mean)[gid] = vec4<f32>(0.0);");
     expect(source).not.toContain("visible_flags");
+    expect(source.indexOf("scale_opacity.w <")).toBeLessThan(
+      source.indexOf("let covariance_local"),
+    );
   });
 
   it("loads the cloud ID from means.w and uses camera-specific object state", () => {

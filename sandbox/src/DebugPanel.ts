@@ -1,5 +1,10 @@
 import type { WebGPURenderer } from "three/webgpu";
-import type { GaussianPass, GaussianPassStats } from "../../src/index";
+import type {
+  GaussianPass,
+  GaussianPassStats,
+  GaussianStorePackStats,
+  GaussianStoreSlotRange,
+} from "../../src/index";
 import type { KernelTimingInspector } from "./KernelTimingInspector";
 
 const STATS_INTERVAL_MS = 1_500;
@@ -18,6 +23,10 @@ export class DebugPanel {
   private lastStatsTime = -Infinity;
   private lastDisplayTime = -Infinity;
   private memoryBaseline: number | null = null;
+  private packStats: GaussianStorePackStats | null = null;
+  private packDurationMs = 0;
+  private packCount = 0;
+  private packingCenterX = 0;
 
   constructor(
     private readonly renderer: WebGPURenderer,
@@ -37,6 +46,21 @@ export class DebugPanel {
     this.frameCount = 0;
     this.memoryBaseline = null;
     this.lastStatsTime = -Infinity;
+    this.packStats = null;
+    this.packDurationMs = 0;
+    this.packCount = 0;
+    this.packingCenterX = 0;
+  }
+
+  recordPack(
+    stats: GaussianStorePackStats,
+    durationMs: number,
+    centerX: number,
+  ): void {
+    this.packStats = stats;
+    this.packDurationMs = durationMs;
+    this.packingCenterX = centerX;
+    this.packCount++;
   }
 
   update(time: number, cpuEncodeMs: number): void {
@@ -126,6 +150,7 @@ export class DebugPanel {
       debug === null
         ? "stages         —"
         : `stages         rebuilds ${debug.tileStageRebuilds}  radix ${debug.radixBackend} depth ${debug.depthRadixPasses} + tile ${debug.tileRadixPasses}`;
+    const packingLines = this.packStatsLines();
 
     this.element.textContent = [
       `FPS ${fps.toFixed(1).padStart(5)}  frame ${formatMs(this.averageFrameMs)}`,
@@ -138,6 +163,8 @@ export class DebugPanel {
       pipelineLine,
       stagesLine,
       "",
+      ...packingLines,
+      "",
       `GPU tracked    ${formatBytes(memory.total)}  Δ ${formatDelta(memoryDelta)}`,
       `storage        ${memory.storageAttributes} / ${formatBytes(memory.storageAttributesSize)}`,
       `indirect       ${memory.indirectStorageAttributes} / ${formatBytes(memory.indirectStorageAttributesSize)}`,
@@ -149,6 +176,20 @@ export class DebugPanel {
     ].join("\n");
 
     this.renderKernelTimings(debug?.profileKernels ?? false);
+  }
+
+  private packStatsLines(): string[] {
+    const stats = this.packStats;
+    if (stats === null) return ["LOD repack     waiting for moving center"];
+    return [
+      `LOD repack     #${this.packCount}  CPU ${formatMs(this.packDurationMs)}  center.x ${this.packingCenterX.toFixed(2)} m`,
+      `pack phases    plan ${formatMs(stats.planningMs)}  slots ${formatMs(stats.slotUpdateMs)}`,
+      `slots          active ${formatInteger(stats.activeGaussians)} / ${formatInteger(stats.slotCapacity)}`,
+      `slot delta     reused ${formatInteger(stats.reusedSlots)}  written ${formatInteger(stats.writtenSlots)}  cleared ${formatInteger(stats.clearedSlots)}`,
+      `GPU upload     approximately ${formatBytes(stats.estimatedUploadBytes)}`,
+      ...formatRanges("full upload", stats.writtenSlotRanges),
+      ...formatRanges("opacity only", stats.clearedSlotRanges),
+    ];
   }
 
   private renderKernelTimings(profileKernels: boolean): void {
@@ -176,6 +217,22 @@ export class DebugPanel {
         : "Radix stages already have individual timing boundaries",
     ].join("\n");
   }
+}
+
+function formatRanges(
+  label: string,
+  ranges: readonly GaussianStoreSlotRange[],
+): string[] {
+  const shown = ranges
+    .slice(0, 10)
+    .map((range) => `[${range.start}, ${range.start + range.count})`);
+  const rows: string[] = [];
+  for (let index = 0; index < shown.length; index += 3) {
+    rows.push(`  ${shown.slice(index, index + 3).join(" ")}`);
+  }
+  if (rows.length === 0) rows.push("  —");
+  if (ranges.length > shown.length) rows[rows.length - 1] += " …";
+  return [`${label.padEnd(14)} ${ranges.length} ranges`, ...rows];
 }
 
 function formatInteger(value: number): string {

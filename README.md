@@ -32,6 +32,19 @@ src/
 ├── GaussianData.ts                 external Gaussian buffer contract
 ├── CanonicalGaussianPlyLoader.ts   canonical PLY parsing and activation
 ├── GaussianCloud.ts                transformable Three.js scene object
+├── GaussianOctree.ts               full CPU spatial index and raycasts
+├── GaussianLod.ts                  nested per-cell LOD representations
+├── lod-packing/                    pluggable static packing strategies
+│   ├── GaussianLodPackingStrategy.ts shared strategy contract
+│   ├── MaximumLodPackingStrategy.ts  strict full-detail packing
+│   ├── RadialLodPackingStrategy.ts   fixed-LOD center-out clipping
+│   └── TieredRadialLodPackingStrategy.ts 60/20/20 radial LOD tiers
+├── store-budgeting/                 global Store budget assignment
+│   ├── GaussianStoreBudgetStrategy.ts shared strategy contract
+│   ├── RemainingCapacityBudgetStrategy.ts default remaining-budget policy
+│   └── SourceFractionBudgetStrategy.ts source-relative budget cap
+├── OctreeHelper.ts                 local-space octree wireframe helper
+├── LodHelper.ts                    color-coded active LOD volumes
 ├── GaussianStore.ts                packed multi-cloud buffer ownership
 ├── GaussianPass.ts                 Three.js PassNode integration
 ├── createGaussianPass.ts           public pass factory
@@ -95,6 +108,7 @@ const data = new GaussianData(
 
 const store = new GaussianStore();
 const cloud = store.add(data, { name: "cat" });
+store.pack({ limits: device.limits });
 scene.add(cloud); // GaussianCloud is an ordinary transformable Object3D
 
 const pass = gaussianPass(renderer, camera, store, {
@@ -118,18 +132,162 @@ The store uses the canonical 3DGS PLY loader by default:
 const store = new GaussianStore();
 const cat = await store.load("cat.ply");
 const dog = await store.load("dog.ply");
+store.pack({ limits: device.limits });
 
 cat.position.x = -1;
 dog.position.x = 1;
 scene.add(cat, dog);
 ```
 
+`load()` expands to `loader → GaussianOctree → GaussianLod → addLod()`. Both
+`load()` and `addLod()` only register clouds and set `store.needsPack`; they do
+not select octree cells or rebuild buffers.
+
+`GaussianStore` owns one global Gaussian capacity. During every structural
+`pack()`, its budget strategy visits clouds in `(priority, insertion order)` and
+assigns each one a slice of the remaining capacity. The default
+`RemainingCapacityBudgetStrategy` offers all remaining capacity to the current
+cloud. `SourceFractionBudgetStrategy` can instead cap each allocation to a
+fraction of that cloud's full source count. Lower priority numbers are packed
+first; every cloud defaults to `priority: 0`.
+
+The Store's default packing strategy uses the finest LOD and selects leaf cells
+radially from the object-bounds center until that cloud's allocation is full.
+`pack({ limits: device.limits })` derives the Gaussian capacity from the actual
+device's `maxStorageBufferBindingSize`, `maxBufferSize`, and the highest SH
+degree among all registered clouds. At degree 3, the standard 128 MiB binding
+limit produces a capacity of 524,288 Gaussians.
+
+```ts
+import {
+  GaussianLod,
+  GaussianOctree,
+  GaussianStore,
+  RadialLodPackingStrategy,
+} from "3dgs-tile-webgpu";
+
+const radialPacking = new RadialLodPackingStrategy({
+  center: "bounds-center",
+  lodLevel: "finest",
+});
+
+const store = new GaussianStore({
+  defaultPackingStrategy: radialPacking,
+});
+
+const mug = await store.load("mug.ply", {
+  lod: {
+    levels: [{ retention: 0.2 }, { retention: 0.5 }, { retention: 1 }],
+  },
+  priority: 0,
+});
+
+store.pack({ limits: device.limits });
+```
+
+`GaussianLodPackingStrategy` is an interface with a `pack()` method.
+`MaximumLodPackingStrategy`, `RadialLodPackingStrategy`, and
+`TieredRadialLodPackingStrategy` are its built-in implementations. The radial
+strategy walks leaf cells continuously from the focus outwards and packs one
+requested LOD for every selected cell. It stops before the first whole cell that
+would exceed the allocation; that cell and all farther cells are clipped.
+`"finest"` resolves to the last configured LOD level. The tiered strategy first
+uses 60% for finest cells, 20% for middle-detail cells, and 20% for coarsest
+cells; if the complete finest representation fits, it keeps the whole object at
+finest detail.
+
+Packing remains an individual cloud characteristic when needed:
+
+```ts
+const cloud = store.addLod(lod, {
+  priority: -1,
+  packingStrategy: new TieredRadialLodPackingStrategy(),
+});
+
+// Priority changes only invalidate the current layout.
+cloud.packingPriority = 1;
+store.pack({ limits: device.limits });
+```
+
+The same registration pipeline is available when source data is already loaded:
+
+```ts
+const data = await loader.load("mug.ply");
+const octree = GaussianOctree.build(data);
+const lod = GaussianLod.build(octree, {
+  levels: [{ retention: 0.2 }, { retention: 0.5 }, { retention: 1 }],
+});
+const cloud = store.addLod(lod, {
+  packingStrategy: radialPacking,
+});
+store.pack({ limits: device.limits });
+```
+
+Before `pack()`, a newly registered cloud has `gaussianCount === 0` and
+`lodPacking === null`. Adding or removing a cloud, or changing a packing
+priority, invalidates all current selections. `GaussianPass` refuses to render
+an invalidated Store so a potentially large CPU repack never occurs implicitly
+inside a frame.
+
+Repeated packing with the same capacity and SH degree reuses stable Gaussian
+slots. Allocation is tracked per octree cell rather than with one map entry per
+Gaussian. Since cell LODs are nested prefixes, an upgrade keeps the existing
+prefix and allocates only its tail, while a downgrade releases only its tail.
+Only added slots and opacity of released slots are marked with Three.js update
+ranges, so WebGPU uploads the packing delta instead of replacing every attribute
+buffer:
+
+```ts
+tieredPacking.setCenter(nextLocalCenter);
+store.pack({ limits: device.limits });
+console.log(store.lastPackStats);
+// { fullRebuild: false, reusedSlots, writtenSlots, clearedSlots, ... }
+```
+
+A capacity or SH-degree change still requires a full buffer rebuild. Inactive
+pool slots have zero opacity and exit the projection kernel before covariance
+or spherical-harmonic work.
+
+The sandbox exercises this path continuously. Its cloud uses tiered packing
+around a white marker moving as `x = 5 sin(t)`, and calls `pack()` after each
+0.5 m displacement. Diagnostics show CPU pack time, repack count,
+reused/written/cleared slots, estimated upload bytes, planning versus slot-update
+time, and the first ten full-attribute and opacity-only slot ranges.
+
+`GaussianOctree` retains the complete CPU source. `GaussianLodPacking` is only
+the compact active cell/level cut (excluding clipped cells) used both to fill the GPU buffers and, through
+`GaussianCloud.raycastMode = "rendered"`, to keep raycasts synchronized with the
+rendered LOD. Set the mode to `"full"` to raycast the complete source octree.
+
+Both spatial structures have local-space Three.js debug helpers. Attach them as
+children of the cloud so they inherit its position, rotation and scale:
+
+```ts
+import { LodHelper, OctreeHelper } from "3dgs-tile-webgpu";
+
+const octreeHelper = new OctreeHelper(cloud.lod!.octree, {
+  leavesOnly: false,
+});
+const lodHelper = new LodHelper(cloud.lod!, cloud.lodPacking!, {
+  levels: [0, 2],
+});
+
+cloud.add(octreeHelper, lodHelper);
+
+// Change the visible color-coded LOD volumes later.
+lodHelper.setLevels([1]);
+```
+
+`OctreeHelper` draws the complete adaptive cell grid. `LodHelper` creates one
+instanced, translucent volume set per active LOD level and can update its compact
+packing with `setPacking()`. Call `dispose()` on helpers when they are removed.
+
 A different source format can be injected with `new GaussianStore({ loader })` as long as its loader returns
 `GaussianData`.
 
 All clouds share one projection, global depth sort, intersection list and tile rasterizer, so transparent
-Gaussians from different objects remain correctly ordered. Adding or removing a cloud changes
-`store.layoutVersion` and lazily rebuilds count-dependent pass stages. Transform and visibility changes only
+Gaussians from different objects remain correctly ordered. A successful `pack()` changes
+`store.layoutVersion` and rebuilds count-dependent pass stages on the next frame. Transform and visibility changes only
 update a small camera-specific object-frame range and do not rebuild the pipeline.
 
 The `GaussianPass` is itself a `PassNode`, so its result can be used anywhere a texture-producing pass is
@@ -291,13 +449,16 @@ npm install
 npm run sandbox
 ```
 
-The sandbox loads its small `sample.ply` plus a bundled animated dolphin cloud by default and enables the standard Three.js `OrbitControls`. Use
+The sandbox loads its small `sample.ply` by default and enables the standard Three.js `OrbitControls`. Use
 **Open PLY** or drag a canonical 3DGS PLY onto the canvas to inspect another cloud. A URL can also be supplied
 explicitly:
 
 ```text
 http://localhost:5173/?ply=/my-cloud.ply&sort=packed16&dpr=1
 ```
+
+Open **Octree / LOD visualization** in the sandbox HUD to toggle the local
+octree grid and any combination of the color-coded LOD 0, 1 and 2 volumes.
 
 Files addressed by URL belong in `sandbox/public/`; the file picker and drag-and-drop do not require copying
 the file into the repository. The loader accepts ASCII, binary little-endian, and binary big-endian scalar PLY

@@ -200,6 +200,12 @@ export class GaussianPass extends PassNode {
     }
     renderer.initRenderTarget(this.renderTarget);
 
+    if (this.gaussianStore.needsPack) {
+      throw new Error(
+        "GaussianStore layout is invalidated; call store.pack({ limits: device.limits }) before rendering",
+      );
+    }
+
     if (
       this.pipeline === null ||
       this.pipelineLayoutVersion !== this.gaussianStore.layoutVersion
