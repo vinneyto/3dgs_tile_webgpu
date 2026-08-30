@@ -1,16 +1,11 @@
 import { Vector3 } from "three/webgpu";
 
-import { GaussianLod, type GaussianLodPacking } from "./GaussianLod";
-
-export interface GaussianLodPackingContext {
-  readonly lod: GaussianLod;
-  readonly maxGaussians: number;
-}
-
-/** Selects a non-overlapping octree cell/LOD cut for a GaussianStore budget. */
-export interface GaussianLodPackingStrategy {
-  pack(context: GaussianLodPackingContext): GaussianLodPacking;
-}
+import type { GaussianLodPacking } from "../GaussianLod";
+import {
+  type GaussianLodPackingContext,
+  type GaussianLodPackingStrategy,
+  validateGaussianLodBudget,
+} from "./GaussianLodPackingStrategy";
 
 export interface RadialLodPackingOptions {
   /** Local-space focus point. Defaults to the tight object-bounds center. */
@@ -22,23 +17,6 @@ export interface RadialLodPackingOptions {
 interface RadialCell {
   readonly nodeId: number;
   readonly radius: number;
-}
-
-/** Packs every leaf at the finest available LOD or fails if it does not fit. */
-export class MaximumLodPackingStrategy implements GaussianLodPackingStrategy {
-  pack({ lod, maxGaussians }: GaussianLodPackingContext): GaussianLodPacking {
-    validateBudget(maxGaussians);
-    const sourceCount = lod.octree.data.count;
-    if (maxGaussians < sourceCount) {
-      throw new RangeError(
-        `Maximum LOD requires ${sourceCount} Gaussians but the budget allows ${maxGaussians}`,
-      );
-    }
-    const nodeIds = lod.octree.leafNodeIds.slice();
-    const lodLevels = new Uint8Array(nodeIds.length);
-    lodLevels.fill(lod.finestLevel);
-    return { nodeIds, lodLevels, gaussianCount: sourceCount };
-  }
 }
 
 /**
@@ -67,7 +45,7 @@ export class RadialLodPackingStrategy implements GaussianLodPackingStrategy {
   }
 
   pack({ lod, maxGaussians }: GaussianLodPackingContext): GaussianLodPacking {
-    validateBudget(maxGaussians);
+    validateGaussianLodBudget(maxGaussians);
     const lodLevel =
       this.lodLevel === "finest" ? lod.finestLevel : this.lodLevel;
     if (lodLevel >= lod.levelCount) {
@@ -114,11 +92,5 @@ export class RadialLodPackingStrategy implements GaussianLodPackingStrategy {
       lodLevels,
       gaussianCount: selectedCount,
     };
-  }
-}
-
-function validateBudget(maxGaussians: number): void {
-  if (!Number.isInteger(maxGaussians) || maxGaussians <= 0) {
-    throw new RangeError("Gaussian LOD budget must be a positive integer");
   }
 }

@@ -11,7 +11,7 @@ import {
 import {
   RadialLodPackingStrategy,
   type GaussianLodPackingStrategy,
-} from "./GaussianLodPacking";
+} from "./lod-packing";
 import {
   GaussianOctree,
   type GaussianOctreeBuildOptions,

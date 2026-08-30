@@ -6,7 +6,7 @@ import { GaussianLod } from "../src/GaussianLod";
 import {
   MaximumLodPackingStrategy,
   RadialLodPackingStrategy,
-} from "../src/GaussianLodPacking";
+} from "../src/lod-packing";
 import { GaussianOctree } from "../src/GaussianOctree";
 
 describe("GaussianOctree", () => {

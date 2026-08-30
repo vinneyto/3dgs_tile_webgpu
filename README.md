@@ -34,7 +34,10 @@ src/
 ├── GaussianCloud.ts                transformable Three.js scene object
 ├── GaussianOctree.ts               full CPU spatial index and raycasts
 ├── GaussianLod.ts                  nested per-cell LOD representations
-├── GaussianLodPacking.ts           pluggable static packing strategies
+├── lod-packing/                    pluggable static packing strategies
+│   ├── GaussianLodPackingStrategy.ts shared strategy contract
+│   ├── MaximumLodPackingStrategy.ts  strict full-detail packing
+│   └── RadialLodPackingStrategy.ts   fixed-LOD center-out clipping
 ├── OctreeHelper.ts                 local-space octree wireframe helper
 ├── LodHelper.ts                    color-coded active LOD volumes
 ├── GaussianStore.ts                packed multi-cloud buffer ownership

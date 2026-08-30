@@ -3,7 +3,7 @@ import { StorageBufferAttribute } from "three/webgpu";
 
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLod } from "../src/GaussianLod";
-import { RadialLodPackingStrategy } from "../src/GaussianLodPacking";
+import { RadialLodPackingStrategy } from "../src/lod-packing";
 import { GaussianOctree } from "../src/GaussianOctree";
 import { GaussianStore } from "../src/GaussianStore";
 
