@@ -1,9 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { StorageBufferAttribute } from "three/webgpu";
+import { StorageBufferAttribute, Vector3 } from "three/webgpu";
 
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLod } from "../src/GaussianLod";
-import { RadialLodPackingStrategy } from "../src/lod-packing";
+import {
+  RadialLodPackingStrategy,
+  TieredRadialLodPackingStrategy,
+} from "../src/lod-packing";
 import { GaussianOctree } from "../src/GaussianOctree";
 import { GaussianStore } from "../src/GaussianStore";
 
@@ -165,6 +168,36 @@ describe("GaussianStore", () => {
     first.dispose();
     store.pack({ limits: limitsForGaussianCapacity(6, 0) });
     expect(second.gaussianCount).toBe(4);
+  });
+
+  it("reuses stable slots and uploads only the Gaussian delta after a center shift", () => {
+    const strategy = new TieredRadialLodPackingStrategy({
+      center: new Vector3(2, 0, 0),
+    });
+    const store = new GaussianStore({ defaultPackingStrategy: strategy });
+    store.addLod(singleLevelLod([0, 1, 2, 3, 4, 5, 6, 7]));
+    const limits = limitsForGaussianCapacity(4, 0);
+
+    store.pack({ limits });
+    const dataBefore = store.getPackedData();
+    expect(store.lastPackStats).toMatchObject({
+      fullRebuild: true,
+      writtenSlots: 4,
+    });
+
+    strategy.setCenter(new Vector3(3, 0, 0));
+    store.pack({ limits });
+
+    expect(store.getPackedData()).toBe(dataBefore);
+    expect(store.lastPackStats).toMatchObject({
+      fullRebuild: false,
+      activeGaussians: 4,
+      reusedSlots: 3,
+      writtenSlots: 1,
+      clearedSlots: 0,
+    });
+    expect(dataBefore.means.updateRanges.length).toBeGreaterThan(0);
+    expect(dataBefore.shCoefficients.updateRanges.length).toBeGreaterThan(0);
   });
 });
 

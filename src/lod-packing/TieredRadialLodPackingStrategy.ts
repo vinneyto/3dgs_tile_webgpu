@@ -20,7 +20,7 @@ export interface TieredRadialLodPackingOptions {
  * finest representation fits, it is returned without degrading outer cells.
  */
 export class TieredRadialLodPackingStrategy implements GaussianLodPackingStrategy {
-  readonly center: GaussianLodPackingCenter;
+  center: GaussianLodPackingCenter;
   readonly budgetShares: readonly [number, number, number];
 
   constructor(options: TieredRadialLodPackingOptions = {}) {
@@ -31,6 +31,11 @@ export class TieredRadialLodPackingStrategy implements GaussianLodPackingStrateg
     this.budgetShares = validateBudgetShares(
       options.budgetShares ?? [0.6, 0.2, 0.2],
     );
+  }
+
+  setCenter(center: GaussianLodPackingCenter): this {
+    this.center = center instanceof Vector3 ? center.clone() : center;
+    return this;
   }
 
   pack({ lod, maxGaussians }: GaussianLodPackingContext): GaussianLodPacking {

@@ -20,7 +20,7 @@ export interface RadialLodPackingOptions {
  * Selection stops when the next whole leaf cell exceeds the capacity.
  */
 export class RadialLodPackingStrategy implements GaussianLodPackingStrategy {
-  readonly center: GaussianLodPackingCenter;
+  center: GaussianLodPackingCenter;
   readonly lodLevel: number | "finest";
 
   constructor(options: RadialLodPackingOptions = {}) {
@@ -38,6 +38,11 @@ export class RadialLodPackingStrategy implements GaussianLodPackingStrategy {
       );
     }
     this.lodLevel = options.lodLevel ?? "finest";
+  }
+
+  setCenter(center: GaussianLodPackingCenter): this {
+    this.center = center instanceof Vector3 ? center.clone() : center;
+    return this;
   }
 
   pack({ lod, maxGaussians }: GaussianLodPackingContext): GaussianLodPacking {

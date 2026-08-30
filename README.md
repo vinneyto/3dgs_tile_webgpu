@@ -227,6 +227,22 @@ priority, invalidates all current selections. `GaussianPass` refuses to render
 an invalidated Store so a potentially large CPU repack never occurs implicitly
 inside a frame.
 
+Repeated packing with the same capacity and SH degree reuses stable Gaussian
+slots. Unchanged source Gaussians keep their slots; only added slots and opacity
+of released slots are marked with Three.js update ranges, so WebGPU uploads the
+packing delta instead of replacing every attribute buffer:
+
+```ts
+tieredPacking.setCenter(nextLocalCenter);
+store.pack({ limits: device.limits });
+console.log(store.lastPackStats);
+// { fullRebuild: false, reusedSlots, writtenSlots, clearedSlots, ... }
+```
+
+A capacity or SH-degree change still requires a full buffer rebuild. Inactive
+pool slots have zero opacity and exit the projection kernel before covariance
+or spherical-harmonic work.
+
 `GaussianOctree` retains the complete CPU source. `GaussianLodPacking` is only
 the compact active cell/level cut (excluding clipped cells) used both to fill the GPU buffers and, through
 `GaussianCloud.raycastMode = "rendered"`, to keep raycasts synchronized with the

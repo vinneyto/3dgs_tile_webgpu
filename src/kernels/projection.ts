@@ -52,6 +52,8 @@ fn project_gaussians(
   (*tile_counts)[gid] = 0u;
   // Opacity zero is also the visibility predicate consumed by the compact scan.
   (*projected_mean)[gid] = vec4<f32>(0.0);
+  let scale_opacity = (*scales_opacity)[gid];
+  if (scale_opacity.w < (1.0 / 255.0)) { return 0u; }
   let mean_object = (*means)[gid];
   let mean_local = mean_object.xyz;
   let object_id = u32(mean_object.w);
@@ -76,7 +78,6 @@ fn project_gaussians(
   let height = viewport.y;
   let center = vec2<f32>((ndc.x * 0.5 + 0.5) * width, (0.5 - ndc.y * 0.5) * height);
 
-  let scale_opacity = (*scales_opacity)[gid];
   let scale = max(scale_opacity.xyz, vec3<f32>(1e-7));
   let q = normalize((*rotations)[gid]);
   let xx = q.x * q.x;

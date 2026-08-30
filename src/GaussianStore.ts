@@ -45,6 +45,15 @@ export interface GaussianStorePackOptions {
   readonly limits: GaussianStorePackLimits;
 }
 
+export interface GaussianStorePackStats {
+  readonly fullRebuild: boolean;
+  readonly slotCapacity: number;
+  readonly activeGaussians: number;
+  readonly reusedSlots: number;
+  readonly writtenSlots: number;
+  readonly clearedSlots: number;
+}
+
 export interface GaussianStoreAddOptions {
   name?: string;
   /** Lower values are packed first. Defaults to 0. */
@@ -83,7 +92,6 @@ interface StoreEntry {
   lod: GaussianLod | null;
   ownsLod: boolean;
   packing: GaussianLodPacking | null;
-  packedOffset: number;
 }
 
 interface PlannedEntry {
@@ -106,10 +114,12 @@ export class GaussianStore {
   private readonly entries: StoreEntry[] = [];
   private readonly cloudList: GaussianCloud[] = [];
   private packedData: GaussianData | null = null;
-  private packedDegree: 0 | 1 | 2 | 3 = 0;
   private nextObjectId = 0;
+  private packedObjectCapacity = 0;
   private gaussianCapacity = 0;
+  private slotsByEntry = new Map<StoreEntry, Map<number, number>>();
   private packingInvalid = false;
+  private latestPackStats: GaussianStorePackStats | null = null;
   private disposed = false;
 
   /** Changes only after a successful pack() replaces the shared layout. */
@@ -130,6 +140,10 @@ export class GaussianStore {
   /** True after registration changes and until pack() succeeds. */
   get needsPack(): boolean {
     return this.packingInvalid;
+  }
+
+  get lastPackStats(): GaussianStorePackStats | null {
+    return this.latestPackStats;
   }
 
   get count(): number {
@@ -212,7 +226,6 @@ export class GaussianStore {
       lod: null,
       ownsLod: false,
       packing: null,
-      packedOffset: -1,
     });
     this.cloudList.push(cloud);
     this.invalidatePacking();
@@ -247,7 +260,6 @@ export class GaussianStore {
       lod,
       ownsLod: options.ownsLod ?? false,
       packing: null,
-      packedOffset: -1,
     });
     this.cloudList.push(cloud);
     this.invalidatePacking();
@@ -276,26 +288,35 @@ export class GaussianStore {
     }
     const capacity = capacityFromLimits(limits, this.shDegree);
     const planned = this.planPackings(capacity);
-    const { data, offsets } = this.buildPackedData(planned);
+    const slotCapacity = Math.min(
+      capacity,
+      this.entries.reduce((sum, entry) => sum + entry.sourceGaussianCount, 0),
+    );
     const oldData = this.packedData;
+    const canUpdateInPlace =
+      oldData !== null &&
+      oldData.count === slotCapacity &&
+      oldData.shDegree === this.shDegree &&
+      this.packedObjectCapacity === this.objectCapacity;
+    const result = canUpdateInPlace
+      ? this.updatePackedData(planned, oldData)
+      : this.buildPackedData(planned, slotCapacity);
 
     for (const plan of planned) {
       plan.entry.count = plan.count;
       plan.entry.packing = plan.packing;
-      plan.entry.packedOffset = offsets.get(plan.entry)!;
       plan.entry.cloud.updatePacking(plan.count, plan.packing);
-      if (plan.entry.lod === null && plan.entry.source !== null) {
-        if (plan.entry.ownsSource) plan.entry.source.dispose();
-        plan.entry.source = null;
-        plan.entry.ownsSource = false;
-      }
     }
-    this.packedData = data;
-    this.packedDegree = this.shDegree;
+    this.packedData = result.data;
+    this.slotsByEntry = result.slotsByEntry;
     this.gaussianCapacity = capacity;
+    this.packedObjectCapacity = this.objectCapacity;
     this.packingInvalid = false;
-    this.layoutVersion++;
-    oldData?.dispose();
+    this.latestPackStats = result.stats;
+    if (!canUpdateInPlace) {
+      this.layoutVersion++;
+      oldData?.dispose();
+    }
   }
 
   private planPackings(capacity: number): PlannedEntry[] {
@@ -395,77 +416,44 @@ export class GaussianStore {
     this.packedData = null;
   }
 
-  private buildPackedData(planned: readonly PlannedEntry[]): {
+  private buildPackedData(
+    planned: readonly PlannedEntry[],
+    slotCapacity: number,
+  ): {
     data: GaussianData;
-    offsets: ReadonlyMap<StoreEntry, number>;
+    slotsByEntry: Map<StoreEntry, Map<number, number>>;
+    stats: GaussianStorePackStats;
   } {
-    const count = planned.reduce((sum, plan) => sum + plan.count, 0);
     const degree = this.shDegree;
     const coefficientCount = (degree + 1) ** 2;
-    const oldData = this.packedData;
-    const oldCoefficientCount = (this.packedDegree + 1) ** 2;
-    const means = new Float32Array(count * 4);
-    const scalesOpacity = new Float32Array(count * 4);
-    const rotations = new Float32Array(count * 4);
-    const shCoefficients = new Float32Array(count * coefficientCount * 4);
+    const means = new Float32Array(slotCapacity * 4);
+    const scalesOpacity = new Float32Array(slotCapacity * 4);
+    const rotations = new Float32Array(slotCapacity * 4);
+    const shCoefficients = new Float32Array(
+      slotCapacity * coefficientCount * 4,
+    );
 
-    const offsets = new Map<StoreEntry, number>();
-    let destinationGaussian = 0;
+    const slotsByEntry = new Map<StoreEntry, Map<number, number>>();
+    let slot = 0;
     for (const plan of planned) {
       const { entry } = plan;
-      const source = entry.lod?.octree.data ?? entry.source ?? oldData;
-      if (source === null) {
-        throw new Error("GaussianStore lost the source for a packed cloud");
-      }
-      const selectedIndices =
-        entry.lod !== null && plan.packing !== null
-          ? entry.lod.indicesForPacking(plan.packing)
-          : null;
-      const sourceGaussian =
-        entry.lod === null && entry.source === null ? entry.packedOffset : 0;
-      const sourceCoefficientCount =
-        entry.lod === null && entry.source === null
-          ? oldCoefficientCount
-          : source.shCoefficientCount;
-      offsets.set(entry, destinationGaussian);
+      const selectedIndices = this.selectedIndices(plan);
+      const entrySlots = new Map<number, number>();
       for (let local = 0; local < plan.count; local++) {
-        const selectedSource =
-          selectedIndices?.[local] ?? sourceGaussian + local;
-        copyVec4Item(
-          source.means.array as Float32Array,
-          selectedSource,
+        const sourceIndex = selectedIndices[local]!;
+        this.copySourceToSlot(
+          entry,
+          sourceIndex,
+          slot,
           means,
-          destinationGaussian + local,
-        );
-        copyVec4Item(
-          source.scalesOpacity.array as Float32Array,
-          selectedSource,
           scalesOpacity,
-          destinationGaussian + local,
-        );
-        copyVec4Item(
-          source.rotations.array as Float32Array,
-          selectedSource,
           rotations,
-          destinationGaussian + local,
-        );
-        means[(destinationGaussian + local) * 4 + 3] = entry.cloud.objectId;
-        const sourceBase = selectedSource * sourceCoefficientCount * 4;
-        const destinationBase =
-          (destinationGaussian + local) * coefficientCount * 4;
-        const copiedCoefficientCount = Math.min(
-          sourceCoefficientCount,
+          shCoefficients,
           coefficientCount,
         );
-        shCoefficients.set(
-          (source.shCoefficients.array as Float32Array).subarray(
-            sourceBase,
-            sourceBase + copiedCoefficientCount * 4,
-          ),
-          destinationBase,
-        );
+        entrySlots.set(sourceIndex, slot++);
       }
-      destinationGaussian += plan.count;
+      slotsByEntry.set(entry, entrySlots);
     }
 
     const data = new GaussianData(
@@ -475,10 +463,169 @@ export class GaussianStore {
         rotations: attribute("3dgs.store.rotations", rotations),
         shCoefficients: attribute("3dgs.store.sh-coefficients", shCoefficients),
       },
-      { count, shDegree: degree, ownsBuffers: true },
+      { count: slotCapacity, shDegree: degree, ownsBuffers: true },
     );
 
-    return { data, offsets };
+    return {
+      data,
+      slotsByEntry,
+      stats: {
+        fullRebuild: true,
+        slotCapacity,
+        activeGaussians: slot,
+        reusedSlots: 0,
+        writtenSlots: slot,
+        clearedSlots: 0,
+      },
+    };
+  }
+
+  private updatePackedData(
+    planned: readonly PlannedEntry[],
+    data: GaussianData,
+  ): {
+    data: GaussianData;
+    slotsByEntry: Map<StoreEntry, Map<number, number>>;
+    stats: GaussianStorePackStats;
+  } {
+    const targetIndices = new Map<StoreEntry, Uint32Array>();
+    const retainedSlots = new Set<number>();
+    const previouslyActiveSlots = new Set<number>();
+    for (const entrySlots of this.slotsByEntry.values()) {
+      for (const slot of entrySlots.values()) previouslyActiveSlots.add(slot);
+    }
+    let activeGaussians = 0;
+    for (const plan of planned) {
+      const indices = this.selectedIndices(plan);
+      targetIndices.set(plan.entry, indices);
+      activeGaussians += indices.length;
+      const previous = this.slotsByEntry.get(plan.entry);
+      if (previous === undefined) continue;
+      for (const sourceIndex of indices) {
+        const slot = previous.get(sourceIndex);
+        if (slot !== undefined) retainedSlots.add(slot);
+      }
+    }
+
+    const freeSlots: number[] = [];
+    for (let slot = data.count - 1; slot >= 0; slot--) {
+      if (!retainedSlots.has(slot)) freeSlots.push(slot);
+    }
+    const slotsByEntry = new Map<StoreEntry, Map<number, number>>();
+    const writtenSlots: number[] = [];
+    let reusedSlots = 0;
+    for (const plan of planned) {
+      const previous = this.slotsByEntry.get(plan.entry);
+      const next = new Map<number, number>();
+      for (const sourceIndex of targetIndices.get(plan.entry)!) {
+        const retained = previous?.get(sourceIndex);
+        if (retained !== undefined) {
+          next.set(sourceIndex, retained);
+          reusedSlots++;
+          continue;
+        }
+        const slot = freeSlots.pop();
+        if (slot === undefined) {
+          throw new Error("GaussianStore slot allocator exhausted capacity");
+        }
+        this.copySourceToSlot(
+          plan.entry,
+          sourceIndex,
+          slot,
+          data.means.array as Float32Array,
+          data.scalesOpacity.array as Float32Array,
+          data.rotations.array as Float32Array,
+          data.shCoefficients.array as Float32Array,
+          data.shCoefficientCount,
+        );
+        next.set(sourceIndex, slot);
+        writtenSlots.push(slot);
+      }
+      slotsByEntry.set(plan.entry, next);
+    }
+
+    const newlyUsed = new Set(writtenSlots);
+    const clearedSlots = [...previouslyActiveSlots].filter(
+      (slot) => !retainedSlots.has(slot) && !newlyUsed.has(slot),
+    );
+    const scalesOpacity = data.scalesOpacity.array as Float32Array;
+    for (const slot of clearedSlots) scalesOpacity[slot * 4 + 3] = 0;
+    markSlotsUpdated(data.means, writtenSlots, 4);
+    markSlotsUpdated(data.scalesOpacity, [...writtenSlots, ...clearedSlots], 4);
+    markSlotsUpdated(data.rotations, writtenSlots, 4);
+    markSlotsUpdated(
+      data.shCoefficients,
+      writtenSlots,
+      data.shCoefficientCount * 4,
+    );
+
+    return {
+      data,
+      slotsByEntry,
+      stats: {
+        fullRebuild: false,
+        slotCapacity: data.count,
+        activeGaussians,
+        reusedSlots,
+        writtenSlots: writtenSlots.length,
+        clearedSlots: clearedSlots.length,
+      },
+    };
+  }
+
+  private selectedIndices(plan: PlannedEntry): Uint32Array {
+    if (plan.entry.lod !== null && plan.packing !== null) {
+      return plan.entry.lod.indicesForPacking(plan.packing);
+    }
+    return Uint32Array.from(
+      { length: plan.entry.sourceGaussianCount },
+      (_, index) => index,
+    );
+  }
+
+  private copySourceToSlot(
+    entry: StoreEntry,
+    sourceIndex: number,
+    slot: number,
+    means: Float32Array,
+    scalesOpacity: Float32Array,
+    rotations: Float32Array,
+    shCoefficients: Float32Array,
+    destinationCoefficientCount: number,
+  ): void {
+    const source = entry.lod?.octree.data ?? entry.source;
+    if (source === null) {
+      throw new Error("GaussianStore lost the source for a packed cloud");
+    }
+    copyVec4Item(source.means.array as Float32Array, sourceIndex, means, slot);
+    copyVec4Item(
+      source.scalesOpacity.array as Float32Array,
+      sourceIndex,
+      scalesOpacity,
+      slot,
+    );
+    copyVec4Item(
+      source.rotations.array as Float32Array,
+      sourceIndex,
+      rotations,
+      slot,
+    );
+    means[slot * 4 + 3] = entry.cloud.objectId;
+    const sourceCoefficientCount = source.shCoefficientCount;
+    const sourceBase = sourceIndex * sourceCoefficientCount * 4;
+    const destinationBase = slot * destinationCoefficientCount * 4;
+    shCoefficients.fill(
+      0,
+      destinationBase,
+      destinationBase + destinationCoefficientCount * 4,
+    );
+    shCoefficients.set(
+      (source.shCoefficients.array as Float32Array).subarray(
+        sourceBase,
+        sourceBase + sourceCoefficientCount * 4,
+      ),
+      destinationBase,
+    );
   }
 
   private invalidatePacking(): void {
@@ -521,6 +668,30 @@ function copyVec4Item(
     source.subarray(sourceItem * 4, sourceItem * 4 + 4),
     destinationItem * 4,
   );
+}
+
+function markSlotsUpdated(
+  attribute: StorageBufferAttribute,
+  slots: readonly number[],
+  componentsPerSlot: number,
+): void {
+  if (slots.length === 0) return;
+  const sorted = [...new Set(slots)].sort((left, right) => left - right);
+  let start = sorted[0]!;
+  let previous = start;
+  for (let index = 1; index <= sorted.length; index++) {
+    const slot = sorted[index];
+    if (slot === previous + 1) {
+      previous = slot;
+      continue;
+    }
+    attribute.addUpdateRange(
+      start * componentsPerSlot,
+      (previous - start + 1) * componentsPerSlot,
+    );
+    if (slot !== undefined) start = previous = slot;
+  }
+  attribute.needsUpdate = true;
 }
 
 function sourceName(url: string): string {
