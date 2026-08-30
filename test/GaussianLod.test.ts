@@ -4,8 +4,8 @@ import { Ray, StorageBufferAttribute, Vector3 } from "three/webgpu";
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLod } from "../src/GaussianLod";
 import {
-  createMaximumLodPackingStrategy,
-  createRadialLodPackingStrategy,
+  MaximumLodPackingStrategy,
+  RadialLodPackingStrategy,
 } from "../src/GaussianLodPacking";
 import { GaussianOctree } from "../src/GaussianOctree";
 
@@ -87,21 +87,32 @@ describe("GaussianLod", () => {
       levels: [{ retention: 0.5 }, { retention: 1 }],
     });
 
-    const maximum = createMaximumLodPackingStrategy()({
+    const maximumStrategy = new MaximumLodPackingStrategy();
+    expect(maximumStrategy).toBeInstanceOf(MaximumLodPackingStrategy);
+    const maximum = maximumStrategy.pack({
       lod,
       maxGaussians: points.length,
     });
     expect(maximum.gaussianCount).toBe(points.length);
     expect(lod.indicesForPacking(maximum).length).toBe(points.length);
 
-    const radial = createRadialLodPackingStrategy({
+    const radialStrategy = new RadialLodPackingStrategy({
       center: "bounds-center",
       regions: [
-        { maxNormalizedRadius: 0.5, budgetShare: 0.6 },
-        { maxNormalizedRadius: 0.8, budgetShare: 0.2 },
-        { maxNormalizedRadius: Infinity, budgetShare: 0.2 },
+        {
+          maxNormalizedRadius: 0.5,
+          lodLevel: 1,
+          cumulativeBudgetShare: 0.6,
+        },
+        {
+          maxNormalizedRadius: Infinity,
+          lodLevel: 0,
+          cumulativeBudgetShare: 1,
+        },
       ],
-    })({ lod, maxGaussians: 12 });
+    });
+    expect(radialStrategy).toBeInstanceOf(RadialLodPackingStrategy);
+    const radial = radialStrategy.pack({ lod, maxGaussians: 12 });
     expect(radial.gaussianCount).toBeLessThanOrEqual(12);
     expect(radial.gaussianCount).toBeGreaterThanOrEqual(8);
     expect(lod.indicesForPacking(radial).length).toBe(radial.gaussianCount);
@@ -125,13 +136,25 @@ describe("GaussianLod", () => {
     const lod = GaussianLod.build(octree, {
       levels: [{ retention: 0.25 }, { retention: 0.5 }, { retention: 1 }],
     });
-    const packing = createRadialLodPackingStrategy({
+    const packing = new RadialLodPackingStrategy({
       regions: [
-        { maxNormalizedRadius: 0.4, budgetShare: 0.6 },
-        { maxNormalizedRadius: 0.75, budgetShare: 0.2 },
-        { maxNormalizedRadius: Infinity, budgetShare: 0.2 },
+        {
+          maxNormalizedRadius: 0.4,
+          lodLevel: 2,
+          cumulativeBudgetShare: 0.6,
+        },
+        {
+          maxNormalizedRadius: 0.75,
+          lodLevel: 1,
+          cumulativeBudgetShare: 0.8,
+        },
+        {
+          maxNormalizedRadius: Infinity,
+          lodLevel: 0,
+          cumulativeBudgetShare: 1,
+        },
       ],
-    })({ lod, maxGaussians: 32 });
+    }).pack({ lod, maxGaussians: 12 });
     const center = octree.bounds.getCenter(new Vector3());
     const levels = Array.from(packing.nodeIds, (nodeId, entry) => ({
       radius: octree.nodes[nodeId]!.bounds.getCenter(new Vector3()).distanceTo(
@@ -140,13 +163,38 @@ describe("GaussianLod", () => {
       level: packing.lodLevels[entry]!,
     }));
     const sorted = levels.sort((left, right) => left.radius - right.radius);
-    const half = Math.floor(sorted.length / 2);
-    const average = (values: readonly { level: number }[]) =>
-      values.reduce((sum, value) => sum + value.level, 0) / values.length;
+    expect(packing.gaussianCount).toBeLessThanOrEqual(12);
+    expect(packing.nodeIds.length).toBeLessThan(octree.leafNodeIds.length);
+    expect(new Set(packing.lodLevels)).toEqual(new Set([0, 1, 2]));
+    for (let index = 1; index < sorted.length; index++) {
+      expect(sorted[index]!.level).toBeLessThanOrEqual(
+        sorted[index - 1]!.level,
+      );
+    }
 
-    expect(average(sorted.slice(0, half))).toBeGreaterThan(
-      average(sorted.slice(half)),
+    const allCellsByRadius = Array.from(octree.leafNodeIds, (nodeId) => ({
+      nodeId,
+      radius: octree.nodes[nodeId]!.bounds.getCenter(new Vector3()).distanceTo(
+        center,
+      ),
+    })).sort(
+      (left, right) => left.radius - right.radius || left.nodeId - right.nodeId,
     );
+    expect(Array.from(packing.nodeIds)).toEqual(
+      allCellsByRadius
+        .slice(0, packing.nodeIds.length)
+        .map(({ nodeId }) => nodeId),
+    );
+
+    let selectedCount = 0;
+    for (let entry = 0; entry < packing.nodeIds.length; entry++) {
+      const level = packing.lodLevels[entry]!;
+      selectedCount += lod.nodes[packing.nodeIds[entry]!]!.levelCounts[level]!;
+      const cumulativeLimit = level === 2 ? 0.6 : level === 1 ? 0.8 : 1;
+      expect(selectedCount).toBeLessThanOrEqual(
+        Math.floor(12 * cumulativeLimit),
+      );
+    }
   });
 });
 

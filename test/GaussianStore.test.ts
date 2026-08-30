@@ -3,7 +3,7 @@ import { StorageBufferAttribute } from "three/webgpu";
 
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLod } from "../src/GaussianLod";
-import { createRadialLodPackingStrategy } from "../src/GaussianLodPacking";
+import { RadialLodPackingStrategy } from "../src/GaussianLodPacking";
 import { GaussianOctree } from "../src/GaussianOctree";
 import { GaussianStore } from "../src/GaussianStore";
 
@@ -91,9 +91,15 @@ describe("GaussianStore", () => {
     const lod = GaussianLod.build(octree, {
       levels: [{ retention: 0.2 }, { retention: 1 }],
     });
-    const strategy = createRadialLodPackingStrategy({
+    const strategy = new RadialLodPackingStrategy({
       center: "bounds-center",
-      regions: [{ maxNormalizedRadius: Infinity, budgetShare: 1 }],
+      regions: [
+        {
+          maxNormalizedRadius: Infinity,
+          lodLevel: 0,
+          cumulativeBudgetShare: 1,
+        },
+      ],
     });
     const store = new GaussianStore();
     const cloud = store.addLod(lod, {

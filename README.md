@@ -135,18 +135,30 @@ the full-detail behavior. Large objects can instead request a static radial LOD:
 
 ```ts
 import {
-  createRadialLodPackingStrategy,
   GaussianLod,
   GaussianOctree,
   GaussianStore,
+  RadialLodPackingStrategy,
 } from "3dgs-tile-webgpu";
 
-const radialPacking = createRadialLodPackingStrategy({
+const radialPacking = new RadialLodPackingStrategy({
   center: "bounds-center",
   regions: [
-    { maxNormalizedRadius: 0.35, budgetShare: 0.6 },
-    { maxNormalizedRadius: 0.7, budgetShare: 0.2 },
-    { maxNormalizedRadius: Infinity, budgetShare: 0.2 },
+    {
+      maxNormalizedRadius: 0.35,
+      lodLevel: 2,
+      cumulativeBudgetShare: 0.6,
+    },
+    {
+      maxNormalizedRadius: 0.7,
+      lodLevel: 1,
+      cumulativeBudgetShare: 0.8,
+    },
+    {
+      maxNormalizedRadius: Infinity,
+      lodLevel: 0,
+      cumulativeBudgetShare: 1,
+    },
   ],
 });
 
@@ -158,6 +170,15 @@ const mug = await store.load("mug.ply", {
   packingStrategy: radialPacking,
 });
 ```
+
+`GaussianLodPackingStrategy` is an interface with a `pack()` method.
+`MaximumLodPackingStrategy` and `RadialLodPackingStrategy` are its built-in
+implementations. The radial strategy walks leaf cells continuously from the
+focus outwards. It spends at most 60% of the budget on LOD 2, then retries the
+first unselected cell at LOD 1 up to the cumulative 80% boundary, and finally
+uses LOD 0 up to 100%. Cells beyond the final capacity are clipped, so a higher
+LOD can never appear outside a lower one and the selected cells contain no
+radial gaps.
 
 The same pipeline is available atomically when source data is already loaded:
 
@@ -174,7 +195,7 @@ const cloud = store.addLod(lod, {
 ```
 
 `GaussianOctree` retains the complete CPU source. `GaussianLodPacking` is only
-the compact active cell/level cut used both to fill the GPU buffers and, through
+the compact active cell/level cut (excluding clipped cells) used both to fill the GPU buffers and, through
 `GaussianCloud.raycastMode = "rendered"`, to keep raycasts synchronized with the
 rendered LOD. Set the mode to `"full"` to raycast the complete source octree.
 

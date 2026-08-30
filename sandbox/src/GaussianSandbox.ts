@@ -8,7 +8,6 @@ import {
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
   CanonicalGaussianPlyLoader,
-  createRadialLodPackingStrategy,
   gaussianPass,
   type GaussianData,
   type GaussianCloud,
@@ -17,6 +16,7 @@ import {
   OctreeHelper,
   GaussianOctree,
   GaussianStore,
+  RadialLodPackingStrategy,
   type GaussianPass,
   type RadixBackend,
 } from "../../src/index";
@@ -34,12 +34,24 @@ const LOD_LEVELS = [
   { retention: 0.5 },
   { retention: 1 },
 ] as const;
-const RADIAL_LOD_PACKING = createRadialLodPackingStrategy({
+const RADIAL_LOD_PACKING = new RadialLodPackingStrategy({
   center: "bounds-center",
   regions: [
-    { maxNormalizedRadius: 0.35, budgetShare: 0.6 },
-    { maxNormalizedRadius: 0.7, budgetShare: 0.2 },
-    { maxNormalizedRadius: Infinity, budgetShare: 0.2 },
+    {
+      maxNormalizedRadius: 0.35,
+      lodLevel: 2,
+      cumulativeBudgetShare: 0.6,
+    },
+    {
+      maxNormalizedRadius: 0.7,
+      lodLevel: 1,
+      cumulativeBudgetShare: 0.8,
+    },
+    {
+      maxNormalizedRadius: Infinity,
+      lodLevel: 0,
+      cumulativeBudgetShare: 1,
+    },
   ],
 });
 

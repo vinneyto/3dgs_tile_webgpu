@@ -9,7 +9,7 @@ import {
   type GaussianLodPacking,
 } from "./GaussianLod";
 import {
-  createMaximumLodPackingStrategy,
+  MaximumLodPackingStrategy,
   type GaussianLodPackingStrategy,
 } from "./GaussianLodPacking";
 import {
@@ -40,7 +40,7 @@ export interface GaussianStoreAddLodOptions {
   name?: string;
   /** Defaults to the full source count. */
   budget?: GaussianLodBudget;
-  /** Defaults to createMaximumLodPackingStrategy(). */
+  /** Defaults to new MaximumLodPackingStrategy(). */
   packingStrategy?: GaussianLodPackingStrategy;
   /** Dispose the supplied GaussianLod when its cloud is removed. Defaults to false. */
   ownsLod?: boolean;
@@ -170,9 +170,8 @@ export class GaussianStore {
   ): GaussianCloud {
     this.assertUsable();
     const maxGaussians = options.budget?.maxGaussians ?? lod.octree.data.count;
-    const strategy =
-      options.packingStrategy ?? createMaximumLodPackingStrategy();
-    const packing = strategy({ lod, maxGaussians });
+    const strategy = options.packingStrategy ?? new MaximumLodPackingStrategy();
+    const packing = strategy.pack({ lod, maxGaussians });
     // Validate overlap, levels and declared count before mutating the store.
     lod.indicesForPacking(packing);
 

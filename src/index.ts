@@ -22,8 +22,8 @@ export {
 } from "./GaussianLod";
 export { LodHelper, type LodHelperOptions } from "./LodHelper";
 export {
-  createMaximumLodPackingStrategy,
-  createRadialLodPackingStrategy,
+  MaximumLodPackingStrategy,
+  RadialLodPackingStrategy,
   type GaussianLodPackingContext,
   type GaussianLodPackingStrategy,
   type RadialLodPackingOptions,

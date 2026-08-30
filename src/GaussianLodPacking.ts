@@ -7,36 +7,35 @@ export interface GaussianLodPackingContext {
   readonly maxGaussians: number;
 }
 
-export type GaussianLodPackingStrategy = (
-  context: GaussianLodPackingContext,
-) => GaussianLodPacking;
+/** Selects a non-overlapping octree cell/LOD cut for a GaussianStore budget. */
+export interface GaussianLodPackingStrategy {
+  pack(context: GaussianLodPackingContext): GaussianLodPacking;
+}
 
 export interface RadialLodPackingRegion {
-  /** Maximum distance divided by half of the root-cell diagonal. */
+  /** Maximum cell-center distance divided by half the root-cell diagonal. */
   maxNormalizedRadius: number;
-  /** Fraction of the total object budget assigned to this region. */
-  budgetShare: number;
+  /** LOD assigned while this radial phase has capacity. */
+  lodLevel: number;
+  /** Maximum total budget consumed after this phase, in (0, 1]. */
+  cumulativeBudgetShare: number;
 }
 
 export interface RadialLodPackingOptions {
   /** Local-space focus point. Defaults to the tight object-bounds center. */
   center?: "bounds-center" | Vector3;
-  /** Regions ordered from the center outwards. */
+  /** Regions ordered from the center outwards. The final region must cover Infinity and 100% of the budget. */
   regions: readonly RadialLodPackingRegion[];
-  /** Reassign unused regional budget from inner to outer cells. Defaults to true. */
-  redistributeUnusedBudget?: boolean;
 }
 
-interface CellSelection {
+interface RadialCell {
   readonly nodeId: number;
-  readonly region: number;
   readonly radius: number;
-  level: number;
 }
 
-/** Pack every leaf at the finest available LOD, reproducing full-detail behavior. */
-export function createMaximumLodPackingStrategy(): GaussianLodPackingStrategy {
-  return ({ lod, maxGaussians }) => {
+/** Packs every leaf at the finest available LOD. */
+export class MaximumLodPackingStrategy implements GaussianLodPackingStrategy {
+  pack({ lod, maxGaussians }: GaussianLodPackingContext): GaussianLodPacking {
     validateBudget(maxGaussians);
     const sourceCount = lod.octree.data.count;
     if (maxGaussians < sourceCount) {
@@ -48,172 +47,147 @@ export function createMaximumLodPackingStrategy(): GaussianLodPackingStrategy {
     const lodLevels = new Uint8Array(nodeIds.length);
     lodLevels.fill(lod.finestLevel);
     return { nodeIds, lodLevels, gaussianCount: sourceCount };
-  };
+  }
 }
 
 /**
- * Assign a budget to concentric local-space regions and refine cells nearest
- * the focus first. Every leaf is represented by at least the coarsest LOD.
+ * Packs a continuous radial cut from the focus outwards. Higher-detail phases
+ * consume their cumulative budget first. A cell that does not fit a phase is
+ * retried at the next, lower LOD; cells beyond the final capacity are clipped.
  */
-export function createRadialLodPackingStrategy(
-  options: RadialLodPackingOptions,
-): GaussianLodPackingStrategy {
-  const regions = validateRegions(options.regions);
-  const explicitCenter =
-    options.center instanceof Vector3 ? options.center.clone() : null;
-  const redistribute = options.redistributeUnusedBudget ?? true;
+export class RadialLodPackingStrategy implements GaussianLodPackingStrategy {
+  readonly center: "bounds-center" | Vector3;
+  readonly regions: readonly Readonly<RadialLodPackingRegion>[];
 
-  return ({ lod, maxGaussians }) => {
+  constructor(options: RadialLodPackingOptions) {
+    this.center =
+      options.center instanceof Vector3
+        ? options.center.clone()
+        : (options.center ?? "bounds-center");
+    this.regions = validateRegions(options.regions);
+  }
+
+  pack({ lod, maxGaussians }: GaussianLodPackingContext): GaussianLodPacking {
     validateBudget(maxGaussians);
+    validateRegionLevels(this.regions, lod.levelCount);
+
     const focus =
-      explicitCenter?.clone() ?? lod.octree.bounds.getCenter(new Vector3());
+      this.center instanceof Vector3
+        ? this.center.clone()
+        : lod.octree.bounds.getCenter(new Vector3());
     const rootSize = lod.octree.rootBounds.getSize(new Vector3());
     const halfDiagonal = Math.max(rootSize.length() * 0.5, Number.EPSILON);
-    const cells: CellSelection[] = [];
-    const center = new Vector3();
-    for (const nodeId of lod.octree.leafNodeIds) {
-      const node = lod.octree.nodes[nodeId]!;
-      node.bounds.getCenter(center);
-      const radius = center.distanceTo(focus) / halfDiagonal;
-      cells.push({
+    const cellCenter = new Vector3();
+    const cells: RadialCell[] = Array.from(lod.octree.leafNodeIds, (nodeId) => {
+      lod.octree.nodes[nodeId]!.bounds.getCenter(cellCenter);
+      return {
         nodeId,
-        region: findRegion(regions, radius),
-        radius,
-        level: 0,
-      });
-    }
+        radius: cellCenter.distanceTo(focus) / halfDiagonal,
+      };
+    });
     cells.sort(
-      (left, right) =>
-        left.region - right.region ||
-        left.radius - right.radius ||
-        left.nodeId - right.nodeId,
+      (left, right) => left.radius - right.radius || left.nodeId - right.nodeId,
     );
 
-    const regionCounts = new Uint32Array(regions.length);
+    const selectedNodeIds: number[] = [];
+    const selectedLevels: number[] = [];
     let selectedCount = 0;
-    for (const cell of cells) {
-      const count = lod.nodes[cell.nodeId]!.levelCounts[0]!;
-      selectedCount += count;
-      regionCounts[cell.region] = regionCounts[cell.region]! + count;
-    }
-    if (selectedCount > maxGaussians) {
-      throw new RangeError(
-        `Coarsest radial LOD requires ${selectedCount} Gaussians but the budget allows ${maxGaussians}`,
-      );
-    }
+    let cursor = 0;
 
-    const regionTargets = distributeBudget(maxGaussians, regions);
-    for (let region = 0; region < regions.length; region++) {
-      const target = Math.max(regionTargets[region]!, regionCounts[region]!);
-      const result = refineRegion(
-        lod,
-        cells,
-        region,
-        Math.min(target - regionCounts[region]!, maxGaussians - selectedCount),
+    for (const region of this.regions) {
+      const phaseLimit = Math.floor(
+        maxGaussians * region.cumulativeBudgetShare,
       );
-      selectedCount += result.used;
-      regionCounts[region] = regionCounts[region]! + result.used;
-    }
-
-    if (redistribute && selectedCount < maxGaussians) {
-      let remaining = maxGaussians - selectedCount;
-      let madeProgress = true;
-      while (remaining > 0 && madeProgress) {
-        madeProgress = false;
-        for (const cell of cells) {
-          const nextLevel = cell.level + 1;
-          if (nextLevel >= lod.levelCount) continue;
-          const counts = lod.nodes[cell.nodeId]!.levelCounts;
-          const cost = counts[nextLevel]! - counts[cell.level]!;
-          if (cost > remaining) continue;
-          cell.level = nextLevel;
-          remaining -= cost;
-          selectedCount += cost;
-          madeProgress = true;
-        }
+      while (
+        cursor < cells.length &&
+        cells[cursor]!.radius <= region.maxNormalizedRadius
+      ) {
+        const cell = cells[cursor]!;
+        const cost = lod.nodes[cell.nodeId]!.levelCounts[region.lodLevel]!;
+        if (selectedCount + cost > phaseLimit) break;
+        selectedNodeIds.push(cell.nodeId);
+        selectedLevels.push(region.lodLevel);
+        selectedCount += cost;
+        cursor++;
       }
     }
 
-    cells.sort((left, right) => left.nodeId - right.nodeId);
+    if (selectedNodeIds.length === 0) {
+      throw new RangeError(
+        `Radial LOD cannot fit its nearest coarsest cell in a budget of ${maxGaussians} Gaussians`,
+      );
+    }
+
     return {
-      nodeIds: Uint32Array.from(cells.map((cell) => cell.nodeId)),
-      lodLevels: Uint8Array.from(cells.map((cell) => cell.level)),
+      nodeIds: Uint32Array.from(selectedNodeIds),
+      lodLevels: Uint8Array.from(selectedLevels),
       gaussianCount: selectedCount,
     };
-  };
-}
-
-function refineRegion(
-  lod: GaussianLod,
-  cells: readonly CellSelection[],
-  region: number,
-  available: number,
-): { used: number } {
-  let used = 0;
-  for (let targetLevel = 1; targetLevel < lod.levelCount; targetLevel++) {
-    for (const cell of cells) {
-      if (cell.region !== region || cell.level !== targetLevel - 1) continue;
-      const counts = lod.nodes[cell.nodeId]!.levelCounts;
-      const cost = counts[targetLevel]! - counts[cell.level]!;
-      if (used + cost > available) continue;
-      cell.level = targetLevel;
-      used += cost;
-    }
   }
-  return { used };
-}
-
-function distributeBudget(
-  maxGaussians: number,
-  regions: readonly RadialLodPackingRegion[],
-): Uint32Array {
-  const result = new Uint32Array(regions.length);
-  let assigned = 0;
-  for (let index = 0; index < regions.length - 1; index++) {
-    const count = Math.floor(maxGaussians * regions[index]!.budgetShare);
-    result[index] = count;
-    assigned += count;
-  }
-  result[result.length - 1] = maxGaussians - assigned;
-  return result;
-}
-
-function findRegion(
-  regions: readonly RadialLodPackingRegion[],
-  radius: number,
-): number {
-  const index = regions.findIndex(
-    ({ maxNormalizedRadius }) => radius <= maxNormalizedRadius,
-  );
-  return index < 0 ? regions.length - 1 : index;
 }
 
 function validateRegions(
   regions: readonly RadialLodPackingRegion[],
-): readonly RadialLodPackingRegion[] {
+): readonly Readonly<RadialLodPackingRegion>[] {
   if (regions.length === 0) {
     throw new RangeError("Radial LOD packing requires at least one region");
   }
   let previousRadius = -Infinity;
-  let shareTotal = 0;
-  const result = regions.map(({ maxNormalizedRadius, budgetShare }) => {
-    if (!(maxNormalizedRadius > previousRadius)) {
-      throw new RangeError("Radial LOD region radii must increase");
-    }
-    if (!(budgetShare >= 0 && budgetShare <= 1)) {
-      throw new RangeError("Radial LOD budgetShare must be in [0, 1]");
-    }
-    previousRadius = maxNormalizedRadius;
-    shareTotal += budgetShare;
-    return Object.freeze({ maxNormalizedRadius, budgetShare });
-  });
+  let previousLevel = Infinity;
+  let previousBudgetShare = 0;
+  const result = regions.map(
+    ({ maxNormalizedRadius, lodLevel, cumulativeBudgetShare }) => {
+      if (!(maxNormalizedRadius > previousRadius)) {
+        throw new RangeError("Radial LOD region radii must increase");
+      }
+      if (!Number.isInteger(lodLevel) || lodLevel < 0) {
+        throw new RangeError(
+          "Radial LOD region levels must be non-negative integers",
+        );
+      }
+      if (lodLevel >= previousLevel) {
+        throw new RangeError(
+          "Radial LOD region levels must decrease away from the center",
+        );
+      }
+      if (
+        !(cumulativeBudgetShare > previousBudgetShare) ||
+        cumulativeBudgetShare > 1
+      ) {
+        throw new RangeError(
+          "Radial LOD cumulative budget shares must increase and stay in (0, 1]",
+        );
+      }
+      previousRadius = maxNormalizedRadius;
+      previousLevel = lodLevel;
+      previousBudgetShare = cumulativeBudgetShare;
+      return Object.freeze({
+        maxNormalizedRadius,
+        lodLevel,
+        cumulativeBudgetShare,
+      });
+    },
+  );
   if (previousRadius !== Infinity) {
     throw new RangeError("The final radial LOD region must end at Infinity");
   }
-  if (Math.abs(shareTotal - 1) > 1e-6) {
-    throw new RangeError("Radial LOD budget shares must sum to 1");
+  if (Math.abs(previousBudgetShare - 1) > Number.EPSILON) {
+    throw new RangeError(
+      "The final radial LOD cumulative budget share must be 1",
+    );
   }
   return Object.freeze(result);
+}
+
+function validateRegionLevels(
+  regions: readonly Readonly<RadialLodPackingRegion>[],
+  levelCount: number,
+): void {
+  for (const { lodLevel } of regions) {
+    if (lodLevel >= levelCount) {
+      throw new RangeError(`Gaussian LOD level ${lodLevel} does not exist`);
+    }
+  }
 }
 
 function validateBudget(maxGaussians: number): void {
