@@ -226,10 +226,13 @@ function formatRanges(
   const shown = ranges
     .slice(0, 10)
     .map((range) => `[${range.start}, ${range.start + range.count})`);
-  return [
-    `${label.padEnd(14)} ${ranges.length} ranges`,
-    `  ${shown.length === 0 ? "—" : shown.join(" ")}${ranges.length > shown.length ? " …" : ""}`,
-  ];
+  const rows: string[] = [];
+  for (let index = 0; index < shown.length; index += 3) {
+    rows.push(`  ${shown.slice(index, index + 3).join(" ")}`);
+  }
+  if (rows.length === 0) rows.push("  —");
+  if (ranges.length > shown.length) rows[rows.length - 1] += " …";
+  return [`${label.padEnd(14)} ${ranges.length} ranges`, ...rows];
 }
 
 function formatInteger(value: number): string {
