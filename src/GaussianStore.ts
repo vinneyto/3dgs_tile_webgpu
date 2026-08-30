@@ -139,6 +139,11 @@ export class GaussianStore {
   private gaussianCapacity = 0;
   private cellSlotsByEntry = new Map<StoreEntry, Map<number, Uint32Array>>();
   private freeSlots: number[] = [];
+  private readonly scratchWrittenSlots: number[] = [];
+  private readonly scratchReleasedSlots: number[] = [];
+  private readonly scratchClearedSlots: number[] = [];
+  private slotMarks = new Uint32Array();
+  private slotMarkGeneration = 0;
   private packingInvalid = false;
   private latestPackStats: GaussianStorePackStats | null = null;
   private disposed = false;
@@ -577,7 +582,8 @@ export class GaussianStore {
     }
 
     const freeSlots = [...this.freeSlots];
-    const releasedSlots: number[] = [];
+    const releasedSlots = this.scratchReleasedSlots;
+    releasedSlots.length = 0;
     for (const [entry, previousCells] of this.cellSlotsByEntry) {
       const nextCells = targetCells.get(entry);
       if (nextCells === undefined && plannedEntries.has(entry)) continue;
@@ -595,7 +601,8 @@ export class GaussianStore {
     }
 
     const cellSlotsByEntry = new Map<StoreEntry, Map<number, Uint32Array>>();
-    const writtenSlots: number[] = [];
+    const writtenSlots = this.scratchWrittenSlots;
+    writtenSlots.length = 0;
     let reusedSlots = 0;
     for (const plan of planned) {
       const previousCells = this.cellSlotsByEntry.get(plan.entry);
@@ -643,18 +650,31 @@ export class GaussianStore {
       cellSlotsByEntry.set(plan.entry, nextCells);
     }
 
-    const newlyUsed = new Set(writtenSlots);
-    const clearedSlots = releasedSlots.filter((slot) => !newlyUsed.has(slot));
+    const slotMarkGeneration = this.nextSlotMarkGeneration(data.count);
+    for (const slot of writtenSlots) this.slotMarks[slot] = slotMarkGeneration;
+    const clearedSlots = this.scratchClearedSlots;
+    clearedSlots.length = 0;
+    for (const slot of releasedSlots) {
+      if (this.slotMarks[slot] !== slotMarkGeneration) clearedSlots.push(slot);
+    }
     const scalesOpacity = data.scalesOpacity.array as Float32Array;
     for (const slot of clearedSlots) scalesOpacity[slot * 4 + 3] = 0;
-    markSlotsUpdated(data.means, writtenSlots, 4);
-    markSlotsUpdated(data.scalesOpacity, [...writtenSlots, ...clearedSlots], 4);
-    markSlotsUpdated(data.rotations, writtenSlots, 4);
-    markSlotsUpdated(
+    const writtenSlotCount = writtenSlots.length;
+    const clearedSlotCount = clearedSlots.length;
+    const writtenSlotRanges = mergedSlotRanges(writtenSlots, 4, 0.15);
+    const clearedSlotRanges = mergedSlotRanges(clearedSlots, 16, 0.25);
+    markRangesUpdated(data.means, writtenSlotRanges, 4);
+    markRangesUpdated(data.scalesOpacity, writtenSlotRanges, 4);
+    markRangesUpdated(data.scalesOpacity, clearedSlotRanges, 4);
+    markRangesUpdated(data.rotations, writtenSlotRanges, 4);
+    markRangesUpdated(
       data.shCoefficients,
-      writtenSlots,
+      writtenSlotRanges,
       data.shCoefficientCount * 4,
     );
+
+    const uploadedWrittenSlots = rangeSlotCount(writtenSlotRanges);
+    const uploadedClearedSlots = rangeSlotCount(clearedSlotRanges);
 
     return {
       data,
@@ -665,13 +685,13 @@ export class GaussianStore {
         slotCapacity: data.count,
         activeGaussians,
         reusedSlots,
-        writtenSlots: writtenSlots.length,
-        clearedSlots: clearedSlots.length,
+        writtenSlots: writtenSlotCount,
+        clearedSlots: clearedSlotCount,
         estimatedUploadBytes:
-          writtenSlots.length * (3 * 16 + data.shCoefficientCount * 16) +
-          clearedSlots.length * 16,
-        writtenSlotRanges: slotRanges(writtenSlots),
-        clearedSlotRanges: slotRanges(clearedSlots),
+          uploadedWrittenSlots * (3 * 16 + data.shCoefficientCount * 16) +
+          uploadedClearedSlots * 16,
+        writtenSlotRanges,
+        clearedSlotRanges,
         planningMs: 0,
         slotUpdateMs: 0,
       },
@@ -768,6 +788,19 @@ export class GaussianStore {
     return objectId;
   }
 
+  private nextSlotMarkGeneration(slotCapacity: number): number {
+    if (this.slotMarks.length !== slotCapacity) {
+      this.slotMarks = new Uint32Array(slotCapacity);
+      this.slotMarkGeneration = 0;
+    }
+    this.slotMarkGeneration++;
+    if (this.slotMarkGeneration === 0xffff_ffff) {
+      this.slotMarks.fill(0);
+      this.slotMarkGeneration = 1;
+    }
+    return this.slotMarkGeneration;
+  }
+
   private assertUsable(): void {
     if (this.disposed) throw new Error("GaussianStore has been disposed");
   }
@@ -791,46 +824,69 @@ function copyVec4Item(
   );
 }
 
-function markSlotsUpdated(
+function markRangesUpdated(
   attribute: StorageBufferAttribute,
-  slots: readonly number[],
+  ranges: readonly GaussianStoreSlotRange[],
   componentsPerSlot: number,
 ): void {
-  if (slots.length === 0) return;
-  const sorted = [...new Set(slots)].sort((left, right) => left - right);
-  let start = sorted[0]!;
-  let previous = start;
-  for (let index = 1; index <= sorted.length; index++) {
-    const slot = sorted[index];
-    if (slot === previous + 1) {
-      previous = slot;
-      continue;
-    }
+  if (ranges.length === 0) return;
+  for (const range of ranges) {
     attribute.addUpdateRange(
-      start * componentsPerSlot,
-      (previous - start + 1) * componentsPerSlot,
+      range.start * componentsPerSlot,
+      range.count * componentsPerSlot,
     );
-    if (slot !== undefined) start = previous = slot;
   }
   attribute.needsUpdate = true;
 }
 
-function slotRanges(slots: readonly number[]): GaussianStoreSlotRange[] {
+function mergedSlotRanges(
+  slots: number[],
+  maxGapSlots: number,
+  maxExpansion: number,
+): GaussianStoreSlotRange[] {
   if (slots.length === 0) return [];
-  const sorted = [...new Set(slots)].sort((left, right) => left - right);
-  const ranges: GaussianStoreSlotRange[] = [];
-  let start = sorted[0]!;
+  slots.sort((left, right) => left - right);
+  const exactRanges: GaussianStoreSlotRange[] = [];
+  let start = slots[0]!;
   let previous = start;
-  for (let index = 1; index <= sorted.length; index++) {
-    const slot = sorted[index];
+  let exactSlotCount = 1;
+  for (let index = 1; index <= slots.length; index++) {
+    const slot = slots[index];
+    if (slot === previous) continue;
+    if (slot !== undefined) exactSlotCount++;
     if (slot === previous + 1) {
       previous = slot;
       continue;
     }
-    ranges.push({ start, count: previous - start + 1 });
+    exactRanges.push({ start, count: previous - start + 1 });
     if (slot !== undefined) start = previous = slot;
   }
-  return ranges;
+  if (exactRanges.length < 2) return exactRanges;
+
+  const allowedExtraSlots = Math.floor(exactSlotCount * maxExpansion);
+  let usedExtraSlots = 0;
+  const merged: GaussianStoreSlotRange[] = [];
+  let current = { ...exactRanges[0]! };
+  for (let index = 1; index < exactRanges.length; index++) {
+    const next = exactRanges[index]!;
+    const currentEnd = current.start + current.count;
+    const gap = next.start - currentEnd;
+    if (gap <= maxGapSlots && usedExtraSlots + gap <= allowedExtraSlots) {
+      current.count = next.start + next.count - current.start;
+      usedExtraSlots += gap;
+    } else {
+      merged.push(current);
+      current = { ...next };
+    }
+  }
+  merged.push(current);
+  return merged;
+}
+
+function rangeSlotCount(ranges: readonly GaussianStoreSlotRange[]): number {
+  let count = 0;
+  for (const range of ranges) count += range.count;
+  return count;
 }
 
 function sourceName(url: string): string {
