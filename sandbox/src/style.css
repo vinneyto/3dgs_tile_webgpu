@@ -37,6 +37,12 @@ canvas {
   background: rgb(13 17 26 / 82%);
   box-shadow: 0 12px 36px rgb(0 0 0 / 28%);
   backdrop-filter: blur(12px);
+  overflow: hidden;
+}
+
+#hud:has(#kernel-profile[open]) {
+  height: calc(100vh - 32px);
+  height: calc(100dvh - 32px);
 }
 
 #status {
@@ -67,6 +73,7 @@ small {
 }
 
 #metrics {
+  flex-shrink: 0;
   margin: 4px 0 0;
   padding-top: 10px;
   border-top: 1px solid rgb(255 255 255 / 10%);
@@ -127,7 +134,9 @@ small {
 
 #kernel-profile[open] {
   display: flex;
+  flex: 1 1 0;
   flex-direction: column;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -137,9 +146,12 @@ small {
 }
 
 #kernel-timings {
+  flex: 1 1 0;
   min-height: 0;
   margin: 8px 0 0;
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   font:
     10px/1.45 ui-monospace,
     SFMono-Regular,
