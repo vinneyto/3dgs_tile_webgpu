@@ -162,7 +162,18 @@ export class GaussianSandbox {
   }
 
   setLodHelperLevels(levels: readonly number[]): void {
+    const wasHidden = this.lodHelperLevels.length === 0;
+    const currentPacking = this.primaryCloud?.lodPacking ?? null;
     this.lodHelperLevels = [...levels];
+    if (
+      wasHidden &&
+      levels.length > 0 &&
+      this.primaryLodHelper !== null &&
+      currentPacking !== null &&
+      this.primaryLodHelper.lodPacking !== currentPacking
+    ) {
+      this.primaryLodHelper.setPacking(currentPacking);
+    }
     for (const helper of this.lodHelpers) {
       helper.setLevels(levels);
       helper.visible = levels.length > 0;
@@ -405,7 +416,7 @@ export class GaussianSandbox {
     store.pack({ limits });
     const duration = performance.now() - started;
     this.lastPackedCenterX = centerX;
-    if (cloud.lodPacking !== null) {
+    if (this.lodHelperLevels.length > 0 && cloud.lodPacking !== null) {
       this.primaryLodHelper?.setPacking(cloud.lodPacking);
     }
     const stats = store.lastPackStats;
