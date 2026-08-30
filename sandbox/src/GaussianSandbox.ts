@@ -1,7 +1,11 @@
 import {
+  Mesh,
+  MeshBasicMaterial,
   PerspectiveCamera,
   RenderPipeline,
   Scene,
+  SphereGeometry,
+  Vector3,
   WebGPURenderer,
   type Node,
 } from "three/webgpu";
@@ -16,7 +20,9 @@ import {
   OctreeHelper,
   GaussianOctree,
   GaussianStore,
+  MaximumLodPackingStrategy,
   TieredRadialLodPackingStrategy,
+  type GaussianStorePackLimits,
   type GaussianPass,
   type RadixBackend,
 } from "../../src/index";
@@ -27,15 +33,15 @@ import { KernelTimingInspector } from "./KernelTimingInspector";
 const MAX_INDIRECT_CAPACITY = 256 * 65_535;
 const ANIMATED_CLOUD_URL = "/assets/dolphins-colored-3dgs.ply";
 const ANIMATION_CYCLE_SECONDS = 4;
+const PACKING_CENTER_CYCLE_SECONDS = 12;
+const PACKING_CENTER_AMPLITUDE = 5;
+const REPACK_DISTANCE = 0.5;
 const LOD_LEVELS = [
   { retention: 0.2 },
   { retention: 0.5 },
   { retention: 1 },
 ] as const;
-const TIERED_RADIAL_LOD_PACKING = new TieredRadialLodPackingStrategy({
-  center: "bounds-center",
-  budgetShares: [0.6, 0.2, 0.2],
-});
+const DOLPHIN_PACKING = new MaximumLodPackingStrategy();
 
 interface CloudBounds {
   minX: number;
@@ -66,6 +72,14 @@ export class GaussianSandbox {
   private animatedCloud: GaussianCloud | null = null;
   private animatedOriginX = 0;
   private animatedAmplitude = 0;
+  private primaryCloud: GaussianCloud | null = null;
+  private primaryPackingStrategy: TieredRadialLodPackingStrategy | null = null;
+  private primaryLodHelper: LodHelper | null = null;
+  private packingCenterMarker: Mesh<SphereGeometry, MeshBasicMaterial> | null =
+    null;
+  private lastPackedCenterX = Number.NaN;
+  private deviceLimits: GaussianStorePackLimits | null = null;
+  private readonly packingCenter = new Vector3();
 
   private constructor(
     private readonly renderer: WebGPURenderer,
@@ -157,9 +171,10 @@ export class GaussianSandbox {
 
   async loadUrl(url: string): Promise<void> {
     this.setStatus(`Loading ${url} and the animated dolphin…`);
+    const primaryPackingStrategy = createPrimaryPackingStrategy();
     const store = new GaussianStore({
       loader: this.loader,
-      defaultPackingStrategy: TIERED_RADIAL_LOD_PACKING,
+      defaultPackingStrategy: primaryPackingStrategy,
     });
     try {
       const primaryCloud = await store.load(url, {
@@ -170,9 +185,18 @@ export class GaussianSandbox {
         name: "Animated dolphin Gaussian cloud",
         lod: { levels: LOD_LEVELS },
         priority: -1,
+        packingStrategy: DOLPHIN_PACKING,
       });
-      store.pack({ limits: webGpuDeviceLimits(this.renderer) });
-      this.show(store, url, primaryCloud, animatedCloud);
+      const limits = webGpuDeviceLimits(this.renderer);
+      store.pack({ limits });
+      this.show(
+        store,
+        url,
+        primaryCloud,
+        animatedCloud,
+        primaryPackingStrategy,
+        limits,
+      );
     } catch (error) {
       store.dispose();
       this.setError(error);
@@ -181,9 +205,10 @@ export class GaussianSandbox {
 
   async loadFile(file: File): Promise<void> {
     this.setStatus(`Parsing ${file.name}…`);
+    const primaryPackingStrategy = createPrimaryPackingStrategy();
     const store = new GaussianStore({
       loader: this.loader,
-      defaultPackingStrategy: TIERED_RADIAL_LOD_PACKING,
+      defaultPackingStrategy: primaryPackingStrategy,
     });
     try {
       const data = this.loader.parse(await file.arrayBuffer());
@@ -196,9 +221,18 @@ export class GaussianSandbox {
         name: "Animated dolphin Gaussian cloud",
         lod: { levels: LOD_LEVELS },
         priority: -1,
+        packingStrategy: DOLPHIN_PACKING,
       });
-      store.pack({ limits: webGpuDeviceLimits(this.renderer) });
-      this.show(store, file.name, primaryCloud, animatedCloud);
+      const limits = webGpuDeviceLimits(this.renderer);
+      store.pack({ limits });
+      this.show(
+        store,
+        file.name,
+        primaryCloud,
+        animatedCloud,
+        primaryPackingStrategy,
+        limits,
+      );
     } catch (error) {
       store.dispose();
       this.setError(error);
@@ -210,6 +244,8 @@ export class GaussianSandbox {
     source: string,
     primaryCloud: GaussianCloud,
     animatedCloud: GaussianCloud,
+    primaryPackingStrategy: TieredRadialLodPackingStrategy,
+    limits: GaussianStorePackLimits,
   ): void {
     this.pass?.dispose();
     this.helperPass?.dispose();
@@ -217,15 +253,24 @@ export class GaussianSandbox {
     this.disposeSpatialHelpers();
     this.store?.dispose();
     this.animatedCloud = null;
+    this.primaryCloud = null;
+    this.primaryPackingStrategy = null;
+    this.primaryLodHelper = null;
+    this.packingCenterMarker = null;
 
     const primaryData = primaryCloud.lod!.octree.data;
     const animatedData = animatedCloud.lod!.octree.data;
     const primaryBounds = measureCloud(primaryData);
     const animatedBounds = measureCloud(animatedData);
     this.store = store;
+    this.deviceLimits = limits;
+    this.primaryCloud = primaryCloud;
+    this.primaryPackingStrategy = primaryPackingStrategy;
+    this.lastPackedCenterX = 0;
     this.scene.add(primaryCloud, animatedCloud);
-    this.addSpatialHelpers(primaryCloud);
+    this.primaryLodHelper = this.addSpatialHelpers(primaryCloud);
     this.addSpatialHelpers(animatedCloud);
+    this.addPackingCenterMarker(primaryCloud, primaryBounds);
     this.placeAnimatedCloud(primaryBounds, animatedBounds, animatedCloud);
     this.frameClouds(primaryBounds, animatedBounds, animatedCloud);
 
@@ -323,15 +368,71 @@ export class GaussianSandbox {
   }
 
   private updateAnimation(timeMilliseconds: number): void {
-    if (this.animatedCloud === null) return;
     const phase =
       (timeMilliseconds * 0.001 * Math.PI * 2) / ANIMATION_CYCLE_SECONDS;
-    this.animatedCloud.position.x =
-      this.animatedOriginX + Math.sin(phase) * this.animatedAmplitude;
+    if (this.animatedCloud !== null) {
+      this.animatedCloud.position.x =
+        this.animatedOriginX + Math.sin(phase) * this.animatedAmplitude;
+    }
+    this.updatePackingCenter(timeMilliseconds);
   }
 
-  private addSpatialHelpers(cloud: GaussianCloud): void {
-    if (cloud.lod === null || cloud.lodPacking === null) return;
+  private updatePackingCenter(timeMilliseconds: number): void {
+    const store = this.store;
+    const strategy = this.primaryPackingStrategy;
+    const cloud = this.primaryCloud;
+    const marker = this.packingCenterMarker;
+    const limits = this.deviceLimits;
+    if (
+      store === null ||
+      strategy === null ||
+      cloud === null ||
+      marker === null ||
+      limits === null
+    ) {
+      return;
+    }
+    const phase =
+      (timeMilliseconds * 0.001 * Math.PI * 2) / PACKING_CENTER_CYCLE_SECONDS;
+    const centerX = Math.sin(phase) * PACKING_CENTER_AMPLITUDE;
+    this.packingCenter.set(centerX, 0, 0);
+    marker.position.copy(this.packingCenter);
+    if (Math.abs(centerX - this.lastPackedCenterX) < REPACK_DISTANCE) return;
+
+    strategy.setCenter(this.packingCenter);
+    const started = performance.now();
+    store.pack({ limits });
+    const duration = performance.now() - started;
+    this.lastPackedCenterX = centerX;
+    if (cloud.lodPacking !== null) {
+      this.primaryLodHelper?.setPacking(cloud.lodPacking);
+    }
+    const stats = store.lastPackStats;
+    if (stats !== null) this.debugPanel.recordPack(stats, duration, centerX);
+  }
+
+  private addPackingCenterMarker(
+    cloud: GaussianCloud,
+    bounds: CloudBounds,
+  ): void {
+    const marker = new Mesh(
+      new SphereGeometry(Math.max(0.08, Math.min(0.25, bounds.radius * 0.025))),
+      new MeshBasicMaterial({
+        color: 0xffffff,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+    );
+    marker.name = "LOD packing center";
+    marker.renderOrder = 1_000;
+    marker.position.set(0, 0, 0);
+    cloud.add(marker);
+    this.packingCenterMarker = marker;
+  }
+
+  private addSpatialHelpers(cloud: GaussianCloud): LodHelper | null {
+    if (cloud.lod === null || cloud.lodPacking === null) return null;
     const octreeHelper = new OctreeHelper(cloud.lod.octree, {
       opacity: 0.42,
     });
@@ -344,6 +445,7 @@ export class GaussianSandbox {
     cloud.add(octreeHelper, lodHelper);
     this.octreeHelpers.push(octreeHelper);
     this.lodHelpers.push(lodHelper);
+    return lodHelper;
   }
 
   private disposeSpatialHelpers(): void {
@@ -351,6 +453,12 @@ export class GaussianSandbox {
     for (const helper of this.lodHelpers) helper.dispose();
     this.octreeHelpers.length = 0;
     this.lodHelpers.length = 0;
+    if (this.packingCenterMarker !== null) {
+      this.packingCenterMarker.geometry.dispose();
+      this.packingCenterMarker.material.dispose();
+      this.packingCenterMarker.removeFromParent();
+      this.packingCenterMarker = null;
+    }
   }
 
   private resize(): void {
@@ -476,4 +584,11 @@ function readRadixBackend(): RadixBackend {
 function webGpuDeviceLimits(renderer: WebGPURenderer): GPUSupportedLimits {
   const backend = renderer.backend as unknown as { device: GPUDevice };
   return backend.device.limits;
+}
+
+function createPrimaryPackingStrategy(): TieredRadialLodPackingStrategy {
+  return new TieredRadialLodPackingStrategy({
+    center: new Vector3(0, 0, 0),
+    budgetShares: [0.6, 0.2, 0.2],
+  });
 }

@@ -52,6 +52,14 @@ export interface GaussianStorePackStats {
   readonly reusedSlots: number;
   readonly writtenSlots: number;
   readonly clearedSlots: number;
+  readonly estimatedUploadBytes: number;
+  readonly writtenSlotRanges: readonly GaussianStoreSlotRange[];
+  readonly clearedSlotRanges: readonly GaussianStoreSlotRange[];
+}
+
+export interface GaussianStoreSlotRange {
+  readonly start: number;
+  readonly count: number;
 }
 
 export interface GaussianStoreAddOptions {
@@ -476,6 +484,9 @@ export class GaussianStore {
         reusedSlots: 0,
         writtenSlots: slot,
         clearedSlots: 0,
+        estimatedUploadBytes: slot * (3 * 16 + coefficientCount * 16),
+        writtenSlotRanges: slot === 0 ? [] : [{ start: 0, count: slot }],
+        clearedSlotRanges: [],
       },
     };
   }
@@ -569,6 +580,11 @@ export class GaussianStore {
         reusedSlots,
         writtenSlots: writtenSlots.length,
         clearedSlots: clearedSlots.length,
+        estimatedUploadBytes:
+          writtenSlots.length * (3 * 16 + data.shCoefficientCount * 16) +
+          clearedSlots.length * 16,
+        writtenSlotRanges: slotRanges(writtenSlots),
+        clearedSlotRanges: slotRanges(clearedSlots),
       },
     };
   }
@@ -692,6 +708,24 @@ function markSlotsUpdated(
     if (slot !== undefined) start = previous = slot;
   }
   attribute.needsUpdate = true;
+}
+
+function slotRanges(slots: readonly number[]): GaussianStoreSlotRange[] {
+  if (slots.length === 0) return [];
+  const sorted = [...new Set(slots)].sort((left, right) => left - right);
+  const ranges: GaussianStoreSlotRange[] = [];
+  let start = sorted[0]!;
+  let previous = start;
+  for (let index = 1; index <= sorted.length; index++) {
+    const slot = sorted[index];
+    if (slot === previous + 1) {
+      previous = slot;
+      continue;
+    }
+    ranges.push({ start, count: previous - start + 1 });
+    if (slot !== undefined) start = previous = slot;
+  }
+  return ranges;
 }
 
 function sourceName(url: string): string {

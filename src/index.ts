@@ -46,6 +46,7 @@ export {
   type GaussianStorePackLimits,
   type GaussianStorePackOptions,
   type GaussianStorePackStats,
+  type GaussianStoreSlotRange,
 } from "./GaussianStore";
 export {
   GaussianPass,

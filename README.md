@@ -243,6 +243,13 @@ A capacity or SH-degree change still requires a full buffer rebuild. Inactive
 pool slots have zero opacity and exit the projection kernel before covariance
 or spherical-harmonic work.
 
+The sandbox exercises this path continuously. Its primary cloud uses tiered
+packing around a white marker moving as `x = 5 sin(t)`, and calls `pack()` after
+each 0.5 m displacement. The dolphin is packed first with
+`MaximumLodPackingStrategy`, so its full-detail slots remain stable. Diagnostics
+show CPU pack time, repack count, reused/written/cleared slots, estimated upload
+bytes, and the first ten full-attribute and opacity-only slot ranges.
+
 `GaussianOctree` retains the complete CPU source. `GaussianLodPacking` is only
 the compact active cell/level cut (excluding clipped cells) used both to fill the GPU buffers and, through
 `GaussianCloud.raycastMode = "rendered"`, to keep raycasts synchronized with the
