@@ -16,7 +16,7 @@ import {
   OctreeHelper,
   GaussianOctree,
   GaussianStore,
-  RadialLodPackingStrategy,
+  TieredRadialLodPackingStrategy,
   type GaussianPass,
   type RadixBackend,
 } from "../../src/index";
@@ -32,9 +32,9 @@ const LOD_LEVELS = [
   { retention: 0.5 },
   { retention: 1 },
 ] as const;
-const RADIAL_LOD_PACKING = new RadialLodPackingStrategy({
+const TIERED_RADIAL_LOD_PACKING = new TieredRadialLodPackingStrategy({
   center: "bounds-center",
-  lodLevel: "finest",
+  budgetShares: [0.6, 0.2, 0.2],
 });
 
 interface CloudBounds {
@@ -159,7 +159,7 @@ export class GaussianSandbox {
     this.setStatus(`Loading ${url} and the animated dolphin…`);
     const store = new GaussianStore({
       loader: this.loader,
-      defaultPackingStrategy: RADIAL_LOD_PACKING,
+      defaultPackingStrategy: TIERED_RADIAL_LOD_PACKING,
     });
     try {
       const primaryCloud = await store.load(url, {
@@ -183,7 +183,7 @@ export class GaussianSandbox {
     this.setStatus(`Parsing ${file.name}…`);
     const store = new GaussianStore({
       loader: this.loader,
-      defaultPackingStrategy: RADIAL_LOD_PACKING,
+      defaultPackingStrategy: TIERED_RADIAL_LOD_PACKING,
     });
     try {
       const data = this.loader.parse(await file.arrayBuffer());
