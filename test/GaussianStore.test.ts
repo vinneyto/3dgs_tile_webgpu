@@ -186,6 +186,7 @@ describe("GaussianStore", () => {
     });
 
     strategy.setCenter(new Vector3(3, 0, 0));
+    store.clouds[0]!.invalidatePacking();
     store.pack({ limits });
 
     expect(store.getPackedData()).toBe(dataBefore);
@@ -198,6 +199,36 @@ describe("GaussianStore", () => {
     });
     expect(dataBefore.means.updateRanges.length).toBeGreaterThan(0);
     expect(dataBefore.shCoefficients.updateRanges.length).toBeGreaterThan(0);
+  });
+
+  it("re-evaluates only dirty clouds whose allocated budget did not change", () => {
+    const fixedStrategy = new RadialLodPackingStrategy();
+    const movingStrategy = new RadialLodPackingStrategy({
+      center: new Vector3(2, 0, 0),
+    });
+    const fixedPack = vi.spyOn(fixedStrategy, "pack");
+    const movingPack = vi.spyOn(movingStrategy, "pack");
+    const store = new GaussianStore();
+    const fixed = store.addLod(singleLevelLod([0, 1, 2, 3]), {
+      priority: -1,
+      packingStrategy: fixedStrategy,
+    });
+    const moving = store.addLod(singleLevelLod([10, 11, 12, 13]), {
+      packingStrategy: movingStrategy,
+    });
+    const limits = limitsForGaussianCapacity(6, 0);
+
+    store.pack({ limits });
+    expect(fixedPack).toHaveBeenCalledOnce();
+    expect(movingPack).toHaveBeenCalledOnce();
+
+    movingStrategy.setCenter(new Vector3(12, 0, 0));
+    moving.invalidatePacking();
+    store.pack({ limits });
+
+    expect(fixedPack).toHaveBeenCalledOnce();
+    expect(movingPack).toHaveBeenCalledTimes(2);
+    expect(fixed.gaussianCount).toBe(4);
   });
 
   it("reuses a cell LOD prefix and writes or releases only its tail", () => {
@@ -217,11 +248,12 @@ describe("GaussianStore", () => {
       }),
     };
     const store = new GaussianStore({ defaultPackingStrategy: strategy });
-    store.addLod(lod);
+    const cloud = store.addLod(lod);
     const limits = limitsForGaussianCapacity(10, 0);
 
     store.pack({ limits });
     level = 1;
+    cloud.invalidatePacking();
     store.pack({ limits });
     expect(store.lastPackStats).toMatchObject({
       reusedSlots: 2,
@@ -230,6 +262,7 @@ describe("GaussianStore", () => {
     });
 
     level = 0;
+    cloud.invalidatePacking();
     store.pack({ limits });
     expect(store.lastPackStats).toMatchObject({
       reusedSlots: 2,

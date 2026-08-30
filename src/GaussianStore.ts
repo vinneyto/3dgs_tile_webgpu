@@ -102,12 +102,15 @@ interface StoreEntry {
   lod: GaussianLod | null;
   ownsLod: boolean;
   packing: GaussianLodPacking | null;
+  allocatedBudget: number | null;
+  packingDirty: boolean;
 }
 
 interface PlannedEntry {
   readonly entry: StoreEntry;
   readonly count: number;
   readonly packing: GaussianLodPacking | null;
+  readonly allocatedBudget: number;
 }
 
 interface PlannedCell {
@@ -243,6 +246,8 @@ export class GaussianStore {
       lod: null,
       ownsLod: false,
       packing: null,
+      allocatedBudget: null,
+      packingDirty: true,
     });
     this.cloudList.push(cloud);
     this.invalidatePacking();
@@ -277,6 +282,8 @@ export class GaussianStore {
       lod,
       ownsLod: options.ownsLod ?? false,
       packing: null,
+      allocatedBudget: null,
+      packingDirty: true,
     });
     this.cloudList.push(cloud);
     this.invalidatePacking();
@@ -326,6 +333,8 @@ export class GaussianStore {
     for (const plan of planned) {
       plan.entry.count = plan.count;
       plan.entry.packing = plan.packing;
+      plan.entry.allocatedBudget = plan.allocatedBudget;
+      plan.entry.packingDirty = false;
       plan.entry.cloud.updatePacking(plan.count, plan.packing);
     }
     this.packedData = result.data;
@@ -375,23 +384,34 @@ export class GaussianStore {
           entry,
           count: entry.sourceGaussianCount,
           packing: null,
+          allocatedBudget,
         });
         allocatedGaussians += entry.sourceGaussianCount;
         continue;
       }
 
       const strategy = entry.packingStrategy ?? this.defaultPackingStrategy;
-      const packing = strategy.pack({
-        lod: entry.lod,
-        maxGaussians: allocatedBudget,
-      });
+      const packing =
+        !entry.packingDirty &&
+        entry.allocatedBudget === allocatedBudget &&
+        entry.packing !== null
+          ? entry.packing
+          : strategy.pack({
+              lod: entry.lod,
+              maxGaussians: allocatedBudget,
+            });
       if (packing.gaussianCount > allocatedBudget) {
         throw new RangeError(
           `${strategy.constructor.name} exceeded its allocation of ${allocatedBudget} Gaussians`,
         );
       }
       validatePackingStructure(entry.lod, packing);
-      planned.push({ entry, count: packing.gaussianCount, packing });
+      planned.push({
+        entry,
+        count: packing.gaussianCount,
+        packing,
+        allocatedBudget,
+      });
       allocatedGaussians += packing.gaussianCount;
     }
     return planned;
@@ -408,6 +428,17 @@ export class GaussianStore {
     entry.priority = nextPriority;
     cloud.updatePackingPriority(nextPriority);
     this.invalidatePacking();
+  }
+
+  /** Mark one cloud for strategy re-evaluation after its strategy parameters change. */
+  invalidateCloudPacking(cloud: GaussianCloud): void {
+    this.assertUsable();
+    const entry = this.entries.find((candidate) => candidate.cloud === cloud);
+    if (entry === undefined) {
+      throw new Error("GaussianCloud does not belong to this GaussianStore");
+    }
+    entry.packingDirty = true;
+    this.packingInvalid = true;
   }
 
   /** Current packed attributes. pack() must have resolved all invalidations. */
@@ -697,6 +728,8 @@ export class GaussianStore {
   private invalidatePacking(): void {
     this.packingInvalid = true;
     for (const entry of this.entries) {
+      entry.packingDirty = true;
+      entry.allocatedBudget = null;
       entry.count = 0;
       entry.packing = null;
       entry.cloud.updatePacking(0, null);

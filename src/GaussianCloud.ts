@@ -60,6 +60,11 @@ export class GaussianCloud extends Object3D {
     this.ownerStore.updatePackingPriority(this, priority);
   }
 
+  /** Re-evaluate this cloud on the next Store pack after strategy parameters change. */
+  invalidatePacking(): void {
+    this.ownerStore.invalidateCloudPacking(this);
+  }
+
   /** Internal Store hook used after a global budget redistribution. */
   updatePacking(
     gaussianCount: number,

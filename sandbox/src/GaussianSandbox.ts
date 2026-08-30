@@ -400,6 +400,7 @@ export class GaussianSandbox {
     if (Math.abs(centerX - this.lastPackedCenterX) < REPACK_DISTANCE) return;
 
     strategy.setCenter(this.packingCenter);
+    cloud.invalidatePacking();
     const started = performance.now();
     store.pack({ limits });
     const duration = performance.now() - started;
