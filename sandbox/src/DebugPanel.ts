@@ -183,6 +183,7 @@ export class DebugPanel {
     if (stats === null) return ["LOD repack     waiting for animated center"];
     return [
       `LOD repack     #${this.packCount}  CPU ${formatMs(this.packDurationMs)}  center.x ${this.packingCenterX.toFixed(2)} m`,
+      `pack phases    plan ${formatMs(stats.planningMs)}  slots ${formatMs(stats.slotUpdateMs)}`,
       `slots          active ${formatInteger(stats.activeGaussians)} / ${formatInteger(stats.slotCapacity)}`,
       `slot delta     reused ${formatInteger(stats.reusedSlots)}  written ${formatInteger(stats.writtenSlots)}  cleared ${formatInteger(stats.clearedSlots)}`,
       `GPU upload     approximately ${formatBytes(stats.estimatedUploadBytes)}`,

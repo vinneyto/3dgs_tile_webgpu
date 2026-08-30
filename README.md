@@ -228,9 +228,12 @@ an invalidated Store so a potentially large CPU repack never occurs implicitly
 inside a frame.
 
 Repeated packing with the same capacity and SH degree reuses stable Gaussian
-slots. Unchanged source Gaussians keep their slots; only added slots and opacity
-of released slots are marked with Three.js update ranges, so WebGPU uploads the
-packing delta instead of replacing every attribute buffer:
+slots. Allocation is tracked per octree cell rather than with one map entry per
+Gaussian. Since cell LODs are nested prefixes, an upgrade keeps the existing
+prefix and allocates only its tail, while a downgrade releases only its tail.
+Only added slots and opacity of released slots are marked with Three.js update
+ranges, so WebGPU uploads the packing delta instead of replacing every attribute
+buffer:
 
 ```ts
 tieredPacking.setCenter(nextLocalCenter);
@@ -248,7 +251,8 @@ packing around a white marker moving as `x = 5 sin(t)`, and calls `pack()` after
 each 0.5 m displacement. The dolphin is packed first with
 `MaximumLodPackingStrategy`, so its full-detail slots remain stable. Diagnostics
 show CPU pack time, repack count, reused/written/cleared slots, estimated upload
-bytes, and the first ten full-attribute and opacity-only slot ranges.
+bytes, planning versus slot-update time, and the first ten full-attribute and
+opacity-only slot ranges.
 
 `GaussianOctree` retains the complete CPU source. `GaussianLodPacking` is only
 the compact active cell/level cut (excluding clipped cells) used both to fill the GPU buffers and, through

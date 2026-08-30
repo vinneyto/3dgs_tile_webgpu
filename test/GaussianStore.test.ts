@@ -199,6 +199,44 @@ describe("GaussianStore", () => {
     expect(dataBefore.means.updateRanges.length).toBeGreaterThan(0);
     expect(dataBefore.shCoefficients.updateRanges.length).toBeGreaterThan(0);
   });
+
+  it("reuses a cell LOD prefix and writes or releases only its tail", () => {
+    const lod = GaussianLod.build(
+      GaussianOctree.build(data(10, 0, 0, [1]), { leafCapacity: 20 }),
+      {
+        levels: [{ retention: 0.2 }, { retention: 0.5 }, { retention: 1 }],
+      },
+    );
+    let level = 0;
+    const strategy = {
+      pack: () => ({
+        nodeIds: lod.octree.leafNodeIds.slice(),
+        lodLevels: new Uint8Array(lod.octree.leafNodeIds.length).fill(level),
+        gaussianCount:
+          lod.nodes[lod.octree.leafNodeIds[0]!]!.levelCounts[level]!,
+      }),
+    };
+    const store = new GaussianStore({ defaultPackingStrategy: strategy });
+    store.addLod(lod);
+    const limits = limitsForGaussianCapacity(10, 0);
+
+    store.pack({ limits });
+    level = 1;
+    store.pack({ limits });
+    expect(store.lastPackStats).toMatchObject({
+      reusedSlots: 2,
+      writtenSlots: 3,
+      clearedSlots: 0,
+    });
+
+    level = 0;
+    store.pack({ limits });
+    expect(store.lastPackStats).toMatchObject({
+      reusedSlots: 2,
+      writtenSlots: 0,
+      clearedSlots: 3,
+    });
+  });
 });
 
 function limitsForGaussianCapacity(capacity: number, shDegree: 0 | 1 | 2 | 3) {
