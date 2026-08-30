@@ -204,7 +204,13 @@ export class TileRasterizer {
                 ),
               );
           });
-          const hasNextBatch = uniformLoad({ values: sharedActive }) as any;
+          // Materialize the uniform load here: besides reading lane 0, the
+          // WGSL builtin is the workgroup synchronization point for the batch.
+          // Leaving it as a lazy expression lets TSL move it to its first use,
+          // after the shared Gaussian data has already been consumed.
+          const hasNextBatch = (
+            uniformLoad({ values: sharedActive }) as any
+          ).toVar("hasNextBatch");
           const remaining = uint(end.sub(batchStart) as any);
           const batchCount = select(
             remaining.lessThan(uint(WORKGROUP_SIZE)),
@@ -233,7 +239,9 @@ export class TileRasterizer {
                   power
                     .greaterThan(0)
                     .or(power.lessThan(conicAndThreshold.w.negate())),
-                  () => Continue(),
+                  () => {
+                    Continue();
+                  },
                 );
                 const gaussianId = sharedGaussianId.element(batchIndex);
                 const l00 = sqrt(max(conic.x, 1e-12));
@@ -263,13 +271,17 @@ export class TileRasterizer {
                   [rasterWeight, () => exp(power)],
                 ]);
                 const discard = resolveNode(nodes.rasterDiscardNode, overrides);
-                If(discard, () => Continue());
+                If(discard, () => {
+                  Continue();
+                });
                 const alpha = clamp(
                   resolveNode(nodes.rasterAlphaNode, overrides),
                   0,
                   0.99,
                 );
-                If(alpha.lessThan(float(1 / 255)), () => Continue());
+                If(alpha.lessThan(float(1 / 255)), () => {
+                  Continue();
+                });
                 If(depthWritten.not(), () => {
                   const viewZ = mean.z.negate();
                   depth.assign(
@@ -294,7 +306,9 @@ export class TileRasterizer {
               },
             );
           });
-          If(hasNextBatch.equal(0), () => Break());
+          If(hasNextBatch.equal(0), () => {
+            Break();
+          });
           sharedActive
             .element(localIndex)
             .assign(select(activePixel.and(done.not()), uint(1), uint(0)));
@@ -324,7 +338,9 @@ export class TileRasterizer {
             sharedActive.element(uint(0)).assign(tileActive);
           });
           const tileActive = uniformLoad({ values: sharedActive }) as any;
-          If(tileActive.equal(0), () => Break());
+          If(tileActive.equal(0), () => {
+            Break();
+          });
         },
       );
 

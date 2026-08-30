@@ -78,6 +78,14 @@ describe("generated Gaussian WGSL", () => {
     expect(projectionSource).toContain("count_contributing_tiles");
     expect(rasterSource).toContain("compact_morton_bits_16");
     expect(rasterSource).toContain("workgroupBarrier");
+    expect(projectionSource).not.toMatch(/return;\s*return;/);
+    expect(rasterSource).not.toMatch(/continue;\s*continue;/);
+    expect(rasterSource).not.toMatch(/break;\s*break;/);
+
+    const batchSync = rasterSource.indexOf("hasNextBatch = load_shared_active");
+    const batchRead = rasterSource.indexOf("for ( var i : u32 = 0u;");
+    expect(batchSync).toBeGreaterThan(-1);
+    expect(batchRead).toBeGreaterThan(batchSync);
   });
 
   it("builds representative custom projection and raster graphs", () => {

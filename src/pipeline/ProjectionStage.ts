@@ -204,7 +204,9 @@ export class ProjectionStage {
 
     const kernel = Fn(() => {
       const gid = uint(instanceIndex);
-      If(gid.greaterThanEqual(uint(data.count)), () => Return());
+      If(gid.greaterThanEqual(uint(data.count)), () => {
+        Return();
+      });
       tileCounts.element(gid).assign(uint(0));
       projectedMean.element(gid).assign(vec4(0));
 
@@ -234,7 +236,9 @@ export class ProjectionStage {
       const objectVisible = projectedMean
         .element(objectBase.add(9))
         .x.greaterThan(0);
-      If(objectVisible.not(), () => Return());
+      If(objectVisible.not(), () => {
+        Return();
+      });
       const sourceOverrides: OverrideMap = new Map<any, () => any>([
         [gaussianIndex, () => gid],
         [gaussianObjectId, () => objectId],
@@ -283,7 +287,9 @@ export class ProjectionStage {
           viewport: frame.viewport,
         }) as any
       ).toVar("gaussianProjection");
-      If(projected.element(0).w.lessThanEqual(0), () => Return());
+      If(projected.element(0).w.lessThanEqual(0), () => {
+        Return();
+      });
 
       const center = projected.element(0).xy;
       const depth = projected.element(0).z;
@@ -308,7 +314,9 @@ export class ProjectionStage {
               sqrt(clamp(originalDeterminant.div(determinant), 0, 1)),
             )
           : opacityBase;
-      If(opacity.lessThan(float(1 / 255)), () => Return());
+      If(opacity.lessThan(float(1 / 255)), () => {
+        Return();
+      });
       const powerThreshold = log(opacity.mul(255));
       const radiusX = ceil(
         sqrt(powerThreshold.mul(2).mul(clamp(covariance.x, 1e-12, 1e4))),
@@ -316,7 +324,9 @@ export class ProjectionStage {
       const radiusY = ceil(
         sqrt(powerThreshold.mul(2).mul(clamp(covariance.z, 1e-12, 1e4))),
       );
-      If(radiusX.lessThanEqual(0).or(radiusY.lessThanEqual(0)), () => Return());
+      If(radiusX.lessThanEqual(0).or(radiusY.lessThanEqual(0)), () => {
+        Return();
+      });
       const radius = vec2(radiusX, radiusY);
       const boundsMin = center.sub(radius);
       const boundsMax = center.add(radius);
@@ -326,7 +336,9 @@ export class ProjectionStage {
           .or(boundsMax.y.lessThan(0))
           .or(boundsMin.x.greaterThanEqual(frame.viewport.x))
           .or(boundsMin.y.greaterThanEqual(frame.viewport.y)),
-        () => Return(),
+        () => {
+          Return();
+        },
       );
       const maxTile = ivec2(int(frame.tilesX), int(frame.tilesY)).sub(1);
       const tileMin = ivec2(
@@ -350,7 +362,9 @@ export class ProjectionStage {
         nodes.gaussianVisibilityNode,
         derivedOverrides,
       );
-      If(visible.not(), () => Return());
+      If(visible.not(), () => {
+        Return();
+      });
       const count = countTiles({
         center,
         conic,
@@ -358,7 +372,9 @@ export class ProjectionStage {
         tile_min: tileMin,
         tile_max: tileMax,
       }) as any;
-      If(count.equal(0), () => Return());
+      If(count.equal(0), () => {
+        Return();
+      });
       const color = resolveNode(
         nodes.gaussianColorNode,
         derivedOverrides,
