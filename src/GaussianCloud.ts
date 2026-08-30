@@ -15,13 +15,14 @@ export type GaussianRaycastMode = "rendered" | "full";
 export class GaussianCloud extends Object3D {
   readonly isGaussianCloud = true;
   readonly objectId: number;
-  readonly gaussianCount: number;
   readonly lod: GaussianLod | null;
 
   raycastMode: GaussianRaycastMode = "rendered";
 
   private readonly ownerStore: GaussianStore;
-  private readonly packing: GaussianLodPacking | null;
+  private packing: GaussianLodPacking | null;
+  private packedGaussianCount: number;
+  private priority: number;
 
   constructor(
     store: GaussianStore,
@@ -30,18 +31,44 @@ export class GaussianCloud extends Object3D {
     name = "GaussianCloud",
     lod: GaussianLod | null = null,
     packing: GaussianLodPacking | null = null,
+    priority = 0,
   ) {
     super();
     this.ownerStore = store;
     this.objectId = objectId;
-    this.gaussianCount = gaussianCount;
+    this.packedGaussianCount = gaussianCount;
     this.lod = lod;
     this.packing = packing;
+    this.priority = priority;
     this.name = name;
   }
 
   get lodPacking(): GaussianLodPacking | null {
     return this.packing;
+  }
+
+  get gaussianCount(): number {
+    return this.packedGaussianCount;
+  }
+
+  /** Lower priorities receive Store budget first. Defaults to 0. */
+  get packingPriority(): number {
+    return this.priority;
+  }
+
+  set packingPriority(priority: number) {
+    this.ownerStore.updatePackingPriority(this, priority);
+  }
+
+  /** Internal Store hook used after a global budget redistribution. */
+  updateLodPacking(packing: GaussianLodPacking): void {
+    this.packing = packing;
+    this.packedGaussianCount = packing.gaussianCount;
+  }
+
+  /** Internal Store hook used while priorities are changed transactionally. */
+  updatePackingPriority(priority: number): void {
+    this.priority = priority;
   }
 
   /** Raycast either the packed/rendered LOD or the complete source octree. */

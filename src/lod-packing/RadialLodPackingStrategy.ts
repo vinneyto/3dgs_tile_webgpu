@@ -6,17 +6,13 @@ import {
   type GaussianLodPackingStrategy,
   validateGaussianLodBudget,
 } from "./GaussianLodPackingStrategy";
+import { type GaussianLodPackingCenter, radialLodCells } from "./radialCells";
 
 export interface RadialLodPackingOptions {
   /** Local-space focus point. Defaults to the tight object-bounds center. */
-  center?: "bounds-center" | Vector3;
+  center?: GaussianLodPackingCenter;
   /** One LOD used for every selected cell. Defaults to the finest level. */
   lodLevel?: number | "finest";
-}
-
-interface RadialCell {
-  readonly nodeId: number;
-  readonly radius: number;
 }
 
 /**
@@ -24,7 +20,7 @@ interface RadialCell {
  * Selection stops when the next whole leaf cell exceeds the capacity.
  */
 export class RadialLodPackingStrategy implements GaussianLodPackingStrategy {
-  readonly center: "bounds-center" | Vector3;
+  readonly center: GaussianLodPackingCenter;
   readonly lodLevel: number | "finest";
 
   constructor(options: RadialLodPackingOptions = {}) {
@@ -46,29 +42,14 @@ export class RadialLodPackingStrategy implements GaussianLodPackingStrategy {
 
   pack({ lod, maxGaussians }: GaussianLodPackingContext): GaussianLodPacking {
     validateGaussianLodBudget(maxGaussians);
+    if (maxGaussians === 0) return emptyPacking();
     const lodLevel =
       this.lodLevel === "finest" ? lod.finestLevel : this.lodLevel;
     if (lodLevel >= lod.levelCount) {
       throw new RangeError(`Gaussian LOD level ${lodLevel} does not exist`);
     }
 
-    const focus =
-      this.center instanceof Vector3
-        ? this.center.clone()
-        : lod.octree.bounds.getCenter(new Vector3());
-    const rootSize = lod.octree.rootBounds.getSize(new Vector3());
-    const halfDiagonal = Math.max(rootSize.length() * 0.5, Number.EPSILON);
-    const cellCenter = new Vector3();
-    const cells: RadialCell[] = Array.from(lod.octree.leafNodeIds, (nodeId) => {
-      lod.octree.nodes[nodeId]!.bounds.getCenter(cellCenter);
-      return {
-        nodeId,
-        radius: cellCenter.distanceTo(focus) / halfDiagonal,
-      };
-    });
-    cells.sort(
-      (left, right) => left.radius - right.radius || left.nodeId - right.nodeId,
-    );
+    const cells = radialLodCells(lod, this.center);
 
     const selectedNodeIds: number[] = [];
     let selectedCount = 0;
@@ -79,12 +60,6 @@ export class RadialLodPackingStrategy implements GaussianLodPackingStrategy {
       selectedCount += cost;
     }
 
-    if (selectedNodeIds.length === 0) {
-      throw new RangeError(
-        `Radial LOD ${lodLevel} cannot fit its nearest cell in a budget of ${maxGaussians} Gaussians`,
-      );
-    }
-
     const lodLevels = new Uint8Array(selectedNodeIds.length);
     lodLevels.fill(lodLevel);
     return {
@@ -93,4 +68,12 @@ export class RadialLodPackingStrategy implements GaussianLodPackingStrategy {
       gaussianCount: selectedCount,
     };
   }
+}
+
+function emptyPacking(): GaussianLodPacking {
+  return {
+    nodeIds: new Uint32Array(),
+    lodLevels: new Uint8Array(),
+    gaussianCount: 0,
+  };
 }

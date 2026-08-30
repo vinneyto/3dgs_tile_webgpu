@@ -6,6 +6,7 @@ import { GaussianLod } from "../src/GaussianLod";
 import {
   MaximumLodPackingStrategy,
   RadialLodPackingStrategy,
+  TieredRadialLodPackingStrategy,
 } from "../src/lod-packing";
 import { GaussianOctree } from "../src/GaussianOctree";
 
@@ -147,6 +148,36 @@ describe("GaussianLod", () => {
         .slice(0, packing.nodeIds.length)
         .map(({ nodeId }) => nodeId),
     );
+  });
+
+  it("packs radial detail tiers and keeps full finest detail when it fits", () => {
+    const points: number[][] = [];
+    for (let octant = 0; octant < 8; octant++) {
+      const signs = [
+        octant & 1 ? 1 : -1,
+        octant & 2 ? 1 : -1,
+        octant & 4 ? 1 : -1,
+      ];
+      for (const distance of [0.08, 0.1, 0.12, 0.14, 0.82, 0.86, 0.9, 0.94]) {
+        points.push(signs.map((sign) => sign * distance));
+      }
+    }
+    const lod = GaussianLod.build(
+      GaussianOctree.build(gaussianData(points), { leafCapacity: 4 }),
+      { levels: [{ retention: 0.25 }, { retention: 0.5 }, { retention: 1 }] },
+    );
+    const strategy = new TieredRadialLodPackingStrategy();
+    const clipped = strategy.pack({ lod, maxGaussians: 12 });
+
+    expect(clipped.gaussianCount).toBeLessThanOrEqual(12);
+    expect(Array.from(clipped.lodLevels)).toEqual(
+      [...clipped.lodLevels].sort((left, right) => right - left),
+    );
+    expect(new Set(clipped.lodLevels)).toEqual(new Set([0, 1, 2]));
+
+    const full = strategy.pack({ lod, maxGaussians: points.length });
+    expect(full.gaussianCount).toBe(points.length);
+    expect(new Set(full.lodLevels)).toEqual(new Set([lod.finestLevel]));
   });
 });
 

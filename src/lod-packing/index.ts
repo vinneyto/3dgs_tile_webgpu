@@ -7,3 +7,7 @@ export {
   RadialLodPackingStrategy,
   type RadialLodPackingOptions,
 } from "./RadialLodPackingStrategy";
+export {
+  TieredRadialLodPackingStrategy,
+  type TieredRadialLodPackingOptions,
+} from "./TieredRadialLodPackingStrategy";

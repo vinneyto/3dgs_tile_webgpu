@@ -24,14 +24,22 @@ export { LodHelper, type LodHelperOptions } from "./LodHelper";
 export {
   MaximumLodPackingStrategy,
   RadialLodPackingStrategy,
+  TieredRadialLodPackingStrategy,
   type GaussianLodPackingContext,
   type GaussianLodPackingStrategy,
   type RadialLodPackingOptions,
+  type TieredRadialLodPackingOptions,
 } from "./lod-packing";
 export {
+  RemainingCapacityBudgetStrategy,
+  type GaussianStoreBudgetContext,
+  type GaussianStoreBudgetEntry,
+  type GaussianStoreBudgetStrategy,
+} from "./store-budgeting";
+export {
+  DEFAULT_GAUSSIAN_STORE_CAPACITY,
   GaussianStore,
   type GaussianDataLoader,
-  type GaussianLodBudget,
   type GaussianStoreAddLodOptions,
   type GaussianStoreAddOptions,
   type GaussianStoreLoadOptions,

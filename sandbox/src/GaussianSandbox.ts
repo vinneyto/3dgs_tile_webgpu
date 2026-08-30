@@ -27,8 +27,7 @@ import { KernelTimingInspector } from "./KernelTimingInspector";
 const MAX_INDIRECT_CAPACITY = 256 * 65_535;
 const ANIMATED_CLOUD_URL = "/assets/dolphins-colored-3dgs.ply";
 const ANIMATION_CYCLE_SECONDS = 4;
-const PRIMARY_GAUSSIAN_BUDGET = 350_000;
-const ANIMATED_GAUSSIAN_BUDGET = 60_000;
+const STORE_GAUSSIAN_CAPACITY = 410_000;
 const LOD_LEVELS = [
   { retention: 0.2 },
   { retention: 0.5 },
@@ -159,19 +158,20 @@ export class GaussianSandbox {
 
   async loadUrl(url: string): Promise<void> {
     this.setStatus(`Loading ${url} and the animated dolphin…`);
-    const store = new GaussianStore({ loader: this.loader });
+    const store = new GaussianStore({
+      loader: this.loader,
+      maxGaussians: STORE_GAUSSIAN_CAPACITY,
+      defaultPackingStrategy: RADIAL_LOD_PACKING,
+    });
     try {
       const primaryCloud = await store.load(url, {
         name: `${url} Gaussian cloud`,
         lod: { levels: LOD_LEVELS },
-        budget: { maxGaussians: PRIMARY_GAUSSIAN_BUDGET },
-        packingStrategy: RADIAL_LOD_PACKING,
       });
       const animatedCloud = await store.load(ANIMATED_CLOUD_URL, {
         name: "Animated dolphin Gaussian cloud",
         lod: { levels: LOD_LEVELS },
-        budget: { maxGaussians: ANIMATED_GAUSSIAN_BUDGET },
-        packingStrategy: RADIAL_LOD_PACKING,
+        priority: -1,
       });
       this.show(store, url, primaryCloud, animatedCloud);
     } catch (error) {
@@ -182,20 +182,22 @@ export class GaussianSandbox {
 
   async loadFile(file: File): Promise<void> {
     this.setStatus(`Parsing ${file.name}…`);
-    const store = new GaussianStore({ loader: this.loader });
+    const store = new GaussianStore({
+      loader: this.loader,
+      maxGaussians: STORE_GAUSSIAN_CAPACITY,
+      defaultPackingStrategy: RADIAL_LOD_PACKING,
+    });
     try {
       const data = this.loader.parse(await file.arrayBuffer());
       const primaryCloud = addDataWithSandboxLod(
         store,
         data,
         `${file.name} Gaussian cloud`,
-        PRIMARY_GAUSSIAN_BUDGET,
       );
       const animatedCloud = await store.load(ANIMATED_CLOUD_URL, {
         name: "Animated dolphin Gaussian cloud",
         lod: { levels: LOD_LEVELS },
-        budget: { maxGaussians: ANIMATED_GAUSSIAN_BUDGET },
-        packingStrategy: RADIAL_LOD_PACKING,
+        priority: -1,
       });
       this.show(store, file.name, primaryCloud, animatedCloud);
     } catch (error) {
@@ -437,7 +439,6 @@ function addDataWithSandboxLod(
   store: GaussianStore,
   data: GaussianData,
   name: string,
-  maxGaussians: number,
 ): GaussianCloud {
   const octree = GaussianOctree.build(data, { ownsData: true });
   let lod: GaussianLod | null = null;
@@ -448,8 +449,6 @@ function addDataWithSandboxLod(
     });
     return store.addLod(lod, {
       name,
-      budget: { maxGaussians },
-      packingStrategy: RADIAL_LOD_PACKING,
       ownsLod: true,
     });
   } catch (error) {

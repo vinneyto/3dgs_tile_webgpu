@@ -37,7 +37,11 @@ src/
 ├── lod-packing/                    pluggable static packing strategies
 │   ├── GaussianLodPackingStrategy.ts shared strategy contract
 │   ├── MaximumLodPackingStrategy.ts  strict full-detail packing
-│   └── RadialLodPackingStrategy.ts   fixed-LOD center-out clipping
+│   ├── RadialLodPackingStrategy.ts   fixed-LOD center-out clipping
+│   └── TieredRadialLodPackingStrategy.ts 60/20/20 radial LOD tiers
+├── store-budgeting/                 global Store budget assignment
+│   ├── GaussianStoreBudgetStrategy.ts shared strategy contract
+│   └── RemainingCapacityBudgetStrategy.ts default remaining-budget policy
 ├── OctreeHelper.ts                 local-space octree wireframe helper
 ├── LodHelper.ts                    color-coded active LOD volumes
 ├── GaussianStore.ts                packed multi-cloud buffer ownership
@@ -133,9 +137,20 @@ scene.add(cat, dog);
 ```
 
 `load()` expands to `loader → GaussianOctree → GaussianLod → GaussianStore`.
-The default packing strategy uses the finest LOD and selects leaf cells radially
-from the object-bounds center until the object budget is full. Without an
-explicit budget the full source count is used, preserving full-detail behavior.
+`GaussianStore` owns one global Gaussian capacity. During every structural
+repack, its budget strategy visits clouds in `(priority, insertion order)` and
+assigns each one a slice of the remaining capacity. The default
+`RemainingCapacityBudgetStrategy` offers all remaining capacity to the current
+cloud. Lower priority numbers are packed first; every cloud defaults to
+`priority: 0`.
+
+The Store's default packing strategy uses the finest LOD and selects leaf cells
+radially from the object-bounds center until that cloud's allocation is full.
+Set `maxGaussians` from the active WebGPU device's buffer limit so adding another
+cloud triggers redistribution instead of creating an oversized GPU binding.
+When omitted, the Store uses a conservative 524,288-Gaussian capacity: the
+WebGPU default 128 MiB storage binding divided by the degree-3 SH stride. A
+device configured with higher requested limits can opt into a larger value.
 
 ```ts
 import {
@@ -150,21 +165,42 @@ const radialPacking = new RadialLodPackingStrategy({
   lodLevel: "finest",
 });
 
+const store = new GaussianStore({
+  maxGaussians: 410_000,
+  defaultPackingStrategy: radialPacking,
+});
+
 const mug = await store.load("mug.ply", {
   lod: {
     levels: [{ retention: 0.2 }, { retention: 0.5 }, { retention: 1 }],
   },
-  budget: { maxGaussians: 350_000 },
-  packingStrategy: radialPacking,
+  priority: 0,
 });
 ```
 
 `GaussianLodPackingStrategy` is an interface with a `pack()` method.
-`MaximumLodPackingStrategy` and `RadialLodPackingStrategy` are its built-in
-implementations. The radial strategy walks leaf cells continuously from the
-focus outwards and packs one requested LOD for every selected cell. It stops
-before the first whole cell that would exceed `maxGaussians`; that cell and all
-farther cells are clipped. `"finest"` resolves to the last configured LOD level.
+`MaximumLodPackingStrategy`, `RadialLodPackingStrategy`, and
+`TieredRadialLodPackingStrategy` are its built-in implementations. The radial
+strategy walks leaf cells continuously from the focus outwards and packs one
+requested LOD for every selected cell. It stops before the first whole cell that
+would exceed the allocation; that cell and all farther cells are clipped.
+`"finest"` resolves to the last configured LOD level. The tiered strategy first
+uses 60% for finest cells, 20% for middle-detail cells, and 20% for coarsest
+cells; if the complete finest representation fits, it keeps the whole object at
+finest detail.
+
+Packing remains an individual cloud characteristic when needed:
+
+```ts
+const cloud = store.addLod(lod, {
+  priority: -1,
+  packingStrategy: new TieredRadialLodPackingStrategy(),
+});
+
+// Reassigns the common budget and repacks every cloud.
+cloud.packingPriority = 1;
+store.repackLods();
+```
 
 The same pipeline is available atomically when source data is already loaded:
 
@@ -175,7 +211,6 @@ const lod = GaussianLod.build(octree, {
   levels: [{ retention: 0.2 }, { retention: 0.5 }, { retention: 1 }],
 });
 const cloud = store.addLod(lod, {
-  budget: { maxGaussians: 350_000 },
   packingStrategy: radialPacking,
 });
 ```

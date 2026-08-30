@@ -95,9 +95,8 @@ describe("GaussianStore", () => {
       center: "bounds-center",
       lodLevel: 0,
     });
-    const store = new GaussianStore();
+    const store = new GaussianStore({ maxGaussians: 2 });
     const cloud = store.addLod(lod, {
-      budget: { maxGaussians: 2 },
       packingStrategy: strategy,
     });
 
@@ -105,7 +104,42 @@ describe("GaussianStore", () => {
     expect(cloud.lod?.octree.data.count).toBe(10);
     expect(store.getPackedData().count).toBe(2);
   });
+
+  it("redistributes one global budget by priority and insertion order", () => {
+    const store = new GaussianStore({ maxGaussians: 6 });
+    const first = store.addLod(singleLevelLod([0, 1, 2, 3]), {
+      name: "first",
+    });
+    const second = store.addLod(singleLevelLod([10, 11, 12, 13]), {
+      name: "second",
+      priority: -1,
+    });
+
+    expect(first.gaussianCount).toBe(2);
+    expect(second.gaussianCount).toBe(4);
+    expect(store.count).toBe(6);
+
+    first.packingPriority = -2;
+    expect(first.gaussianCount).toBe(4);
+    expect(second.gaussianCount).toBe(2);
+
+    first.dispose();
+    expect(second.gaussianCount).toBe(4);
+  });
 });
+
+function singleLevelLod(xs: readonly number[]): GaussianLod {
+  const source = data(xs.length, 0, 0, [1]);
+  const means = source.means.array as Float32Array;
+  xs.forEach((x, index) => {
+    means[index * 4] = x;
+    means[index * 4 + 1] = index % 2;
+    means[index * 4 + 2] = index % 3;
+  });
+  return GaussianLod.build(GaussianOctree.build(source, { leafCapacity: 1 }), {
+    levels: [{ retention: 1 }],
+  });
+}
 
 function data(
   count: number,

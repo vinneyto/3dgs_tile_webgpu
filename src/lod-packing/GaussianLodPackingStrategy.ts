@@ -11,7 +11,7 @@ export interface GaussianLodPackingStrategy {
 }
 
 export function validateGaussianLodBudget(maxGaussians: number): void {
-  if (!Number.isInteger(maxGaussians) || maxGaussians <= 0) {
-    throw new RangeError("Gaussian LOD budget must be a positive integer");
+  if (!Number.isInteger(maxGaussians) || maxGaussians < 0) {
+    throw new RangeError("Gaussian LOD budget must be a non-negative integer");
   }
 }
