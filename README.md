@@ -130,8 +130,9 @@ scene.add(cat, dog);
 ```
 
 `load()` expands to `loader → GaussianOctree → GaussianLod → GaussianStore`.
-The default maximum-LOD packing strategy selects every source Gaussian, preserving
-the full-detail behavior. Large objects can instead request a static radial LOD:
+The default packing strategy uses the finest LOD and selects leaf cells radially
+from the object-bounds center until the object budget is full. Without an
+explicit budget the full source count is used, preserving full-detail behavior.
 
 ```ts
 import {
@@ -143,23 +144,7 @@ import {
 
 const radialPacking = new RadialLodPackingStrategy({
   center: "bounds-center",
-  regions: [
-    {
-      maxNormalizedRadius: 0.35,
-      lodLevel: 2,
-      cumulativeBudgetShare: 0.6,
-    },
-    {
-      maxNormalizedRadius: 0.7,
-      lodLevel: 1,
-      cumulativeBudgetShare: 0.8,
-    },
-    {
-      maxNormalizedRadius: Infinity,
-      lodLevel: 0,
-      cumulativeBudgetShare: 1,
-    },
-  ],
+  lodLevel: "finest",
 });
 
 const mug = await store.load("mug.ply", {
@@ -174,11 +159,9 @@ const mug = await store.load("mug.ply", {
 `GaussianLodPackingStrategy` is an interface with a `pack()` method.
 `MaximumLodPackingStrategy` and `RadialLodPackingStrategy` are its built-in
 implementations. The radial strategy walks leaf cells continuously from the
-focus outwards. It spends at most 60% of the budget on LOD 2, then retries the
-first unselected cell at LOD 1 up to the cumulative 80% boundary, and finally
-uses LOD 0 up to 100%. Cells beyond the final capacity are clipped, so a higher
-LOD can never appear outside a lower one and the selected cells contain no
-radial gaps.
+focus outwards and packs one requested LOD for every selected cell. It stops
+before the first whole cell that would exceed `maxGaussians`; that cell and all
+farther cells are clipped. `"finest"` resolves to the last configured LOD level.
 
 The same pipeline is available atomically when source data is already loaded:
 

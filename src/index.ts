@@ -27,7 +27,6 @@ export {
   type GaussianLodPackingContext,
   type GaussianLodPackingStrategy,
   type RadialLodPackingOptions,
-  type RadialLodPackingRegion,
 } from "./GaussianLodPacking";
 export {
   GaussianStore,

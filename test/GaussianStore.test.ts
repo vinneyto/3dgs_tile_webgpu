@@ -93,13 +93,7 @@ describe("GaussianStore", () => {
     });
     const strategy = new RadialLodPackingStrategy({
       center: "bounds-center",
-      regions: [
-        {
-          maxNormalizedRadius: Infinity,
-          lodLevel: 0,
-          cumulativeBudgetShare: 1,
-        },
-      ],
+      lodLevel: 0,
     });
     const store = new GaussianStore();
     const cloud = store.addLod(lod, {

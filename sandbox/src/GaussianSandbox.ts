@@ -36,23 +36,7 @@ const LOD_LEVELS = [
 ] as const;
 const RADIAL_LOD_PACKING = new RadialLodPackingStrategy({
   center: "bounds-center",
-  regions: [
-    {
-      maxNormalizedRadius: 0.35,
-      lodLevel: 2,
-      cumulativeBudgetShare: 0.6,
-    },
-    {
-      maxNormalizedRadius: 0.7,
-      lodLevel: 1,
-      cumulativeBudgetShare: 0.8,
-    },
-    {
-      maxNormalizedRadius: Infinity,
-      lodLevel: 0,
-      cumulativeBudgetShare: 1,
-    },
-  ],
+  lodLevel: "finest",
 });
 
 interface CloudBounds {
