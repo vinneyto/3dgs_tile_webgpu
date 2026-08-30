@@ -157,10 +157,11 @@ export class TileRasterizer {
       const pixel = uvec2(
         workgroupId.x.mul(uint(TILE_SIZE)).add(localX),
         workgroupId.y.mul(uint(TILE_SIZE)).add(localY),
-      );
+      ).toVar("rasterPixelCoordinateValue");
       const activePixel = pixel.x
         .lessThan(uint(frame.viewport.x))
-        .and(pixel.y.lessThan(uint(frame.viewport.y)));
+        .and(pixel.y.lessThan(uint(frame.viewport.y)))
+        .toVar("rasterActivePixel");
       const tile = workgroupId.y.mul(frame.tilesX).add(workgroupId.x);
       const begin = tileOffsets.element(tile);
       const end = tileOffsets.element(tile.add(1));

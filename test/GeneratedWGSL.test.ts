@@ -86,6 +86,13 @@ describe("generated Gaussian WGSL", () => {
     const batchRead = rasterSource.indexOf("for ( var i : u32 = 0u;");
     expect(batchSync).toBeGreaterThan(-1);
     expect(batchRead).toBeGreaterThan(batchSync);
+
+    const pixelSetup = rasterSource.indexOf("rasterActivePixel =");
+    const outerLoop = rasterSource.indexOf("for ( var i : u32 = NodeBuffer_");
+    const outputStore = rasterSource.lastIndexOf("textureStore(");
+    expect(pixelSetup).toBeGreaterThan(-1);
+    expect(outerLoop).toBeGreaterThan(pixelSetup);
+    expect(outputStore).toBeGreaterThan(outerLoop);
   });
 
   it("builds representative custom projection and raster graphs", () => {
