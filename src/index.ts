@@ -32,6 +32,7 @@ export {
 } from "./lod-packing";
 export {
   RemainingCapacityBudgetStrategy,
+  SourceFractionBudgetStrategy,
   type GaussianStoreBudgetContext,
   type GaussianStoreBudgetEntry,
   type GaussianStoreBudgetStrategy,

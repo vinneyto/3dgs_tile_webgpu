@@ -20,6 +20,7 @@ import {
   OctreeHelper,
   GaussianOctree,
   GaussianStore,
+  SourceFractionBudgetStrategy,
   TieredRadialLodPackingStrategy,
   type GaussianStorePackLimits,
   type GaussianPass,
@@ -33,6 +34,7 @@ const MAX_INDIRECT_CAPACITY = 256 * 65_535;
 const PACKING_CENTER_CYCLE_SECONDS = 12;
 const PACKING_CENTER_AMPLITUDE = 5;
 const REPACK_DISTANCE = 0.5;
+const PRIMARY_BUDGET_FRACTION = 0.97;
 const LOD_LEVELS = [
   { retention: 0.2 },
   { retention: 0.5 },
@@ -178,6 +180,9 @@ export class GaussianSandbox {
     const primaryPackingStrategy = createPrimaryPackingStrategy();
     const store = new GaussianStore({
       loader: this.loader,
+      budgetingStrategy: new SourceFractionBudgetStrategy(
+        PRIMARY_BUDGET_FRACTION,
+      ),
       defaultPackingStrategy: primaryPackingStrategy,
     });
     try {
@@ -199,6 +204,9 @@ export class GaussianSandbox {
     const primaryPackingStrategy = createPrimaryPackingStrategy();
     const store = new GaussianStore({
       loader: this.loader,
+      budgetingStrategy: new SourceFractionBudgetStrategy(
+        PRIMARY_BUDGET_FRACTION,
+      ),
       defaultPackingStrategy: primaryPackingStrategy,
     });
     try {

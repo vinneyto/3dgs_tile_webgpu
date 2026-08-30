@@ -41,7 +41,8 @@ src/
 │   └── TieredRadialLodPackingStrategy.ts 60/20/20 radial LOD tiers
 ├── store-budgeting/                 global Store budget assignment
 │   ├── GaussianStoreBudgetStrategy.ts shared strategy contract
-│   └── RemainingCapacityBudgetStrategy.ts default remaining-budget policy
+│   ├── RemainingCapacityBudgetStrategy.ts default remaining-budget policy
+│   └── SourceFractionBudgetStrategy.ts source-relative budget cap
 ├── OctreeHelper.ts                 local-space octree wireframe helper
 ├── LodHelper.ts                    color-coded active LOD volumes
 ├── GaussianStore.ts                packed multi-cloud buffer ownership
@@ -146,8 +147,9 @@ not select octree cells or rebuild buffers.
 `pack()`, its budget strategy visits clouds in `(priority, insertion order)` and
 assigns each one a slice of the remaining capacity. The default
 `RemainingCapacityBudgetStrategy` offers all remaining capacity to the current
-cloud. Lower priority numbers are packed first; every cloud defaults to
-`priority: 0`.
+cloud. `SourceFractionBudgetStrategy` can instead cap each allocation to a
+fraction of that cloud's full source count. Lower priority numbers are packed
+first; every cloud defaults to `priority: 0`.
 
 The Store's default packing strategy uses the finest LOD and selects leaf cells
 radially from the object-bounds center until that cloud's allocation is full.

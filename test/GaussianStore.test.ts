@@ -9,6 +9,7 @@ import {
 } from "../src/lod-packing";
 import { GaussianOctree } from "../src/GaussianOctree";
 import { GaussianStore } from "../src/GaussianStore";
+import { SourceFractionBudgetStrategy } from "../src/store-budgeting";
 
 const TEST_LIMITS = {
   maxStorageBufferBindingSize: 1_073_741_824,
@@ -140,6 +141,18 @@ describe("GaussianStore", () => {
     expect(store.shDegree).toBe(1);
     expect(store.maxGaussians).toBe(2);
     expect(cloud.gaussianCount).toBe(2);
+  });
+
+  it("can cap a cloud budget to a fraction of its full source", () => {
+    const store = new GaussianStore({
+      budgetingStrategy: new SourceFractionBudgetStrategy(0.5),
+    });
+    const cloud = store.addLod(singleLevelLod([0, 1, 2, 3, 4, 5, 6, 7]));
+
+    store.pack({ limits: limitsForGaussianCapacity(8, 0) });
+
+    expect(store.maxGaussians).toBe(8);
+    expect(cloud.gaussianCount).toBe(4);
   });
 
   it("redistributes one global budget by priority and insertion order", () => {
