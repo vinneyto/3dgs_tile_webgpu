@@ -5,6 +5,11 @@ import type {
 } from "three/webgpu";
 import type { GaussianData } from "../GaussianData";
 import type { GaussianStore } from "../GaussianStore";
+import type {
+  GaussianNodeSlots,
+  GaussianProjectionNodeSlots,
+  GaussianRasterNodeSlots,
+} from "../nodes/GaussianContextNodes";
 import { DepthOrderedTileStage } from "./DepthOrderedTileStage";
 import { ExclusiveScanStage } from "./ExclusiveScanStage";
 import { FrameUniforms } from "./FrameUniforms";
@@ -56,6 +61,7 @@ export class TiledGaussianPipeline {
     background: readonly [number, number, number, number],
     private readonly profileKernels: boolean,
     private readonly radixBackend: ResolvedRadixBackend,
+    private readonly nodes: GaussianNodeSlots,
   ) {
     this.frame = new FrameUniforms(camera, background);
     this.objects = new ObjectFrameState(camera, store, data.count);
@@ -64,6 +70,7 @@ export class TiledGaussianPipeline {
       this.frame,
       this.objects,
       antialiasMode,
+      nodes,
     );
     this.visibleScan = new ExclusiveScanStage(
       this.projection.projectedMean,
@@ -157,6 +164,14 @@ export class TiledGaussianPipeline {
     this.rasterizer.encode(this.tilesX, this.tilesY);
   }
 
+  rebuildProjection(nodes: GaussianProjectionNodeSlots): void {
+    this.projection.rebuild(nodes);
+  }
+
+  rebuildRasterizer(nodes: GaussianRasterNodeSlots): void {
+    this.rasterizer?.rebuild(nodes);
+  }
+
   readStats(): Promise<GaussianPassStats> {
     return this.intersections.readStats();
   }
@@ -242,6 +257,7 @@ export class TiledGaussianPipeline {
       this.data.count,
       this.capacity,
       this.mode,
+      this.data.means,
       this.projection.projectedMean,
       this.projection.projectedConic,
       this.projection.projectedColor,
@@ -250,6 +266,7 @@ export class TiledGaussianPipeline {
       colorTexture,
       depthTexture,
       this.frame,
+      this.nodes,
     );
     this.width = width;
     this.height = height;

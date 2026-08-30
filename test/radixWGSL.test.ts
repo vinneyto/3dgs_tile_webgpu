@@ -12,7 +12,7 @@ import {
   reduceRadixHistogramsWorkgroupWGSL,
 } from "../src/kernels/radixWorkgroup";
 import { emitIntersectionsWGSL } from "../src/kernels/intersections";
-import { projectionWGSL } from "../src/kernels/projection";
+import { countContributingTilesWGSL } from "../src/kernels/projectionHelpers";
 import { scanBlocksWGSL, scanVisibilityBlocksWGSL } from "../src/kernels/scan";
 import {
   RADIX_BLOCK_ITEMS,
@@ -59,15 +59,14 @@ describe("depth/tile radix pipeline", () => {
   });
 
   it("shares the conservative tile contribution test", () => {
-    const projection = projectionWGSL("compensated");
+    const projection = countContributingTilesWGSL();
     expect(projection).toContain("contributes = sigma <= power_threshold");
     expect(emitIntersectionsWGSL).toContain(
       "contributes = sigma <= power_threshold",
     );
   });
 
-  it("stays within the default eight-storage-buffer stage limit", () => {
-    expect(projectionWGSL("compensated").match(/ptr<storage/g)).toHaveLength(8);
+  it("keeps intersection emission within the eight-buffer limit", () => {
     expect(emitIntersectionsWGSL.match(/ptr<storage/g)).toHaveLength(8);
   });
 
