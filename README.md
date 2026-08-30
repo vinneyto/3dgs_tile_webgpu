@@ -107,6 +107,7 @@ const data = new GaussianData(
 
 const store = new GaussianStore();
 const cloud = store.add(data, { name: "cat" });
+store.pack({ limits: device.limits });
 scene.add(cloud); // GaussianCloud is an ordinary transformable Object3D
 
 const pass = gaussianPass(renderer, camera, store, {
@@ -130,15 +131,19 @@ The store uses the canonical 3DGS PLY loader by default:
 const store = new GaussianStore();
 const cat = await store.load("cat.ply");
 const dog = await store.load("dog.ply");
+store.pack({ limits: device.limits });
 
 cat.position.x = -1;
 dog.position.x = 1;
 scene.add(cat, dog);
 ```
 
-`load()` expands to `loader → GaussianOctree → GaussianLod → GaussianStore`.
+`load()` expands to `loader → GaussianOctree → GaussianLod → addLod()`. Both
+`load()` and `addLod()` only register clouds and set `store.needsPack`; they do
+not select octree cells or rebuild buffers.
+
 `GaussianStore` owns one global Gaussian capacity. During every structural
-repack, its budget strategy visits clouds in `(priority, insertion order)` and
+`pack()`, its budget strategy visits clouds in `(priority, insertion order)` and
 assigns each one a slice of the remaining capacity. The default
 `RemainingCapacityBudgetStrategy` offers all remaining capacity to the current
 cloud. Lower priority numbers are packed first; every cloud defaults to
@@ -146,11 +151,10 @@ cloud. Lower priority numbers are packed first; every cloud defaults to
 
 The Store's default packing strategy uses the finest LOD and selects leaf cells
 radially from the object-bounds center until that cloud's allocation is full.
-Set `maxGaussians` from the active WebGPU device's buffer limit so adding another
-cloud triggers redistribution instead of creating an oversized GPU binding.
-When omitted, the Store uses a conservative 524,288-Gaussian capacity: the
-WebGPU default 128 MiB storage binding divided by the degree-3 SH stride. A
-device configured with higher requested limits can opt into a larger value.
+`pack({ limits: device.limits })` derives the Gaussian capacity from the actual
+device's `maxStorageBufferBindingSize`, `maxBufferSize`, and the highest SH
+degree among all registered clouds. At degree 3, the standard 128 MiB binding
+limit produces a capacity of 524,288 Gaussians.
 
 ```ts
 import {
@@ -166,7 +170,6 @@ const radialPacking = new RadialLodPackingStrategy({
 });
 
 const store = new GaussianStore({
-  maxGaussians: 410_000,
   defaultPackingStrategy: radialPacking,
 });
 
@@ -176,6 +179,8 @@ const mug = await store.load("mug.ply", {
   },
   priority: 0,
 });
+
+store.pack({ limits: device.limits });
 ```
 
 `GaussianLodPackingStrategy` is an interface with a `pack()` method.
@@ -197,12 +202,12 @@ const cloud = store.addLod(lod, {
   packingStrategy: new TieredRadialLodPackingStrategy(),
 });
 
-// Reassigns the common budget and repacks every cloud.
+// Priority changes only invalidate the current layout.
 cloud.packingPriority = 1;
-store.repackLods();
+store.pack({ limits: device.limits });
 ```
 
-The same pipeline is available atomically when source data is already loaded:
+The same registration pipeline is available when source data is already loaded:
 
 ```ts
 const data = await loader.load("mug.ply");
@@ -213,7 +218,14 @@ const lod = GaussianLod.build(octree, {
 const cloud = store.addLod(lod, {
   packingStrategy: radialPacking,
 });
+store.pack({ limits: device.limits });
 ```
+
+Before `pack()`, a newly registered cloud has `gaussianCount === 0` and
+`lodPacking === null`. Adding or removing a cloud, or changing a packing
+priority, invalidates all current selections. `GaussianPass` refuses to render
+an invalidated Store so a potentially large CPU repack never occurs implicitly
+inside a frame.
 
 `GaussianOctree` retains the complete CPU source. `GaussianLodPacking` is only
 the compact active cell/level cut (excluding clipped cells) used both to fill the GPU buffers and, through
@@ -247,8 +259,8 @@ A different source format can be injected with `new GaussianStore({ loader })` a
 `GaussianData`.
 
 All clouds share one projection, global depth sort, intersection list and tile rasterizer, so transparent
-Gaussians from different objects remain correctly ordered. Adding or removing a cloud changes
-`store.layoutVersion` and lazily rebuilds count-dependent pass stages. Transform and visibility changes only
+Gaussians from different objects remain correctly ordered. A successful `pack()` changes
+`store.layoutVersion` and rebuilds count-dependent pass stages on the next frame. Transform and visibility changes only
 update a small camera-specific object-frame range and do not rebuild the pipeline.
 
 The `GaussianPass` is itself a `PassNode`, so its result can be used anywhere a texture-producing pass is

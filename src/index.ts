@@ -37,13 +37,14 @@ export {
   type GaussianStoreBudgetStrategy,
 } from "./store-budgeting";
 export {
-  DEFAULT_GAUSSIAN_STORE_CAPACITY,
   GaussianStore,
   type GaussianDataLoader,
   type GaussianStoreAddLodOptions,
   type GaussianStoreAddOptions,
   type GaussianStoreLoadOptions,
   type GaussianStoreOptions,
+  type GaussianStorePackLimits,
+  type GaussianStorePackOptions,
 } from "./GaussianStore";
 export {
   GaussianPass,

@@ -88,6 +88,8 @@ async function main(): Promise<void> {
   const scene = new Scene();
   const store = new GaussianStore();
   const cloud = store.add(data, { name: "Demo Gaussian cloud" });
+  const backend = renderer.backend as unknown as { device: GPUDevice };
+  store.pack({ limits: backend.device.limits });
   scene.add(cloud);
 
   const camera = new PerspectiveCamera(48, innerWidth / innerHeight, 0.05, 100);

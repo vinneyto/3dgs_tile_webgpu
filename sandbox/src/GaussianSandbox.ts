@@ -27,7 +27,6 @@ import { KernelTimingInspector } from "./KernelTimingInspector";
 const MAX_INDIRECT_CAPACITY = 256 * 65_535;
 const ANIMATED_CLOUD_URL = "/assets/dolphins-colored-3dgs.ply";
 const ANIMATION_CYCLE_SECONDS = 4;
-const STORE_GAUSSIAN_CAPACITY = 410_000;
 const LOD_LEVELS = [
   { retention: 0.2 },
   { retention: 0.5 },
@@ -160,7 +159,6 @@ export class GaussianSandbox {
     this.setStatus(`Loading ${url} and the animated dolphin…`);
     const store = new GaussianStore({
       loader: this.loader,
-      maxGaussians: STORE_GAUSSIAN_CAPACITY,
       defaultPackingStrategy: RADIAL_LOD_PACKING,
     });
     try {
@@ -173,6 +171,7 @@ export class GaussianSandbox {
         lod: { levels: LOD_LEVELS },
         priority: -1,
       });
+      store.pack({ limits: webGpuDeviceLimits(this.renderer) });
       this.show(store, url, primaryCloud, animatedCloud);
     } catch (error) {
       store.dispose();
@@ -184,7 +183,6 @@ export class GaussianSandbox {
     this.setStatus(`Parsing ${file.name}…`);
     const store = new GaussianStore({
       loader: this.loader,
-      maxGaussians: STORE_GAUSSIAN_CAPACITY,
       defaultPackingStrategy: RADIAL_LOD_PACKING,
     });
     try {
@@ -199,6 +197,7 @@ export class GaussianSandbox {
         lod: { levels: LOD_LEVELS },
         priority: -1,
       });
+      store.pack({ limits: webGpuDeviceLimits(this.renderer) });
       this.show(store, file.name, primaryCloud, animatedCloud);
     } catch (error) {
       store.dispose();
@@ -472,4 +471,9 @@ function readRadixBackend(): RadixBackend {
     return requested;
   }
   return "auto";
+}
+
+function webGpuDeviceLimits(renderer: WebGPURenderer): GPUSupportedLimits {
+  const backend = renderer.backend as unknown as { device: GPUDevice };
+  return backend.device.limits;
 }

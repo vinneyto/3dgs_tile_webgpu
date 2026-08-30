@@ -61,9 +61,12 @@ export class GaussianCloud extends Object3D {
   }
 
   /** Internal Store hook used after a global budget redistribution. */
-  updateLodPacking(packing: GaussianLodPacking): void {
+  updatePacking(
+    gaussianCount: number,
+    packing: GaussianLodPacking | null,
+  ): void {
     this.packing = packing;
-    this.packedGaussianCount = packing.gaussianCount;
+    this.packedGaussianCount = gaussianCount;
   }
 
   /** Internal Store hook used while priorities are changed transactionally. */

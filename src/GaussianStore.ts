@@ -28,12 +28,21 @@ export interface GaussianDataLoader {
 export interface GaussianStoreOptions {
   /** Optional source-format loader used by store.load(). */
   loader?: GaussianDataLoader;
-  /** Total Gaussian capacity derived from the active WebGPU resource limits. */
-  maxGaussians?: number;
   /** Defaults to RemainingCapacityBudgetStrategy. */
   budgetingStrategy?: GaussianStoreBudgetStrategy;
   /** Used by LOD entries without an individual override. */
   defaultPackingStrategy?: GaussianLodPackingStrategy;
+}
+
+/** The device limits that constrain every packed storage-buffer binding. */
+export interface GaussianStorePackLimits {
+  readonly maxStorageBufferBindingSize: number;
+  readonly maxBufferSize: number;
+}
+
+export interface GaussianStorePackOptions {
+  /** Pass the limits of the GPUDevice that will render this Store. */
+  readonly limits: GaussianStorePackLimits;
 }
 
 export interface GaussianStoreAddOptions {
@@ -65,6 +74,7 @@ export interface GaussianStoreLoadOptions {
 interface StoreEntry {
   readonly cloud: GaussianCloud;
   count: number;
+  readonly sourceGaussianCount: number;
   readonly sourceDegree: 0 | 1 | 2 | 3;
   priority: number;
   readonly packingStrategy: GaussianLodPackingStrategy | null;
@@ -76,16 +86,18 @@ interface StoreEntry {
   packedOffset: number;
 }
 
+interface PlannedEntry {
+  readonly entry: StoreEntry;
+  readonly count: number;
+  readonly packing: GaussianLodPacking | null;
+}
+
 const MAX_EXACT_FLOAT_INTEGER = 16_777_216;
-/**
- * Conservative degree-3 capacity for WebGPU's 128 MiB default maximum storage
- * buffer binding: 16 SH coefficients * one 16-byte vec4 per Gaussian.
- */
-export const DEFAULT_GAUSSIAN_STORE_CAPACITY = 524_288;
 
 /**
  * Owns one packed set of Gaussian attributes shared by every GaussianCloud.
- * Structural changes are packed lazily when a pass next requests the data.
+ * Registration and packing are separate: add/load invalidate the layout, while
+ * pack() resolves every cloud against the limits of the rendering GPUDevice.
  */
 export class GaussianStore {
   private readonly loader: GaussianDataLoader;
@@ -96,18 +108,15 @@ export class GaussianStore {
   private packedData: GaussianData | null = null;
   private packedDegree: 0 | 1 | 2 | 3 = 0;
   private nextObjectId = 0;
-  private gaussianCapacity: number;
-  private dirty = false;
+  private gaussianCapacity = 0;
+  private packingInvalid = false;
   private disposed = false;
 
-  /** Changes only when clouds are added, removed, or repacked structurally. */
+  /** Changes only after a successful pack() replaces the shared layout. */
   layoutVersion = 0;
 
   constructor(options: GaussianStoreOptions = {}) {
     this.loader = options.loader ?? new CanonicalGaussianPlyLoader();
-    this.gaussianCapacity = validateStoreCapacity(
-      options.maxGaussians ?? DEFAULT_GAUSSIAN_STORE_CAPACITY,
-    );
     this.budgetingStrategy =
       options.budgetingStrategy ?? new RemainingCapacityBudgetStrategy();
     this.defaultPackingStrategy =
@@ -118,16 +127,9 @@ export class GaussianStore {
     return this.gaussianCapacity;
   }
 
-  set maxGaussians(value: number) {
-    this.assertUsable();
-    const previous = this.gaussianCapacity;
-    this.gaussianCapacity = validateStoreCapacity(value);
-    try {
-      this.repackLods();
-    } catch (error) {
-      this.gaussianCapacity = previous;
-      throw error;
-    }
+  /** True after registration changes and until pack() succeeds. */
+  get needsPack(): boolean {
+    return this.packingInvalid;
   }
 
   get count(): number {
@@ -192,7 +194,7 @@ export class GaussianStore {
     const cloud = new GaussianCloud(
       this,
       objectId,
-      data.count,
+      0,
       options.name,
       null,
       null,
@@ -200,7 +202,8 @@ export class GaussianStore {
     );
     this.entries.push({
       cloud,
-      count: data.count,
+      count: 0,
+      sourceGaussianCount: data.count,
       sourceDegree: data.shDegree,
       priority,
       packingStrategy: null,
@@ -212,13 +215,7 @@ export class GaussianStore {
       packedOffset: -1,
     });
     this.cloudList.push(cloud);
-    try {
-      this.repackLods();
-    } catch (error) {
-      this.entries.pop();
-      this.cloudList.pop();
-      throw error;
-    }
+    this.invalidatePacking();
     return cloud;
   }
 
@@ -229,19 +226,19 @@ export class GaussianStore {
     this.assertUsable();
     const objectId = this.allocateObjectId();
     const priority = validatePackingPriority(options.priority ?? 0);
-    const packing = emptyPacking();
     const cloud = new GaussianCloud(
       this,
       objectId,
       0,
       options.name,
       lod,
-      packing,
+      null,
       priority,
     );
     this.entries.push({
       cloud,
       count: 0,
+      sourceGaussianCount: lod.octree.data.count,
       sourceDegree: lod.octree.data.shDegree,
       priority,
       packingStrategy: options.packingStrategy ?? null,
@@ -249,17 +246,11 @@ export class GaussianStore {
       ownsSource: false,
       lod,
       ownsLod: options.ownsLod ?? false,
-      packing,
+      packing: null,
       packedOffset: -1,
     });
     this.cloudList.push(cloud);
-    try {
-      this.repackLods();
-    } catch (error) {
-      this.entries.pop();
-      this.cloudList.pop();
-      throw error;
-    }
+    this.invalidatePacking();
     return cloud;
   }
 
@@ -274,45 +265,75 @@ export class GaussianStore {
     }
     if (entry?.lod !== null && entry?.ownsLod === true) entry.lod.dispose();
     cloud.removeFromParent();
-    this.repackLods();
+    this.invalidatePacking();
   }
 
-  /** Reassign the global budget and rebuild every LOD packing deterministically. */
-  repackLods(): void {
+  /** Resolve all registered clouds and materialize one packed buffer set. */
+  pack({ limits }: GaussianStorePackOptions): void {
     this.assertUsable();
+    if (this.entries.length === 0) {
+      throw new Error("GaussianStore must contain at least one GaussianCloud");
+    }
+    const capacity = capacityFromLimits(limits, this.shDegree);
+    const planned = this.planPackings(capacity);
+    const { data, offsets } = this.buildPackedData(planned);
+    const oldData = this.packedData;
+
+    for (const plan of planned) {
+      plan.entry.count = plan.count;
+      plan.entry.packing = plan.packing;
+      plan.entry.packedOffset = offsets.get(plan.entry)!;
+      plan.entry.cloud.updatePacking(plan.count, plan.packing);
+      if (plan.entry.lod === null && plan.entry.source !== null) {
+        if (plan.entry.ownsSource) plan.entry.source.dispose();
+        plan.entry.source = null;
+        plan.entry.ownsSource = false;
+      }
+    }
+    this.packedData = data;
+    this.packedDegree = this.shDegree;
+    this.gaussianCapacity = capacity;
+    this.packingInvalid = false;
+    this.layoutVersion++;
+    oldData?.dispose();
+  }
+
+  private planPackings(capacity: number): PlannedEntry[] {
     const orderedEntries = [...this.entries].sort(
       (left, right) =>
         left.priority - right.priority ||
         left.cloud.objectId - right.cloud.objectId,
     );
-    const nextPackings = new Map<StoreEntry, GaussianLodPacking>();
+    const planned: PlannedEntry[] = [];
     let allocatedGaussians = 0;
 
     for (const entry of orderedEntries) {
-      const remainingGaussians = Math.max(
-        0,
-        this.gaussianCapacity - allocatedGaussians,
-      );
+      const remainingGaussians = Math.max(0, capacity - allocatedGaussians);
       const allocatedBudget = this.budgetingStrategy.allocate({
-        capacity: this.gaussianCapacity,
+        capacity,
         allocatedGaussians,
         remainingGaussians,
         entry: {
           cloud: entry.cloud,
           priority: entry.priority,
           insertionIndex: entry.cloud.objectId,
-          sourceGaussianCount: entry.lod?.octree.data.count ?? entry.count,
+          sourceGaussianCount: entry.sourceGaussianCount,
         },
       });
       validateBudgetAllocation(allocatedBudget, remainingGaussians);
 
       if (entry.lod === null) {
-        if (entry.count > allocatedBudget) {
+        if (entry.sourceGaussianCount > allocatedBudget) {
           throw new RangeError(
-            `${entry.cloud.name} requires ${entry.count} Gaussians but its Store allocation is ${allocatedBudget}`,
+            `${entry.cloud.name} requires ${entry.sourceGaussianCount} Gaussians but its Store allocation is ${allocatedBudget}`,
           );
         }
-        allocatedGaussians += entry.count;
+        planned.push({
+          entry,
+          count: entry.sourceGaussianCount,
+          packing: null,
+        });
+        allocatedGaussians += entry.sourceGaussianCount;
         continue;
       }
 
@@ -327,16 +348,10 @@ export class GaussianStore {
         );
       }
       entry.lod.indicesForPacking(packing);
-      nextPackings.set(entry, packing);
+      planned.push({ entry, count: packing.gaussianCount, packing });
       allocatedGaussians += packing.gaussianCount;
     }
-
-    for (const [entry, packing] of nextPackings) {
-      entry.packing = packing;
-      entry.count = packing.gaussianCount;
-      entry.cloud.updateLodPacking(packing);
-    }
-    this.markDirty();
+    return planned;
   }
 
   /** Called by GaussianCloud when its priority changes. */
@@ -347,25 +362,22 @@ export class GaussianStore {
       throw new Error("GaussianCloud does not belong to this GaussianStore");
     }
     const nextPriority = validatePackingPriority(priority);
-    const previous = entry.priority;
     entry.priority = nextPriority;
     cloud.updatePackingPriority(nextPriority);
-    try {
-      this.repackLods();
-    } catch (error) {
-      entry.priority = previous;
-      cloud.updatePackingPriority(previous);
-      throw error;
-    }
+    this.invalidatePacking();
   }
 
-  /** Current packed attributes. Rebuilds them once after pending structural edits. */
+  /** Current packed attributes. pack() must have resolved all invalidations. */
   getPackedData(): GaussianData {
     this.assertUsable();
     if (this.entries.length === 0) {
       throw new Error("GaussianStore must contain at least one GaussianCloud");
     }
-    if (this.dirty || this.packedData === null) this.repackPackedData();
+    if (this.packingInvalid || this.packedData === null) {
+      throw new Error(
+        "GaussianStore layout is invalidated; call store.pack({ limits: device.limits }) before rendering",
+      );
+    }
     return this.packedData!;
   }
 
@@ -383,8 +395,11 @@ export class GaussianStore {
     this.packedData = null;
   }
 
-  private repackPackedData(): void {
-    const count = this.count;
+  private buildPackedData(planned: readonly PlannedEntry[]): {
+    data: GaussianData;
+    offsets: ReadonlyMap<StoreEntry, number>;
+  } {
+    const count = planned.reduce((sum, plan) => sum + plan.count, 0);
     const degree = this.shDegree;
     const coefficientCount = (degree + 1) ** 2;
     const oldData = this.packedData;
@@ -394,15 +409,17 @@ export class GaussianStore {
     const rotations = new Float32Array(count * 4);
     const shCoefficients = new Float32Array(count * coefficientCount * 4);
 
+    const offsets = new Map<StoreEntry, number>();
     let destinationGaussian = 0;
-    for (const entry of this.entries) {
+    for (const plan of planned) {
+      const { entry } = plan;
       const source = entry.lod?.octree.data ?? entry.source ?? oldData;
       if (source === null) {
         throw new Error("GaussianStore lost the source for a packed cloud");
       }
       const selectedIndices =
-        entry.lod !== null && entry.packing !== null
-          ? entry.lod.indicesForPacking(entry.packing)
+        entry.lod !== null && plan.packing !== null
+          ? entry.lod.indicesForPacking(plan.packing)
           : null;
       const sourceGaussian =
         entry.lod === null && entry.source === null ? entry.packedOffset : 0;
@@ -410,7 +427,8 @@ export class GaussianStore {
         entry.lod === null && entry.source === null
           ? oldCoefficientCount
           : source.shCoefficientCount;
-      for (let local = 0; local < entry.count; local++) {
+      offsets.set(entry, destinationGaussian);
+      for (let local = 0; local < plan.count; local++) {
         const selectedSource =
           selectedIndices?.[local] ?? sourceGaussian + local;
         copyVec4Item(
@@ -447,11 +465,10 @@ export class GaussianStore {
           destinationBase,
         );
       }
-      entry.packedOffset = destinationGaussian;
-      destinationGaussian += entry.count;
+      destinationGaussian += plan.count;
     }
 
-    const packed = new GaussianData(
+    const data = new GaussianData(
       {
         means: attribute("3dgs.store.means-object", means),
         scalesOpacity: attribute("3dgs.store.scales-opacity", scalesOpacity),
@@ -461,22 +478,16 @@ export class GaussianStore {
       { count, shDegree: degree, ownsBuffers: true },
     );
 
-    for (const entry of this.entries) {
-      if (entry.lod === null) {
-        if (entry.source !== null && entry.ownsSource) entry.source.dispose();
-        entry.source = null;
-        entry.ownsSource = false;
-      }
-    }
-    this.packedData = packed;
-    this.packedDegree = degree;
-    this.dirty = false;
-    oldData?.dispose();
+    return { data, offsets };
   }
 
-  private markDirty(): void {
-    this.dirty = true;
-    this.layoutVersion++;
+  private invalidatePacking(): void {
+    this.packingInvalid = true;
+    for (const entry of this.entries) {
+      entry.count = 0;
+      entry.packing = null;
+      entry.cloud.updatePacking(0, null);
+    }
   }
 
   private allocateObjectId(): number {
@@ -517,15 +528,6 @@ function sourceName(url: string): string {
   return clean.slice(clean.lastIndexOf("/") + 1) || "GaussianCloud";
 }
 
-function validateStoreCapacity(value: number): number {
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new RangeError(
-      "GaussianStore maxGaussians must be a positive safe integer",
-    );
-  }
-  return value;
-}
-
 function validatePackingPriority(value: number): number {
   if (!Number.isSafeInteger(value)) {
     throw new RangeError(
@@ -550,10 +552,24 @@ function validateBudgetAllocation(
   }
 }
 
-function emptyPacking(): GaussianLodPacking {
-  return {
-    nodeIds: new Uint32Array(),
-    lodLevels: new Uint8Array(),
-    gaussianCount: 0,
-  };
+function capacityFromLimits(
+  limits: GaussianStorePackLimits,
+  shDegree: 0 | 1 | 2 | 3,
+): number {
+  const bindingSize = validateDeviceLimit(
+    limits.maxStorageBufferBindingSize,
+    "maxStorageBufferBindingSize",
+  );
+  const bufferSize = validateDeviceLimit(limits.maxBufferSize, "maxBufferSize");
+  const bytesPerGaussian = Math.max(16, (shDegree + 1) ** 2 * 16);
+  return Math.floor(Math.min(bindingSize, bufferSize) / bytesPerGaussian);
+}
+
+function validateDeviceLimit(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new RangeError(
+      `GPUDevice limit ${name} must be a positive safe integer`,
+    );
+  }
+  return value;
 }

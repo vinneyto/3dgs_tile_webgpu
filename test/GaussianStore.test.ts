@@ -7,6 +7,11 @@ import { RadialLodPackingStrategy } from "../src/lod-packing";
 import { GaussianOctree } from "../src/GaussianOctree";
 import { GaussianStore } from "../src/GaussianStore";
 
+const TEST_LIMITS = {
+  maxStorageBufferBindingSize: 1_073_741_824,
+  maxBufferSize: 1_073_741_824,
+};
+
 describe("GaussianStore", () => {
   it("packs clouds sequentially, writes object IDs to means.w, and pads to the maximum SH degree", () => {
     const cat = data(1, 0, 10, [1]);
@@ -14,8 +19,13 @@ describe("GaussianStore", () => {
     const store = new GaussianStore();
     const catCloud = store.add(cat, { name: "cat" });
     const dogCloud = store.add(dog, { name: "dog" });
+    expect(store.needsPack).toBe(true);
+    expect(catCloud.gaussianCount).toBe(0);
+    expect(() => store.getPackedData()).toThrow(/call store\.pack/);
 
+    store.pack({ limits: TEST_LIMITS });
     const packed = store.getPackedData();
+    expect(store.needsPack).toBe(false);
     expect(packed.count).toBe(2);
     expect(packed.shDegree).toBe(1);
     expect(packed.shCoefficientCount).toBe(4);
@@ -39,10 +49,12 @@ describe("GaussianStore", () => {
     const store = new GaussianStore();
     const cat = store.add(data(1, 0, 10, [1]));
     const dog = store.add(data(1, 0, 20, [2]));
-    store.getPackedData();
+    store.pack({ limits: TEST_LIMITS });
     const version = store.layoutVersion;
 
     cat.dispose();
+    expect(store.needsPack).toBe(true);
+    store.pack({ limits: TEST_LIMITS });
     const packed = store.getPackedData();
 
     expect(store.layoutVersion).toBe(version + 1);
@@ -55,9 +67,11 @@ describe("GaussianStore", () => {
     const store = new GaussianStore();
     const low = store.add(data(1, 0, 10, [7]));
     const high = store.add(data(1, 1, 20, [2, 3, 4, 5]));
+    store.pack({ limits: TEST_LIMITS });
     expect(store.getPackedData().shDegree).toBe(1);
 
     high.dispose();
+    store.pack({ limits: TEST_LIMITS });
     const packed = store.getPackedData();
 
     expect(packed.shDegree).toBe(0);
@@ -78,6 +92,7 @@ describe("GaussianStore", () => {
     expect(cloud.name).toBe("cat.ply");
     expect(loader.load).toHaveBeenCalledWith("/models/cat.ply?cache=1");
 
+    store.pack({ limits: TEST_LIMITS });
     store.getPackedData();
     expect(dispose).not.toHaveBeenCalled();
 
@@ -95,18 +110,37 @@ describe("GaussianStore", () => {
       center: "bounds-center",
       lodLevel: 0,
     });
-    const store = new GaussianStore({ maxGaussians: 2 });
+    const store = new GaussianStore();
     const cloud = store.addLod(lod, {
       packingStrategy: strategy,
     });
 
+    expect(cloud.lodPacking).toBeNull();
+    store.pack({ limits: limitsForGaussianCapacity(2, 0) });
     expect(cloud.gaussianCount).toBe(2);
     expect(cloud.lod?.octree.data.count).toBe(10);
     expect(store.getPackedData().count).toBe(2);
   });
 
+  it("derives capacity from device limits and the Store SH degree", () => {
+    const lod = singleLevelLod([0, 1, 2, 3], 1, [1, 2, 3, 4]);
+    const store = new GaussianStore();
+    const cloud = store.addLod(lod);
+
+    store.pack({
+      limits: {
+        maxStorageBufferBindingSize: 1_024,
+        maxBufferSize: 2 * 4 * 16,
+      },
+    });
+
+    expect(store.shDegree).toBe(1);
+    expect(store.maxGaussians).toBe(2);
+    expect(cloud.gaussianCount).toBe(2);
+  });
+
   it("redistributes one global budget by priority and insertion order", () => {
-    const store = new GaussianStore({ maxGaussians: 6 });
+    const store = new GaussianStore();
     const first = store.addLod(singleLevelLod([0, 1, 2, 3]), {
       name: "first",
     });
@@ -115,21 +149,39 @@ describe("GaussianStore", () => {
       priority: -1,
     });
 
+    store.pack({ limits: limitsForGaussianCapacity(6, 0) });
     expect(first.gaussianCount).toBe(2);
     expect(second.gaussianCount).toBe(4);
     expect(store.count).toBe(6);
 
     first.packingPriority = -2;
+    expect(store.needsPack).toBe(true);
+    expect(store.count).toBe(0);
+    expect(first.lodPacking).toBeNull();
+    store.pack({ limits: limitsForGaussianCapacity(6, 0) });
     expect(first.gaussianCount).toBe(4);
     expect(second.gaussianCount).toBe(2);
 
     first.dispose();
+    store.pack({ limits: limitsForGaussianCapacity(6, 0) });
     expect(second.gaussianCount).toBe(4);
   });
 });
 
-function singleLevelLod(xs: readonly number[]): GaussianLod {
-  const source = data(xs.length, 0, 0, [1]);
+function limitsForGaussianCapacity(capacity: number, shDegree: 0 | 1 | 2 | 3) {
+  const bytes = capacity * (shDegree + 1) ** 2 * 16;
+  return {
+    maxStorageBufferBindingSize: bytes,
+    maxBufferSize: bytes,
+  };
+}
+
+function singleLevelLod(
+  xs: readonly number[],
+  degree: 0 | 1 | 2 | 3 = 0,
+  coefficients: readonly number[] = [1],
+): GaussianLod {
+  const source = data(xs.length, degree, 0, coefficients);
   const means = source.means.array as Float32Array;
   xs.forEach((x, index) => {
     means[index * 4] = x;
