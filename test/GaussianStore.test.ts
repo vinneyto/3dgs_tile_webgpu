@@ -231,6 +231,24 @@ describe("GaussianStore", () => {
     expect(fixed.gaussianCount).toBe(4);
   });
 
+  it("reuses every slot without writes when no cloud selection changed", () => {
+    const store = new GaussianStore();
+    store.addLod(singleLevelLod([0, 1, 2, 3]));
+    const limits = limitsForGaussianCapacity(4, 0);
+
+    store.pack({ limits });
+    store.pack({ limits });
+
+    expect(store.lastPackStats).toMatchObject({
+      fullRebuild: false,
+      activeGaussians: 4,
+      reusedSlots: 4,
+      writtenSlots: 0,
+      clearedSlots: 0,
+      estimatedUploadBytes: 0,
+    });
+  });
+
   it("reuses a cell LOD prefix and writes or releases only its tail", () => {
     const lod = GaussianLod.build(
       GaussianOctree.build(data(10, 0, 0, [1]), { leafCapacity: 20 }),

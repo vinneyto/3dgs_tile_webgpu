@@ -111,6 +111,7 @@ interface PlannedEntry {
   readonly count: number;
   readonly packing: GaussianLodPacking | null;
   readonly allocatedBudget: number;
+  readonly selectionChanged: boolean;
 }
 
 interface PlannedCell {
@@ -385,16 +386,20 @@ export class GaussianStore {
           count: entry.sourceGaussianCount,
           packing: null,
           allocatedBudget,
+          selectionChanged:
+            entry.packingDirty || entry.allocatedBudget !== allocatedBudget,
         });
         allocatedGaussians += entry.sourceGaussianCount;
         continue;
       }
 
       const strategy = entry.packingStrategy ?? this.defaultPackingStrategy;
+      const selectionChanged =
+        entry.packingDirty ||
+        entry.allocatedBudget !== allocatedBudget ||
+        entry.packing === null;
       const packing =
-        !entry.packingDirty &&
-        entry.allocatedBudget === allocatedBudget &&
-        entry.packing !== null
+        !selectionChanged && entry.packing !== null
           ? entry.packing
           : strategy.pack({
               lod: entry.lod,
@@ -411,6 +416,7 @@ export class GaussianStore {
         count: packing.gaussianCount,
         packing,
         allocatedBudget,
+        selectionChanged,
       });
       allocatedGaussians += packing.gaussianCount;
     }
@@ -557,12 +563,15 @@ export class GaussianStore {
     stats: GaussianStorePackStats;
   } {
     const targetCells = new Map<StoreEntry, Map<number, PlannedCell>>();
+    const plannedEntries = new Set<StoreEntry>();
     let activeGaussians = 0;
     for (const plan of planned) {
+      plannedEntries.add(plan.entry);
+      activeGaussians += plan.count;
+      if (!plan.selectionChanged) continue;
       const cells = new Map<number, PlannedCell>();
       for (const cell of this.plannedCells(plan)) {
         cells.set(cell.nodeId, cell);
-        activeGaussians += cell.count;
       }
       targetCells.set(plan.entry, cells);
     }
@@ -571,6 +580,7 @@ export class GaussianStore {
     const releasedSlots: number[] = [];
     for (const [entry, previousCells] of this.cellSlotsByEntry) {
       const nextCells = targetCells.get(entry);
+      if (nextCells === undefined && plannedEntries.has(entry)) continue;
       for (const [nodeId, previousSlots] of previousCells) {
         const retainedCount = Math.min(
           previousSlots.length,
@@ -589,15 +599,27 @@ export class GaussianStore {
     let reusedSlots = 0;
     for (const plan of planned) {
       const previousCells = this.cellSlotsByEntry.get(plan.entry);
+      if (!plan.selectionChanged && previousCells !== undefined) {
+        cellSlotsByEntry.set(plan.entry, previousCells);
+        reusedSlots += plan.count;
+        continue;
+      }
       const nextCells = new Map<number, Uint32Array>();
-      for (const cell of targetCells.get(plan.entry)!.values()) {
+      for (const cell of targetCells.get(plan.entry)?.values() ?? []) {
         const previousSlots = previousCells?.get(cell.nodeId);
         const retainedCount = Math.min(previousSlots?.length ?? 0, cell.count);
-        const nextSlots = new Uint32Array(cell.count);
-        if (previousSlots !== undefined && retainedCount > 0) {
+        const nextSlots =
+          previousSlots !== undefined && previousSlots.length === cell.count
+            ? previousSlots
+            : new Uint32Array(cell.count);
+        if (
+          nextSlots !== previousSlots &&
+          previousSlots !== undefined &&
+          retainedCount > 0
+        ) {
           nextSlots.set(previousSlots.subarray(0, retainedCount));
-          reusedSlots += retainedCount;
         }
+        reusedSlots += retainedCount;
         for (let local = retainedCount; local < cell.count; local++) {
           const slot = freeSlots.pop();
           if (slot === undefined) {
