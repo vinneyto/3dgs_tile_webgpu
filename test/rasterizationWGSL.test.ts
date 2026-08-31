@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rasterizationWGSL } from "../src/kernels/rasterization";
+import { compactMortonBitsWGSL } from "../src/kernels/rasterHelpers";
 
 describe("rasterizationWGSL", () => {
   it("maps each tile lane to a unique Morton-ordered pixel", () => {
@@ -26,23 +26,6 @@ describe("rasterizationWGSL", () => {
     expect(Math.max(...firstSubgroup.map(([x]) => x))).toBe(7);
     expect(Math.max(...firstSubgroup.map(([, y]) => y))).toBe(3);
 
-    const source = rasterizationWGSL("float32", false);
-    expect(source.trimStart()).toMatch(/^fn rasterize_tiles_float32\(/);
-    expect(source).toContain("compact_morton_bits_16(local_index)");
-    expect(source).toContain("compact_morton_bits_16(local_index >> 1u)");
-  });
-
-  it("rejects insignificant contributions before exp", () => {
-    const source = rasterizationWGSL("float32", false);
-    const threshold = source.indexOf("log(mean.w * 255.0)");
-    const rejection = source.indexOf(
-      "power > 0.0 || power < -conic_and_threshold.w",
-    );
-    const exponential = source.indexOf("mean.w * exp(power)");
-
-    expect(threshold).toBeGreaterThan(-1);
-    expect(rejection).toBeGreaterThan(threshold);
-    expect(exponential).toBeGreaterThan(rejection);
-    expect(source).toContain("if (alpha < (1.0 / 255.0))");
+    expect(compactMortonBitsWGSL).toContain("fn compact_morton_bits_16");
   });
 });

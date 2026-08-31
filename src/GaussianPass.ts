@@ -19,6 +19,10 @@ import {
 } from "three/webgpu";
 import { colorSpaceToWorking } from "three/tsl";
 import { GaussianStore } from "./GaussianStore";
+import {
+  createDefaultGaussianNodeSlots,
+  type GaussianNodeSlots,
+} from "./nodes/GaussianContextNodes";
 import { TiledGaussianPipeline } from "./pipeline/TiledGaussianPipeline";
 import { WORKGROUP_SIZE } from "./pipeline/constants";
 import { resolveRadixBackend } from "./pipeline/radixBackend";
@@ -33,6 +37,13 @@ import type {
 } from "./pipeline/types";
 
 const drawingBufferSize = new Vector2();
+
+const enum DirtyStage {
+  None = 0,
+  Projection = 1 << 0,
+  Rasterizer = 1 << 1,
+  All = Projection | Rasterizer,
+}
 
 /**
  * A multi-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
@@ -54,6 +65,8 @@ export class GaussianPass extends PassNode {
   private workingColorNode: Node | null = null;
   private pipeline: TiledGaussianPipeline | null = null;
   private pipelineLayoutVersion = -1;
+  private readonly nodeSlots = createDefaultGaussianNodeSlots();
+  private dirtyStages = DirtyStage.None;
   private disposed = false;
 
   constructor(
@@ -172,6 +185,99 @@ export class GaussianPass extends PassNode {
     return this.getColorNode();
   }
 
+  get gaussianPositionLocalNode(): Node {
+    return this.nodeSlots.gaussianPositionLocalNode;
+  }
+
+  set gaussianPositionLocalNode(node: Node) {
+    this.setProjectionNode("gaussianPositionLocalNode", node);
+  }
+
+  get gaussianPositionWorldNode(): Node {
+    return this.nodeSlots.gaussianPositionWorldNode;
+  }
+
+  set gaussianPositionWorldNode(node: Node) {
+    this.setProjectionNode("gaussianPositionWorldNode", node);
+  }
+
+  get gaussianScaleNode(): Node {
+    return this.nodeSlots.gaussianScaleNode;
+  }
+
+  set gaussianScaleNode(node: Node) {
+    this.setProjectionNode("gaussianScaleNode", node);
+  }
+
+  get gaussianRotationNode(): Node {
+    return this.nodeSlots.gaussianRotationNode;
+  }
+
+  set gaussianRotationNode(node: Node) {
+    this.setProjectionNode("gaussianRotationNode", node);
+  }
+
+  get gaussianOpacityNode(): Node {
+    return this.nodeSlots.gaussianOpacityNode;
+  }
+
+  set gaussianOpacityNode(node: Node) {
+    this.setProjectionNode("gaussianOpacityNode", node);
+  }
+
+  get gaussianColorNode(): Node {
+    return this.nodeSlots.gaussianColorNode;
+  }
+
+  set gaussianColorNode(node: Node) {
+    this.setProjectionNode("gaussianColorNode", node);
+  }
+
+  get gaussianVisibilityNode(): Node {
+    return this.nodeSlots.gaussianVisibilityNode;
+  }
+
+  set gaussianVisibilityNode(node: Node) {
+    this.setProjectionNode("gaussianVisibilityNode", node);
+  }
+
+  get rasterColorNode(): Node {
+    return this.nodeSlots.rasterColorNode;
+  }
+
+  set rasterColorNode(node: Node) {
+    this.setRasterNode("rasterColorNode", node);
+  }
+
+  get rasterAlphaNode(): Node {
+    return this.nodeSlots.rasterAlphaNode;
+  }
+
+  set rasterAlphaNode(node: Node) {
+    this.setRasterNode("rasterAlphaNode", node);
+  }
+
+  get rasterDiscardNode(): Node {
+    return this.nodeSlots.rasterDiscardNode;
+  }
+
+  set rasterDiscardNode(node: Node) {
+    this.setRasterNode("rasterDiscardNode", node);
+  }
+
+  invalidateProjection(): void {
+    this.dirtyStages |= DirtyStage.Projection;
+  }
+
+  invalidateRasterizer(): void {
+    this.dirtyStages |= DirtyStage.Rasterizer;
+  }
+
+  override set needsUpdate(value: boolean) {
+    super.needsUpdate = value;
+    if (value) this.dirtyStages |= DirtyStage.All;
+  }
+
   override updateBefore(frame: NodeFrame): boolean | undefined {
     const renderer = frame.renderer as WebGPURenderer | null;
     if (renderer === null) {
@@ -228,8 +334,18 @@ export class GaussianPass extends PassNode {
         this.background,
         this.profileKernels,
         this.radixBackend,
+        this.nodeSlots,
       );
       this.pipelineLayoutVersion = this.gaussianStore.layoutVersion;
+      this.dirtyStages = DirtyStage.None;
+    } else if (this.dirtyStages !== DirtyStage.None) {
+      if ((this.dirtyStages & DirtyStage.Projection) !== 0) {
+        this.pipeline.rebuildProjection(this.nodeSlots);
+      }
+      if ((this.dirtyStages & DirtyStage.Rasterizer) !== 0) {
+        this.pipeline.rebuildRasterizer(this.nodeSlots);
+      }
+      this.dirtyStages = DirtyStage.None;
     }
     this.pipeline.prepareFrame(
       width,
@@ -284,6 +400,44 @@ export class GaussianPass extends PassNode {
     this.pipeline = null;
     this.depthTexture?.dispose();
     super.dispose();
+  }
+
+  private setProjectionNode(
+    key: keyof Pick<
+      GaussianNodeSlots,
+      | "gaussianPositionLocalNode"
+      | "gaussianPositionWorldNode"
+      | "gaussianScaleNode"
+      | "gaussianRotationNode"
+      | "gaussianOpacityNode"
+      | "gaussianColorNode"
+      | "gaussianVisibilityNode"
+    >,
+    node: Node,
+  ): void {
+    assertNode(node, key);
+    if (this.nodeSlots[key] === node) return;
+    this.nodeSlots[key] = node;
+    this.invalidateProjection();
+  }
+
+  private setRasterNode(
+    key: keyof Pick<
+      GaussianNodeSlots,
+      "rasterColorNode" | "rasterAlphaNode" | "rasterDiscardNode"
+    >,
+    node: Node,
+  ): void {
+    assertNode(node, key);
+    if (this.nodeSlots[key] === node) return;
+    this.nodeSlots[key] = node;
+    this.invalidateRasterizer();
+  }
+}
+
+function assertNode(node: Node, field: string): void {
+  if (node?.isNode !== true) {
+    throw new TypeError(`GaussianPass.${field} must be a Three.js Node`);
   }
 }
 

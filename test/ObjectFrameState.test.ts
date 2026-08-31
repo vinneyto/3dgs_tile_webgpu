@@ -30,16 +30,16 @@ describe("ObjectFrameState", () => {
     const version = store.layoutVersion;
 
     state.update();
-    expect(values(state)[24]).toBe(1);
+    expect(values(state)[40]).toBe(1);
 
     group.visible = false;
     state.update();
-    expect(values(state)[24]).toBe(0);
+    expect(values(state)[40]).toBe(0);
     expect(store.layoutVersion).toBe(version);
 
     group.remove(cloud);
     state.update();
-    expect(values(state)[24]).toBe(0);
+    expect(values(state)[40]).toBe(0);
   });
 
   it("creates independent camera-specific buffers for the same store", () => {
@@ -58,7 +58,7 @@ describe("ObjectFrameState", () => {
     right.update();
 
     expect(left.attribute).not.toBe(right.attribute);
-    expect(values(left).slice(4, 24)).not.toEqual(values(right).slice(4, 24));
+    expect(values(left).slice(20, 40)).not.toEqual(values(right).slice(20, 40));
   });
 });
 

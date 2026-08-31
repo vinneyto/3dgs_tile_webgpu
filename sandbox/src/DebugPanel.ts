@@ -10,6 +10,7 @@ import type { KernelTimingInspector } from "./KernelTimingInspector";
 const STATS_INTERVAL_MS = 1_500;
 const DISPLAY_INTERVAL_MS = 250;
 const MEMORY_WARMUP_FRAMES = 30;
+const KERNEL_SCROLL_IDLE_MS = 500;
 
 export class DebugPanel {
   private pass: GaussianPass | null = null;
@@ -27,6 +28,7 @@ export class DebugPanel {
   private packDurationMs = 0;
   private packCount = 0;
   private packingCenterX = 0;
+  private kernelScrollActiveUntil = -Infinity;
 
   constructor(
     private readonly renderer: WebGPURenderer,
@@ -38,6 +40,14 @@ export class DebugPanel {
   ) {
     this.element.hidden = !enabled;
     this.kernelElement.hidden = !enabled;
+    this.kernelElement.addEventListener(
+      "scroll",
+      () => {
+        this.kernelScrollActiveUntil =
+          performance.now() + KERNEL_SCROLL_IDLE_MS;
+      },
+      { passive: true },
+    );
   }
 
   setPass(pass: GaussianPass | null): void {
@@ -193,14 +203,20 @@ export class DebugPanel {
   }
 
   private renderKernelTimings(profileKernels: boolean): void {
+    if (performance.now() < this.kernelScrollActiveUntil) return;
     const timings = this.timingInspector?.latest ?? null;
     if (this.timingInspector === null) {
-      this.kernelElement.textContent = "Timestamp queries are unavailable.";
+      setTextPreservingScroll(
+        this.kernelElement,
+        "Timestamp queries are unavailable.",
+      );
       return;
     }
     if (timings === null) {
-      this.kernelElement.textContent =
-        "Waiting for the first resolved GPU frame…";
+      setTextPreservingScroll(
+        this.kernelElement,
+        "Waiting for the first resolved GPU frame…",
+      );
       return;
     }
 
@@ -208,15 +224,25 @@ export class DebugPanel {
       const calls = kernel.calls > 1 ? ` ×${kernel.calls}` : "";
       return `${kernel.name.padEnd(42)} ${formatMs(kernel.gpuMs)}${calls}`;
     });
-    this.kernelElement.textContent = [
-      `${profileKernels ? "individual kernels" : "batched groups"} · GPU frame ${timings.frameId}`,
-      ...rows,
-      "",
-      profileKernels
-        ? "?profile=kernels splits the batched prepare/emit group"
-        : "Radix stages already have individual timing boundaries",
-    ].join("\n");
+    setTextPreservingScroll(
+      this.kernelElement,
+      [
+        `${profileKernels ? "individual kernels" : "batched groups"} · GPU frame ${timings.frameId}`,
+        ...rows,
+        "",
+        profileKernels
+          ? "?profile=kernels splits the batched prepare/emit group"
+          : "Radix stages already have individual timing boundaries",
+      ].join("\n"),
+    );
   }
+}
+
+function setTextPreservingScroll(element: HTMLElement, text: string): void {
+  if (element.textContent === text) return;
+  const scrollTop = element.scrollTop;
+  element.textContent = text;
+  element.scrollTop = scrollTop;
 }
 
 function formatRanges(

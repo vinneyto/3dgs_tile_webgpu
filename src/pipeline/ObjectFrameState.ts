@@ -9,7 +9,8 @@ import {
 import type { GaussianCloud } from "../GaussianCloud";
 import type { GaussianStore } from "../GaussianStore";
 
-export const OBJECT_FRAME_VEC4S = 6;
+// matrixWorld, modelView, camera position in object-local space, visibility.
+export const OBJECT_FRAME_VEC4S = 10;
 
 /** Camera-specific object transforms shared by every Gaussian of one cloud. */
 export class ObjectFrameState {
@@ -68,12 +69,13 @@ export class ObjectFrameState {
 
     const base =
       this.frameComponentOffset + cloud.objectId * OBJECT_FRAME_VEC4S * 4;
-    this.values.set(this.modelView.elements, base);
-    this.values[base + 16] = this.cameraLocalPosition.x;
-    this.values[base + 17] = this.cameraLocalPosition.y;
-    this.values[base + 18] = this.cameraLocalPosition.z;
-    this.values[base + 19] = 1;
-    this.values[base + 20] = isEffectivelyVisible(cloud, this.camera) ? 1 : 0;
+    this.values.set(cloud.matrixWorld.elements, base);
+    this.values.set(this.modelView.elements, base + 16);
+    this.values[base + 32] = this.cameraLocalPosition.x;
+    this.values[base + 33] = this.cameraLocalPosition.y;
+    this.values[base + 34] = this.cameraLocalPosition.z;
+    this.values[base + 35] = 1;
+    this.values[base + 36] = isEffectivelyVisible(cloud, this.camera) ? 1 : 0;
   }
 }
 

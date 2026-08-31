@@ -48,15 +48,16 @@ src/
 ├── GaussianStore.ts                packed multi-cloud buffer ownership
 ├── GaussianPass.ts                 Three.js PassNode integration
 ├── createGaussianPass.ts           public pass factory
+├── nodes/GaussianContextNodes.ts   projection/raster TSL accessors and slot contracts
 ├── kernels/                        explicit WGSL strings used by wgslFn
-│   ├── projection.ts               projection, covariance and SH
+│   ├── projectionHelpers.ts        covariance, SH and tile-count helpers
+│   ├── rasterHelpers.ts            Morton and workgroup-load helpers
 │   ├── scan.ts                     hierarchical exclusive scan
 │   ├── visibility.ts               visible compaction and depth ordering
 │   ├── tileContribution.ts         conservative tile/ellipse test
 │   ├── intersections.ts            emission and indirect arguments
 │   ├── radix.ts                    five-stage subgroup radix
 │   ├── tileOffsets.ts              sorted tile range construction
-│   └── rasterization.ts            color and optional depth writes
 ├── pipeline/
 │   ├── TiledGaussianPipeline.ts    stage orchestration
 │   ├── AttributePool.ts            Three.js storage-attribute ownership
@@ -308,6 +309,56 @@ const rawColorNode = pass.getTextureNode("output");
 const depthNode = pass.getTextureNode("depth"); // requires outputDepth: true
 ```
 
+## Gaussian node customization
+
+`GaussianPass` exposes projection-domain slots evaluated once per packed
+Gaussian and raster-domain slots evaluated for every covered pixel/Gaussian
+pair. Read-only context accessors are imported from the package in the same
+style as Three.js TSL accessors:
+
+```ts
+import { Vector3 } from "three/webgpu";
+import { uniform } from "three/tsl";
+import {
+  gaussianColor,
+  gaussianProjectedArea,
+  rasterGaussianColor,
+  rasterGaussianOpacity,
+  rasterPower,
+  rasterUV,
+} from "3dgs-tile-webgpu";
+
+const tint = uniform(new Vector3(1, 0.8, 0.8));
+pass.gaussianColorNode = gaussianColor.mul(tint);
+pass.gaussianVisibilityNode = gaussianProjectedArea.greaterThan(0.25);
+pass.rasterColorNode = rasterGaussianColor.mul(rasterUV.x);
+pass.rasterAlphaNode = rasterGaussianOpacity.mul(rasterPower.mul(1.25).exp());
+```
+
+`gaussianObjectId` selects one `GaussianCloud`. `gaussianIndex` is the current
+packed `GaussianStore` slot and is not a persistent source ID.
+
+Projection slots are `gaussianPositionLocalNode`,
+`gaussianPositionWorldNode`, `gaussianScaleNode`, `gaussianRotationNode`,
+`gaussianOpacityNode`, `gaussianColorNode`, and `gaussianVisibilityNode`.
+Raster slots are `rasterColorNode`, `rasterAlphaNode`, and
+`rasterDiscardNode`.
+
+Replacing a projection root rebuilds only the projection `ComputeNode`;
+replacing a raster root rebuilds only the tile-rasterizer `ComputeNode`.
+Changing a referenced uniform or updating an existing texture does not rebuild
+either stage. `invalidateProjection()`, `invalidateRasterizer()`, and
+`pass.needsUpdate = true` are escape hatches for a node whose internal graph was
+mutated without replacing its root.
+
+`rasterGaussianCoord` is a whitened ellipse coordinate, so its squared length
+is the conic quadratic form and length `1` is the one-sigma contour.
+`rasterUV = 0.5 + rasterGaussianCoord / 6`, mapping `-3σ..+3σ` to `0..1` on
+each whitened axis. Raster alpha customization is evaluated inside the
+footprint emitted by projection. It may reduce that footprint, but expanding
+support requires a corresponding projection-domain change; contributions
+outside the emitted tile list cannot be recovered in rasterization.
+
 Depth is written in standard perspective-depth convention: `0` at the near plane, `1` at the far plane and
 `1` where no Gaussian contributes. The output is the center depth of the first contributing Gaussian in the
 front-to-back tile list. Disable it by omitting `outputDepth` to avoid allocating and writing the extra texture.
@@ -422,11 +473,12 @@ reaching into the WebGPU backend.
 
 ## Shader boundary
 
-All non-trivial kernels live in `src/kernels/` as ordinary WGSL source. `wgslFn` only binds those functions to
-Three.js storage attributes, uniforms, storage textures, built-ins and compute nodes. This keeps Three.js in
-charge of resource lifetime and pipeline integration while preserving WGSL as the code that is read, reviewed
-and debugged. TSL control-flow builders are deliberately not used for projection, scan, sorting, binning or
-rasterization.
+Projection and rasterization use TSL shells so user node graphs can be inserted
+at their semantic hook points. Covariance projection, SH evaluation,
+tile/ellipse overlap, Morton mapping, and workgroup uniform loads remain WGSL
+helpers. Scan, sorting, compaction, binning, and intersection emission remain
+explicit WGSL kernels. Three.js continues to own resource lifetime, binding and
+dispatch; node customization adds no dispatch or intermediate storage buffer.
 
 ## Development
 
