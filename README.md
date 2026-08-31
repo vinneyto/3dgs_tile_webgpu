@@ -392,8 +392,8 @@ mutated without replacing its root.
 
 `createGaussianRippleNode()` installs a click controller and returns a
 projection node directly. A click raycasts the cloud's full-source octree,
-stores the nearest local-space hit and current time in uniforms, then emits a
-small damped transverse wave packet:
+stores the nearest local-space hit, projected camera-ray direction, and current
+time in uniforms, then emits a small damped transverse plane-wave packet:
 
 ```ts
 import {
@@ -418,9 +418,10 @@ pass.gaussianPositionLocalNode = createGaussianRippleNode({
 
 Call `clicks.abort()` when the controller is no longer needed. Internally,
 Three.js TSL's built-in `time` node supplies a renderer-managed uniform in
-seconds. The ripple travels in local `XZ`, displaces centers along local `Y`,
-and decays both away from its moving front and over time. Raycasting uses the
-base CPU octree rather than the temporarily deformed GPU positions.
+seconds. A straight ripple front travels through local `XZ` in the projected
+camera-ray direction, displaces centers along local `Y`, and decays both away
+from its moving front and over time. Raycasting uses the base CPU octree rather
+than the temporarily deformed GPU positions.
 The default amplitude and wavelength are both `0.05` local-space units, which
 means 5 cm for a meter-scaled scene; both can be overridden in the factory
 options.
