@@ -10,7 +10,10 @@ import { context, vec3 } from "three/tsl";
 
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLodColorHelper } from "../src/GaussianLodColorHelper";
+import { GaussianLod } from "../src/GaussianLod";
 import { GaussianPass } from "../src/GaussianPass";
+import { createGaussianRippleNode } from "../src/GaussianRippleNode";
+import { GaussianOctree } from "../src/GaussianOctree";
 import { GaussianStore } from "../src/GaussianStore";
 import {
   createDefaultGaussianNodeSlots,
@@ -115,6 +118,36 @@ describe("generated Gaussian WGSL", () => {
     expect(projectionSource).toContain("vec3<f32>( 1.0, 0.75, 0.5 )");
     expect(rasterSource).toContain("0.25");
     expect(rasterSource).toContain("vec3<f32>");
+  });
+
+  it("builds a vertically localized concentric wave in projection", () => {
+    const data = oneGaussian();
+    const octree = GaussianOctree.build(data);
+    const lod = GaussianLod.build(octree, {
+      levels: [{ retention: 1 }],
+    });
+    const store = new GaussianStore();
+    const cloud = store.addLod(lod);
+    const controller = new AbortController();
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.gaussianPositionLocalNode = createGaussianRippleNode({
+      cloud,
+      camera: new PerspectiveCamera(),
+      domElement: {
+        addEventListener: () => undefined,
+      } as unknown as HTMLElement,
+      signal: controller.signal,
+    });
+
+    const { projectionSource } = buildPipeline(nodes);
+
+    expect(projectionSource).toContain("sin(");
+    expect(projectionSource).toContain("exp(");
+    expect(projectionSource.match(/exp\(/g)?.length).toBeGreaterThanOrEqual(3);
+    expect(projectionSource).toContain("length(");
+    expect(projectionSource).toContain("gaussianPositionLocalValue");
+    expect(projectionSource.match(/var<storage/g)).toHaveLength(8);
+    controller.abort();
   });
 
   it("mixes projected color with packed LOD tint in the rasterizer", () => {

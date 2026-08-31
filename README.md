@@ -49,6 +49,7 @@ src/
 ├── GaussianStore.ts                packed multi-cloud buffer ownership
 ├── GaussianPass.ts                 Three.js PassNode integration
 ├── createGaussianPass.ts           public pass factory
+├── GaussianRippleNode.ts           click-driven octree ripple node factory
 ├── nodes/GaussianContextNodes.ts   projection/raster TSL accessors and slot contracts
 ├── kernels/                        explicit WGSL strings used by wgslFn
 │   ├── projectionHelpers.ts        covariance, SH and tile-count helpers
@@ -388,6 +389,44 @@ Changing a referenced uniform or updating an existing texture does not rebuild
 either stage. `invalidateProjection()`, `invalidateRasterizer()`, and
 `pass.needsUpdate = true` are escape hatches for a node whose internal graph was
 mutated without replacing its root.
+
+`createGaussianRippleNode()` installs a click controller and returns a
+projection node directly. A click raycasts the cloud's full-source octree,
+stores the nearest local-space hit and current time in uniforms, then emits a
+small damped transverse concentric wave packet:
+
+```ts
+import {
+  GaussianStore,
+  createGaussianRippleNode,
+  gaussianPass,
+} from "3dgs-tile-webgpu";
+
+const store = new GaussianStore();
+const mug = await store.load("mug.ply");
+store.pack({ limits: device.limits });
+const pass = gaussianPass(renderer, camera, store);
+
+const clicks = new AbortController();
+pass.gaussianPositionLocalNode = createGaussianRippleNode({
+  cloud: mug,
+  camera,
+  domElement: renderer.domElement,
+  signal: clicks.signal,
+});
+```
+
+Call `clicks.abort()` when the controller is no longer needed. Internally,
+Three.js TSL's built-in `time` node supplies a renderer-managed uniform in
+seconds. Concentric rings spread from the click through local `XZ`, displace
+centers along local `Y`, and decay both away from the moving front and over
+time. A Gaussian falloff around the clicked local `Y` plane keeps objects above
+or below that surface from moving with it. Raycasting uses the base CPU octree
+rather than the temporarily deformed GPU positions.
+The default amplitude and wavelength are both `0.05` local-space units, which
+means 5 cm for a meter-scaled scene; both can be overridden in the factory
+options. The default vertical falloff width is `0.10`, also configurable with
+`verticalWidth`.
 
 `rasterGaussianCoord` is a whitened ellipse coordinate, so its squared length
 is the conic quadratic form and length `1` is the one-sigma contour.

@@ -5,7 +5,7 @@ import {
   type NodeFrame,
   type WebGPURenderer,
 } from "three/webgpu";
-import { vec3 } from "three/tsl";
+import { uniform, vec3 } from "three/tsl";
 
 import { GaussianData } from "../src/GaussianData";
 import { GaussianPass } from "../src/GaussianPass";
@@ -55,6 +55,31 @@ describe("GaussianPass node slots", () => {
     pass.updateBefore({ renderer } as unknown as NodeFrame);
     expect(pipeline.rebuildProjection).toHaveBeenCalledOnce();
     expect(pipeline.rebuildRasterizer).toHaveBeenCalledOnce();
+  });
+
+  it("updates a referenced uniform without rebuilding projection", () => {
+    const { pass, renderer, store } = createPass();
+    const pipeline = {
+      rebuildProjection: vi.fn(),
+      rebuildRasterizer: vi.fn(),
+      prepareFrame: vi.fn(),
+      render: vi.fn(),
+      dispose: vi.fn(),
+    };
+    Object.assign(pass as unknown as Record<string, unknown>, {
+      pipeline,
+      pipelineLayoutVersion: store.layoutVersion,
+    });
+    const displacement = uniform(0);
+    pass.gaussianPositionLocalNode = gaussianPositionLocal.add(
+      vec3(0, displacement, 0),
+    );
+    pass.updateBefore({ renderer } as unknown as NodeFrame);
+    expect(pipeline.rebuildProjection).toHaveBeenCalledOnce();
+
+    displacement.value = 0.25;
+    pass.updateBefore({ renderer } as unknown as NodeFrame);
+    expect(pipeline.rebuildProjection).toHaveBeenCalledOnce();
   });
 });
 

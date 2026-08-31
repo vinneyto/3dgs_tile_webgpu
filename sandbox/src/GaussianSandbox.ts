@@ -20,13 +20,14 @@ import {
   OctreeHelper,
   GaussianOctree,
   GaussianStore,
+  createGaussianRippleNode,
   SourceFractionBudgetStrategy,
   TieredRadialLodPackingStrategy,
   type GaussianStorePackLimits,
   type GaussianPass,
   type RadixBackend,
 } from "../../src/index";
-import { pass as scenePass, vec4 } from "three/tsl";
+import { pass as scenePass, uniform, vec4 } from "three/tsl";
 import { DebugPanel } from "./DebugPanel";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 
@@ -66,6 +67,7 @@ export class GaussianSandbox {
   private readonly octreeHelpers: OctreeHelper[] = [];
   private octreeHelpersVisible = false;
   private lodColoringEnabled = true;
+  private radialWaveEnabled = true;
   private primaryCloud: GaussianCloud | null = null;
   private primaryPackingStrategy: TieredRadialLodPackingStrategy | null = null;
   private lodColorHelper: GaussianLodColorHelper | null = null;
@@ -74,6 +76,8 @@ export class GaussianSandbox {
   private lastPackedCenterX = Number.NaN;
   private deviceLimits: GaussianStorePackLimits | null = null;
   private readonly packingCenter = new Vector3();
+  private readonly rippleStrengthNode = uniform(1);
+  private rippleAbortController: AbortController | null = null;
 
   private constructor(
     private readonly renderer: WebGPURenderer,
@@ -162,6 +166,11 @@ export class GaussianSandbox {
     }
   }
 
+  setRadialWaveEnabled(enabled: boolean): void {
+    this.radialWaveEnabled = enabled;
+    this.rippleStrengthNode.value = enabled ? 1 : 0;
+  }
+
   async loadUrl(url: string): Promise<void> {
     this.setStatus(`Loading ${url}…`);
     const primaryPackingStrategy = createPrimaryPackingStrategy();
@@ -219,6 +228,8 @@ export class GaussianSandbox {
     primaryPackingStrategy: TieredRadialLodPackingStrategy,
     limits: GaussianStorePackLimits,
   ): void {
+    this.rippleAbortController?.abort();
+    this.rippleAbortController = null;
     this.lodColorHelper?.dispose();
     this.lodColorHelper = null;
     this.pass?.dispose();
@@ -237,6 +248,7 @@ export class GaussianSandbox {
     this.primaryCloud = primaryCloud;
     this.primaryPackingStrategy = primaryPackingStrategy;
     this.lastPackedCenterX = 0;
+    this.packingCenter.set(0, 0, 0);
     this.scene.add(primaryCloud);
     this.addSpatialHelpers(primaryCloud);
     this.addPackingCenterMarker(primaryCloud, primaryBounds);
@@ -261,6 +273,15 @@ export class GaussianSandbox {
       profileKernels:
         new URLSearchParams(location.search).get("profile") === "kernels",
       radixBackend: readRadixBackend(),
+    });
+    this.rippleStrengthNode.value = this.radialWaveEnabled ? 1 : 0;
+    this.rippleAbortController = new AbortController();
+    this.pass.gaussianPositionLocalNode = createGaussianRippleNode({
+      cloud: primaryCloud,
+      camera: this.camera,
+      domElement: this.renderer.domElement,
+      signal: this.rippleAbortController.signal,
+      strengthNode: this.rippleStrengthNode,
     });
     this.lodColorHelper = new GaussianLodColorHelper(this.pass, {
       enabled: this.lodColoringEnabled,

@@ -71,6 +71,10 @@ export {
 } from "./GaussianPass";
 export { gaussianPass } from "./createGaussianPass";
 export {
+  createGaussianRippleNode,
+  type GaussianRippleNodeOptions,
+} from "./GaussianRippleNode";
+export {
   gaussianIndex,
   gaussianObjectId,
   gaussianPositionLocal,
