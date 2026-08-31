@@ -7,7 +7,7 @@ import {
   Vector3,
   type Node,
 } from "three/webgpu";
-import { float, time, uniform, vec3 } from "three/tsl";
+import { float, length, time, uniform, vec3 } from "three/tsl";
 
 import type { GaussianCloud } from "./GaussianCloud";
 import { gaussianPositionLocal } from "./nodes/GaussianContextNodes";
@@ -22,9 +22,9 @@ export interface GaussianRippleNodeOptions {
   strengthNode?: Node<"float">;
   /** Peak local-space displacement. Defaults to 0.05 (5 cm when units are meters). */
   amplitude?: number;
-  /** Distance between carrier crests. Defaults to 0.05 (5 cm when units are meters). */
+  /** Distance between carrier rings. Defaults to 0.05 (5 cm when units are meters). */
   wavelength?: number;
-  /** Local-space propagation speed per second. Defaults to 0.35. */
+  /** Local-space propagation speed per second. Defaults to 0.25. */
   speed?: number;
   /** Width of the moving wave packet. Defaults to 2.5 wavelengths. */
   packetWidth?: number;
@@ -36,7 +36,7 @@ export interface GaussianRippleNodeOptions {
 
 /**
  * Returns a local-position node and installs a click controller that emits a
- * damped transverse plane ripple from the nearest full-source octree hit.
+ * damped transverse concentric ripple from the nearest full-source octree hit.
  */
 export function createGaussianRippleNode(
   options: GaussianRippleNodeOptions,
@@ -50,7 +50,7 @@ export function createGaussianRippleNode(
 
   const amplitude = positive(options.amplitude ?? 0.05, "amplitude");
   const wavelength = positive(options.wavelength ?? 0.05, "wavelength");
-  const speed = positive(options.speed ?? 0.35, "speed");
+  const speed = positive(options.speed ?? 0.25, "speed");
   const packetWidth = positive(
     options.packetWidth ?? wavelength * 2.5,
     "packetWidth",
@@ -62,15 +62,10 @@ export function createGaussianRippleNode(
   );
 
   const centerNode = uniform(new Vector3()).setName("gaussianRippleCenter");
-  const directionNode = uniform(new Vector2(1, 0)).setName(
-    "gaussianRippleDirection",
-  );
   const startTimeNode = uniform(-1_000_000).setName("gaussianRippleStartTime");
   const elapsed = time.sub(startTimeNode).max(0);
-  const distanceAlongWave = gaussianPositionLocal.xz
-    .sub(centerNode.xz)
-    .dot(directionNode);
-  const signedDistance = distanceAlongWave.sub(elapsed.mul(speed));
+  const radius = length(gaussianPositionLocal.xz.sub(centerNode.xz));
+  const signedDistance = radius.sub(elapsed.mul(speed));
   const envelope = signedDistance
     .div(packetWidth)
     .pow2()
@@ -90,7 +85,6 @@ export function createGaussianRippleNode(
   const raycaster = new Raycaster();
   const inverseWorld = new Matrix4();
   const localRay = new Ray();
-  const projectedDirection = new Vector2();
   options.domElement.addEventListener(
     "click",
     (event) => {
@@ -110,14 +104,7 @@ export function createGaussianRippleNode(
         maxHits: 1,
       })[0];
       if (hit === undefined) return;
-      projectedDirection.set(localRay.direction.x, localRay.direction.z);
-      if (projectedDirection.lengthSq() < 1e-8) {
-        projectedDirection.set(1, 0);
-      } else {
-        projectedDirection.normalize();
-      }
       centerNode.value.copy(hit.point);
-      directionNode.value.copy(projectedDirection);
       startTimeNode.value = time.value;
     },
     { signal: options.signal },
