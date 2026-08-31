@@ -369,6 +369,7 @@ describe("GaussianStore", () => {
 
     store.pack({ limits });
     expect(activeAttributeValues(store, lodLevels.array)).toEqual([0, 0]);
+    expect(store.lastPackStats?.estimatedUploadBytes).toBe(2 * (64 + 4));
 
     level = 1;
     cloud.invalidatePacking();
@@ -377,6 +378,7 @@ describe("GaussianStore", () => {
     expect(store.lastPackStats).toMatchObject({
       reusedSlots: 2,
       writtenSlots: 3,
+      estimatedUploadBytes: 3 * 64 + 5 * 4,
     });
     expect(activeAttributeValues(store, lodLevels.array)).toEqual([
       1, 1, 1, 1, 1,
