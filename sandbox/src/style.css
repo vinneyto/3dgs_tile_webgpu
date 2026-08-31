@@ -114,22 +114,31 @@ small {
   cursor: pointer;
 }
 
-.lod-levels {
+.lod-palette {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
 }
 
-[data-lod-level="0"] {
-  accent-color: #ff4d6d;
+[data-lod-color]::before {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 4px;
+  border-radius: 50%;
+  content: "";
 }
 
-[data-lod-level="1"] {
-  accent-color: #ffb703;
+[data-lod-color="0"]::before {
+  background: #e85d68;
 }
 
-[data-lod-level="2"] {
-  accent-color: #38d996;
+[data-lod-color="1"]::before {
+  background: #f2b84b;
+}
+
+[data-lod-color="2"]::before {
+  background: #4ac58b;
 }
 
 #kernel-profile[open] {

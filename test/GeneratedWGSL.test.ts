@@ -3,11 +3,14 @@ import {
   PerspectiveCamera,
   StorageBufferAttribute,
   StorageTexture,
+  type WebGPURenderer,
   WGSLNodeBuilder,
 } from "three/webgpu";
 import { context, vec3 } from "three/tsl";
 
 import { GaussianData } from "../src/GaussianData";
+import { GaussianLodColorHelper } from "../src/GaussianLodColorHelper";
+import { GaussianPass } from "../src/GaussianPass";
 import { GaussianStore } from "../src/GaussianStore";
 import {
   createDefaultGaussianNodeSlots,
@@ -112,6 +115,40 @@ describe("generated Gaussian WGSL", () => {
     expect(projectionSource).toContain("vec3<f32>( 1.0, 0.75, 0.5 )");
     expect(rasterSource).toContain("0.25");
     expect(rasterSource).toContain("vec3<f32>");
+  });
+
+  it("replaces the unused SH binding with packed LOD color lookup", () => {
+    const store = new GaussianStore();
+    store.add(oneGaussian());
+    store.pack({ limits: TEST_LIMITS });
+    const renderer = {
+      hasFeature: () => false,
+    } as unknown as WebGPURenderer;
+    const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
+    new GaussianLodColorHelper(pass);
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.gaussianColorNode = pass.gaussianColorNode;
+    const packed = store.getPackedData();
+    const frame = new FrameUniforms(new PerspectiveCamera(), [0, 0, 0, 0]);
+    const objects = new ObjectFrameState(
+      new PerspectiveCamera(),
+      store,
+      packed.count,
+    );
+    const projection = new ProjectionStage(
+      packed,
+      frame,
+      objects,
+      "compensated",
+      nodes,
+    );
+
+    const source = buildCompute(
+      (projection as unknown as { computeNode: unknown }).computeNode,
+    );
+
+    expect(source.match(/var<storage/g)).toHaveLength(8);
+    expect(source).toContain("% 3u");
   });
 });
 

@@ -22,6 +22,10 @@ export {
 } from "./GaussianLod";
 export { LodHelper, type LodHelperOptions } from "./LodHelper";
 export {
+  GaussianLodColorHelper,
+  type GaussianLodColorHelperOptions,
+} from "./GaussianLodColorHelper";
+export {
   MaximumLodPackingStrategy,
   RadialLodPackingStrategy,
   TieredRadialLodPackingStrategy,
