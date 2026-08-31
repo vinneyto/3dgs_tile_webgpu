@@ -20,13 +20,21 @@ import {
   OctreeHelper,
   GaussianOctree,
   GaussianStore,
+  gaussianPositionLocal,
   SourceFractionBudgetStrategy,
   TieredRadialLodPackingStrategy,
   type GaussianStorePackLimits,
   type GaussianPass,
   type RadixBackend,
 } from "../../src/index";
-import { pass as scenePass, vec4 } from "three/tsl";
+import {
+  length,
+  pass as scenePass,
+  time,
+  uniform,
+  vec3,
+  vec4,
+} from "three/tsl";
 import { DebugPanel } from "./DebugPanel";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 
@@ -35,6 +43,9 @@ const PACKING_CENTER_CYCLE_SECONDS = 12;
 const PACKING_CENTER_AMPLITUDE = 5;
 const REPACK_DISTANCE = 0.5;
 const PRIMARY_BUDGET_FRACTION = 0.97;
+const WAVE_AMPLITUDE_TO_RADIUS = 0.018;
+const WAVE_LENGTH_TO_RADIUS = 0.2;
+const WAVE_PHASE_SPEED = 4;
 const LOD_LEVELS = [
   { retention: 0.2 },
   { retention: 0.5 },
@@ -66,6 +77,7 @@ export class GaussianSandbox {
   private readonly octreeHelpers: OctreeHelper[] = [];
   private octreeHelpersVisible = false;
   private lodColoringEnabled = true;
+  private radialWaveEnabled = true;
   private primaryCloud: GaussianCloud | null = null;
   private primaryPackingStrategy: TieredRadialLodPackingStrategy | null = null;
   private lodColorHelper: GaussianLodColorHelper | null = null;
@@ -74,6 +86,9 @@ export class GaussianSandbox {
   private lastPackedCenterX = Number.NaN;
   private deviceLimits: GaussianStorePackLimits | null = null;
   private readonly packingCenter = new Vector3();
+  private readonly waveCenterNode = uniform(this.packingCenter);
+  private readonly waveAmplitudeNode = uniform(0);
+  private radialWaveAmplitude = 0;
 
   private constructor(
     private readonly renderer: WebGPURenderer,
@@ -162,6 +177,11 @@ export class GaussianSandbox {
     }
   }
 
+  setRadialWaveEnabled(enabled: boolean): void {
+    this.radialWaveEnabled = enabled;
+    this.waveAmplitudeNode.value = enabled ? this.radialWaveAmplitude : 0;
+  }
+
   async loadUrl(url: string): Promise<void> {
     this.setStatus(`Loading ${url}…`);
     const primaryPackingStrategy = createPrimaryPackingStrategy();
@@ -237,6 +257,7 @@ export class GaussianSandbox {
     this.primaryCloud = primaryCloud;
     this.primaryPackingStrategy = primaryPackingStrategy;
     this.lastPackedCenterX = 0;
+    this.packingCenter.set(0, 0, 0);
     this.scene.add(primaryCloud);
     this.addSpatialHelpers(primaryCloud);
     this.addPackingCenterMarker(primaryCloud, primaryBounds);
@@ -262,6 +283,24 @@ export class GaussianSandbox {
         new URLSearchParams(location.search).get("profile") === "kernels",
       radixBackend: readRadixBackend(),
     });
+    this.radialWaveAmplitude = primaryBounds.radius * WAVE_AMPLITUDE_TO_RADIUS;
+    this.waveAmplitudeNode.value = this.radialWaveEnabled
+      ? this.radialWaveAmplitude
+      : 0;
+    const waveNumber =
+      (Math.PI * 2) /
+      Math.max(primaryBounds.radius * WAVE_LENGTH_TO_RADIUS, Number.EPSILON);
+    const waveRadius = length(
+      gaussianPositionLocal.xz.sub(this.waveCenterNode.xz),
+    );
+    const waveDisplacement = waveRadius
+      .mul(waveNumber)
+      .sub(time.mul(WAVE_PHASE_SPEED))
+      .sin()
+      .mul(this.waveAmplitudeNode);
+    this.pass.gaussianPositionLocalNode = gaussianPositionLocal.add(
+      vec3(0, waveDisplacement, 0),
+    );
     this.lodColorHelper = new GaussianLodColorHelper(this.pass, {
       enabled: this.lodColoringEnabled,
     });

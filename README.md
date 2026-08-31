@@ -389,6 +389,35 @@ either stage. `invalidateProjection()`, `invalidateRasterizer()`, and
 `pass.needsUpdate = true` are escape hatches for a node whose internal graph was
 mutated without replacing its root.
 
+For example, a transverse radial wave can move Gaussian centers before
+projection. TSL's built-in `time` node is a renderer-managed uniform in seconds;
+`waveCenter` is an ordinary user-managed uniform and can reference the same
+local-space `Vector3` used by a radial LOD packing strategy:
+
+```ts
+import { Vector3 } from "three/webgpu";
+import { length, time, uniform, vec3 } from "three/tsl";
+import {
+  GaussianStore,
+  gaussianPass,
+  gaussianPositionLocal,
+} from "3dgs-tile-webgpu";
+
+const store = new GaussianStore();
+await store.load("mug.ply");
+store.pack({ limits: device.limits });
+const pass = gaussianPass(renderer, camera, store);
+
+const waveCenter = uniform(new Vector3());
+const radius = length(gaussianPositionLocal.xz.sub(waveCenter.xz));
+const height = radius.mul(8).sub(time.mul(4)).sin().mul(0.05);
+pass.gaussianPositionLocalNode = gaussianPositionLocal.add(vec3(0, height, 0));
+```
+
+Mutating `waveCenter.value` or replacing the literal amplitude with a float
+uniform updates the effect without rebuilding the projection shader. The wave
+travels in local `XZ` and displaces centers along local `Y`.
+
 `rasterGaussianCoord` is a whitened ellipse coordinate, so its squared length
 is the conic quadratic form and length `1` is the one-sigma contour.
 `rasterUV = 0.5 + rasterGaussianCoord / 6`, mapping `-3σ..+3σ` to `0..1` on

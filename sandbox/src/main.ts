@@ -11,6 +11,9 @@ const octreeToggle = document.querySelector<HTMLInputElement>("#show-octree");
 const lodColorToggle = document.querySelector<HTMLInputElement>(
   "#color-splats-by-lod",
 );
+const radialWaveToggle = document.querySelector<HTMLInputElement>(
+  "#animate-radial-wave",
+);
 
 if (
   viewport === null ||
@@ -20,7 +23,8 @@ if (
   openButton === null ||
   fileInput === null ||
   octreeToggle === null ||
-  lodColorToggle === null
+  lodColorToggle === null ||
+  radialWaveToggle === null
 ) {
   throw new Error("Sandbox markup is incomplete");
 }
@@ -35,10 +39,12 @@ const sandbox = await GaussianSandbox.create(
 const applySpatialDebugState = () => {
   sandbox.setOctreeHelperVisible(octreeToggle.checked);
   sandbox.setLodColoringEnabled(lodColorToggle.checked);
+  sandbox.setRadialWaveEnabled(radialWaveToggle.checked);
 };
 
 octreeToggle.addEventListener("change", applySpatialDebugState);
 lodColorToggle.addEventListener("change", applySpatialDebugState);
+radialWaveToggle.addEventListener("change", applySpatialDebugState);
 
 applySpatialDebugState();
 const parameters = new URLSearchParams(location.search);

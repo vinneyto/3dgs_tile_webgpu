@@ -3,10 +3,11 @@ import {
   PerspectiveCamera,
   StorageBufferAttribute,
   StorageTexture,
+  Vector3,
   type WebGPURenderer,
   WGSLNodeBuilder,
 } from "three/webgpu";
-import { context, vec3 } from "three/tsl";
+import { context, length, time, uniform, vec3 } from "three/tsl";
 
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLodColorHelper } from "../src/GaussianLodColorHelper";
@@ -15,6 +16,7 @@ import { GaussianStore } from "../src/GaussianStore";
 import {
   createDefaultGaussianNodeSlots,
   gaussianColor,
+  gaussianPositionLocal,
   gaussianProjectedArea,
   rasterGaussianColor,
   rasterGaussianOpacity,
@@ -115,6 +117,23 @@ describe("generated Gaussian WGSL", () => {
     expect(projectionSource).toContain("vec3<f32>( 1.0, 0.75, 0.5 )");
     expect(rasterSource).toContain("0.25");
     expect(rasterSource).toContain("vec3<f32>");
+  });
+
+  it("builds a time-driven radial position wave in projection", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    const center = uniform(new Vector3());
+    const amplitude = uniform(0.05);
+    const radius = length(gaussianPositionLocal.xz.sub(center.xz));
+    const displacement = radius.mul(8).sub(time.mul(4)).sin().mul(amplitude);
+    nodes.gaussianPositionLocalNode = gaussianPositionLocal.add(
+      vec3(0, displacement, 0),
+    );
+
+    const { projectionSource } = buildPipeline(nodes);
+
+    expect(projectionSource).toContain("sin(");
+    expect(projectionSource).toContain("gaussianPositionLocalValue");
+    expect(projectionSource.match(/var<storage/g)).toHaveLength(8);
   });
 
   it("mixes projected color with packed LOD tint in the rasterizer", () => {
