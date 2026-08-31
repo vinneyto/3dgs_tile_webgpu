@@ -49,6 +49,7 @@ src/
 ├── GaussianStore.ts                packed multi-cloud buffer ownership
 ├── GaussianPass.ts                 Three.js PassNode integration
 ├── createGaussianPass.ts           public pass factory
+├── GaussianRippleNode.ts           click-driven octree ripple node factory
 ├── nodes/GaussianContextNodes.ts   projection/raster TSL accessors and slot contracts
 ├── kernels/                        explicit WGSL strings used by wgslFn
 │   ├── projectionHelpers.ts        covariance, SH and tile-count helpers
@@ -389,34 +390,37 @@ either stage. `invalidateProjection()`, `invalidateRasterizer()`, and
 `pass.needsUpdate = true` are escape hatches for a node whose internal graph was
 mutated without replacing its root.
 
-For example, a transverse radial wave can move Gaussian centers before
-projection. TSL's built-in `time` node is a renderer-managed uniform in seconds;
-`waveCenter` is an ordinary user-managed uniform and can reference the same
-local-space `Vector3` used by a radial LOD packing strategy:
+`createGaussianRippleNode()` installs a click controller and returns a
+projection node directly. A click raycasts the cloud's full-source octree,
+stores the nearest local-space hit and current time in uniforms, then emits a
+small damped transverse wave packet:
 
 ```ts
-import { Vector3 } from "three/webgpu";
-import { length, time, uniform, vec3 } from "three/tsl";
 import {
   GaussianStore,
+  createGaussianRippleNode,
   gaussianPass,
-  gaussianPositionLocal,
 } from "3dgs-tile-webgpu";
 
 const store = new GaussianStore();
-await store.load("mug.ply");
+const mug = await store.load("mug.ply");
 store.pack({ limits: device.limits });
 const pass = gaussianPass(renderer, camera, store);
 
-const waveCenter = uniform(new Vector3());
-const radius = length(gaussianPositionLocal.xz.sub(waveCenter.xz));
-const height = radius.mul(8).sub(time.mul(4)).sin().mul(0.05);
-pass.gaussianPositionLocalNode = gaussianPositionLocal.add(vec3(0, height, 0));
+const clicks = new AbortController();
+pass.gaussianPositionLocalNode = createGaussianRippleNode({
+  cloud: mug,
+  camera,
+  domElement: renderer.domElement,
+  signal: clicks.signal,
+});
 ```
 
-Mutating `waveCenter.value` or replacing the literal amplitude with a float
-uniform updates the effect without rebuilding the projection shader. The wave
-travels in local `XZ` and displaces centers along local `Y`.
+Call `clicks.abort()` when the controller is no longer needed. Internally,
+Three.js TSL's built-in `time` node supplies a renderer-managed uniform in
+seconds. The ripple travels in local `XZ`, displaces centers along local `Y`,
+and decays both away from its moving front and over time. Raycasting uses the
+base CPU octree rather than the temporarily deformed GPU positions.
 
 `rasterGaussianCoord` is a whitened ellipse coordinate, so its squared length
 is the conic quadratic form and length `1` is the one-sigma contour.

@@ -3,20 +3,21 @@ import {
   PerspectiveCamera,
   StorageBufferAttribute,
   StorageTexture,
-  Vector3,
   type WebGPURenderer,
   WGSLNodeBuilder,
 } from "three/webgpu";
-import { context, length, time, uniform, vec3 } from "three/tsl";
+import { context, vec3 } from "three/tsl";
 
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLodColorHelper } from "../src/GaussianLodColorHelper";
+import { GaussianLod } from "../src/GaussianLod";
 import { GaussianPass } from "../src/GaussianPass";
+import { createGaussianRippleNode } from "../src/GaussianRippleNode";
+import { GaussianOctree } from "../src/GaussianOctree";
 import { GaussianStore } from "../src/GaussianStore";
 import {
   createDefaultGaussianNodeSlots,
   gaussianColor,
-  gaussianPositionLocal,
   gaussianProjectedArea,
   rasterGaussianColor,
   rasterGaussianOpacity,
@@ -120,20 +121,31 @@ describe("generated Gaussian WGSL", () => {
   });
 
   it("builds a time-driven radial position wave in projection", () => {
+    const data = oneGaussian();
+    const octree = GaussianOctree.build(data);
+    const lod = GaussianLod.build(octree, {
+      levels: [{ retention: 1 }],
+    });
+    const store = new GaussianStore();
+    const cloud = store.addLod(lod);
+    const controller = new AbortController();
     const nodes = createDefaultGaussianNodeSlots();
-    const center = uniform(new Vector3());
-    const amplitude = uniform(0.05);
-    const radius = length(gaussianPositionLocal.xz.sub(center.xz));
-    const displacement = radius.mul(8).sub(time.mul(4)).sin().mul(amplitude);
-    nodes.gaussianPositionLocalNode = gaussianPositionLocal.add(
-      vec3(0, displacement, 0),
-    );
+    nodes.gaussianPositionLocalNode = createGaussianRippleNode({
+      cloud,
+      camera: new PerspectiveCamera(),
+      domElement: {
+        addEventListener: () => undefined,
+      } as unknown as HTMLElement,
+      signal: controller.signal,
+    });
 
     const { projectionSource } = buildPipeline(nodes);
 
     expect(projectionSource).toContain("sin(");
+    expect(projectionSource).toContain("exp(");
     expect(projectionSource).toContain("gaussianPositionLocalValue");
     expect(projectionSource.match(/var<storage/g)).toHaveLength(8);
+    controller.abort();
   });
 
   it("mixes projected color with packed LOD tint in the rasterizer", () => {

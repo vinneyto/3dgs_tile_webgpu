@@ -1,0 +1,136 @@
+import {
+  Camera,
+  Matrix4,
+  Ray,
+  Raycaster,
+  Vector2,
+  Vector3,
+  type Node,
+} from "three/webgpu";
+import { float, length, time, uniform, vec3 } from "three/tsl";
+
+import type { GaussianCloud } from "./GaussianCloud";
+import { gaussianPositionLocal } from "./nodes/GaussianContextNodes";
+
+export interface GaussianRippleNodeOptions {
+  cloud: GaussianCloud;
+  camera: Camera;
+  domElement: HTMLElement;
+  /** Owns the click listener lifetime. */
+  signal: AbortSignal;
+  /** Optional runtime multiplier, useful for an enable/disable uniform. */
+  strengthNode?: Node<"float">;
+  /** Peak local-space displacement. Defaults to 0.8% of the cloud radius. */
+  amplitude?: number;
+  /** Distance between carrier rings. Defaults to 5.5% of the cloud radius. */
+  wavelength?: number;
+  /** Local-space propagation speed per second. Defaults to 45% of the cloud radius. */
+  speed?: number;
+  /** Width of the moving wave packet. Defaults to 2.5 wavelengths. */
+  packetWidth?: number;
+  /** Exponential decay per second. Defaults to 0.7. */
+  decay?: number;
+  /** Gaussian hit radius in standard deviations. Defaults to 3. */
+  raycastRadiusScale?: number;
+}
+
+/**
+ * Returns a local-position node and installs a click controller that emits a
+ * damped transverse ripple from the nearest full-source octree hit.
+ */
+export function createGaussianRippleNode(
+  options: GaussianRippleNodeOptions,
+): Node<"vec3"> {
+  const lod = options.cloud.lod;
+  if (lod === null) {
+    throw new Error(
+      "Gaussian ripple raycasting requires an octree-backed cloud",
+    );
+  }
+
+  const size = lod.octree.bounds.getSize(new Vector3());
+  const cloudRadius = Math.max(size.length() * 0.5, 0.1);
+  const amplitude = positive(
+    options.amplitude ?? cloudRadius * 0.008,
+    "amplitude",
+  );
+  const wavelength = positive(
+    options.wavelength ?? cloudRadius * 0.055,
+    "wavelength",
+  );
+  const speed = positive(options.speed ?? cloudRadius * 0.45, "speed");
+  const packetWidth = positive(
+    options.packetWidth ?? wavelength * 2.5,
+    "packetWidth",
+  );
+  const decay = nonNegative(options.decay ?? 0.7, "decay");
+  const raycastRadiusScale = positive(
+    options.raycastRadiusScale ?? 3,
+    "raycastRadiusScale",
+  );
+
+  const centerNode = uniform(new Vector3()).setName("gaussianRippleCenter");
+  const startTimeNode = uniform(-1_000_000).setName("gaussianRippleStartTime");
+  const elapsed = time.sub(startTimeNode).max(0);
+  const radius = length(gaussianPositionLocal.xz.sub(centerNode.xz));
+  const signedDistance = radius.sub(elapsed.mul(speed));
+  const envelope = signedDistance
+    .div(packetWidth)
+    .pow2()
+    .negate()
+    .exp()
+    .mul(elapsed.mul(-decay).exp());
+  const carrier = signedDistance
+    .mul((Math.PI * 2) / wavelength)
+    .add(Math.PI * 0.5)
+    .sin();
+  const displacement = carrier
+    .mul(envelope)
+    .mul(amplitude)
+    .mul(options.strengthNode ?? float(1));
+
+  const pointer = new Vector2();
+  const raycaster = new Raycaster();
+  const inverseWorld = new Matrix4();
+  const localRay = new Ray();
+  options.domElement.addEventListener(
+    "click",
+    (event) => {
+      if (event.button !== 0) return;
+      const bounds = options.domElement.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0) return;
+      pointer.set(
+        ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+        -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
+      );
+      raycaster.setFromCamera(pointer, options.camera);
+      options.cloud.updateWorldMatrix(true, false);
+      inverseWorld.copy(options.cloud.matrixWorld).invert();
+      localRay.copy(raycaster.ray).applyMatrix4(inverseWorld);
+      const hit = lod.octree.raycast(localRay, {
+        radiusScale: raycastRadiusScale,
+        maxHits: 1,
+      })[0];
+      if (hit === undefined) return;
+      centerNode.value.copy(hit.point);
+      startTimeNode.value = time.value;
+    },
+    { signal: options.signal },
+  );
+
+  return gaussianPositionLocal.add(vec3(0, displacement, 0));
+}
+
+function positive(value: number, name: string): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new RangeError(`Gaussian ripple ${name} must be positive`);
+  }
+  return value;
+}
+
+function nonNegative(value: number, name: string): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError(`Gaussian ripple ${name} must be non-negative`);
+  }
+  return value;
+}
