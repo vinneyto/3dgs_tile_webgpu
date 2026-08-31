@@ -1,16 +1,15 @@
 import {
   type GaussianStoreAttributePacker,
   type GaussianStoreAttributeUploadStats,
-  mergeSlotRanges,
   type PackedCellUpdateContext,
   type PackedLayoutContext,
-  rangeSlotCount,
 } from "./GaussianStoreAttributePacker";
 import {
   replaceGaussianStoreAttribute,
   updateGaussianStoreAttribute,
   type GaussianStorePackedAttribute,
 } from "./GaussianStorePackedAttribute";
+import { mergeSlotRanges, rangeSlotCount } from "../utils/slotRanges";
 
 /** Fills the built-in current-cell LOD value for every active packed slot. */
 export class PackedLodLevelAttributePacker implements GaussianStoreAttributePacker {

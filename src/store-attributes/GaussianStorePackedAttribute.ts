@@ -1,6 +1,7 @@
 import { StorageBufferAttribute } from "three/webgpu";
 
 import type { GaussianStoreSlotRange } from "../GaussianStore";
+import { markSlotRangesUpdated } from "../utils/slotRanges";
 
 export type GaussianStorePackedAttributeFormat = "u32";
 
@@ -68,12 +69,7 @@ export class GaussianStorePackedAttribute {
   [updateGaussianStoreAttribute](
     ranges: readonly GaussianStoreSlotRange[],
   ): void {
-    if (ranges.length === 0) return;
-    const attribute = this.bufferAttribute;
-    for (const range of ranges) {
-      attribute.addUpdateRange(range.start, range.count);
-    }
-    attribute.needsUpdate = true;
+    markSlotRangesUpdated(this.bufferAttribute, ranges, 1);
   }
 
   [disposeGaussianStoreAttribute](): void {

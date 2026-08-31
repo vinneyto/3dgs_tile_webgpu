@@ -28,12 +28,16 @@ import {
 import {
   type GaussianStoreAttributePacker,
   type GaussianStoreAttributeUploadStats,
-  mergeSlotRanges,
   type PackedLayoutCell,
-  rangeSlotCount,
 } from "./store-attributes/GaussianStoreAttributePacker";
 import { PackedLodLevelAttributePacker } from "./store-attributes/PackedLodLevelAttributePacker";
 import type { GaussianStorePackedAttribute } from "./store-attributes";
+import {
+  markSlotRangesUpdated,
+  mergeSlotRanges,
+  rangeSlotCount,
+  type SlotRange,
+} from "./utils/slotRanges";
 
 export interface GaussianDataLoader {
   load(url: string): Promise<GaussianData>;
@@ -73,10 +77,7 @@ export interface GaussianStorePackStats {
   readonly slotUpdateMs: number;
 }
 
-export interface GaussianStoreSlotRange {
-  readonly start: number;
-  readonly count: number;
-}
+export type GaussianStoreSlotRange = SlotRange;
 
 export interface GaussianStoreAddOptions {
   name?: string;
@@ -740,11 +741,11 @@ export class GaussianStore {
     const clearedSlotCount = clearedSlots.length;
     const writtenSlotRanges = mergeSlotRanges(writtenSlots, 4, 0.15);
     const clearedSlotRanges = mergeSlotRanges(clearedSlots, 16, 0.25);
-    markRangesUpdated(data.means, writtenSlotRanges, 4);
-    markRangesUpdated(data.scalesOpacity, writtenSlotRanges, 4);
-    markRangesUpdated(data.scalesOpacity, clearedSlotRanges, 4);
-    markRangesUpdated(data.rotations, writtenSlotRanges, 4);
-    markRangesUpdated(
+    markSlotRangesUpdated(data.means, writtenSlotRanges, 4);
+    markSlotRangesUpdated(data.scalesOpacity, writtenSlotRanges, 4);
+    markSlotRangesUpdated(data.scalesOpacity, clearedSlotRanges, 4);
+    markSlotRangesUpdated(data.rotations, writtenSlotRanges, 4);
+    markSlotRangesUpdated(
       data.shCoefficients,
       writtenSlotRanges,
       data.shCoefficientCount * 4,
@@ -931,21 +932,6 @@ function copyVec4Item(
     source.subarray(sourceItem * 4, sourceItem * 4 + 4),
     destinationItem * 4,
   );
-}
-
-function markRangesUpdated(
-  attribute: StorageBufferAttribute,
-  ranges: readonly GaussianStoreSlotRange[],
-  componentsPerSlot: number,
-): void {
-  if (ranges.length === 0) return;
-  for (const range of ranges) {
-    attribute.addUpdateRange(
-      range.start * componentsPerSlot,
-      range.count * componentsPerSlot,
-    );
-  }
-  attribute.needsUpdate = true;
 }
 
 function sourceName(url: string): string {
