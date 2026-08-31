@@ -126,6 +126,50 @@ describe("GaussianStore", () => {
     expect(store.getPackedData().count).toBe(2);
   });
 
+  it("does not allocate the optional packed LOD level attribute by default", () => {
+    const store = new GaussianStore();
+    store.addLod(singleLevelLod([0, 1, 2, 3]));
+
+    store.pack({ limits: limitsForGaussianCapacity(4, 0) });
+
+    expect(store.attributes.size).toBe(0);
+    expect(store.attributes.get("lodLevel")).toBeUndefined();
+  });
+
+  it("lazily enables and backfills the packed LOD level attribute", () => {
+    const source = data(4, 0, 0, [1]);
+    const sourceMeans = source.means.array as Float32Array;
+    for (let index = 0; index < source.count; index++) {
+      sourceMeans[index * 4] = index;
+    }
+    const lod = GaussianLod.build(
+      GaussianOctree.build(source, { leafCapacity: 1 }),
+      { levels: [{ retention: 0.5 }, { retention: 1 }] },
+    );
+    const nodeIds = lod.octree.leafNodeIds.slice(0, 2);
+    const strategy = {
+      pack: () => ({
+        nodeIds,
+        lodLevels: Uint8Array.from([0, 1]),
+        gaussianCount: 2,
+      }),
+    };
+    const store = new GaussianStore({ defaultPackingStrategy: strategy });
+    store.addLod(lod);
+    store.pack({ limits: limitsForGaussianCapacity(4, 0) });
+
+    expect(store.attributes.size).toBe(0);
+    const lodLevels = store.enablePackedLodLevelAttribute();
+
+    expect(store.attributes.size).toBe(1);
+    expect(store.attributes.get("lodLevel")).toBe(lodLevels);
+    expect(store.enablePackedLodLevelAttribute()).toBe(lodLevels);
+    expect(lodLevels.format).toBe("u32");
+    expect(lodLevels.isAllocated).toBe(true);
+    expect(lodLevels.count).toBe(4);
+    expect(Array.from(lodLevels.array.slice(0, 2))).toEqual([0, 1]);
+  });
+
   it("derives capacity from device limits and the Store SH degree", () => {
     const lod = singleLevelLod([0, 1, 2, 3], 1, [1, 2, 3, 4]);
     const store = new GaussianStore();
@@ -301,7 +345,58 @@ describe("GaussianStore", () => {
       clearedSlots: 3,
     });
   });
+
+  it("updates retained packed slots when their selected LOD level changes", () => {
+    const lod = GaussianLod.build(
+      GaussianOctree.build(data(10, 0, 0, [1]), { leafCapacity: 20 }),
+      {
+        levels: [{ retention: 0.2 }, { retention: 0.5 }, { retention: 1 }],
+      },
+    );
+    let level = 0;
+    const strategy = {
+      pack: () => ({
+        nodeIds: lod.octree.leafNodeIds.slice(),
+        lodLevels: new Uint8Array(lod.octree.leafNodeIds.length).fill(level),
+        gaussianCount:
+          lod.nodes[lod.octree.leafNodeIds[0]!]!.levelCounts[level]!,
+      }),
+    };
+    const store = new GaussianStore({ defaultPackingStrategy: strategy });
+    const cloud = store.addLod(lod);
+    const lodLevels = store.enablePackedLodLevelAttribute();
+    const limits = limitsForGaussianCapacity(10, 0);
+
+    store.pack({ limits });
+    expect(activeAttributeValues(store, lodLevels.array)).toEqual([0, 0]);
+
+    level = 1;
+    cloud.invalidatePacking();
+    store.pack({ limits });
+
+    expect(store.lastPackStats).toMatchObject({
+      reusedSlots: 2,
+      writtenSlots: 3,
+    });
+    expect(activeAttributeValues(store, lodLevels.array)).toEqual([
+      1, 1, 1, 1, 1,
+    ]);
+    expect(lodLevels.bufferAttribute.updateRanges.length).toBeGreaterThan(0);
+  });
 });
+
+function activeAttributeValues(
+  store: GaussianStore,
+  values: Uint32Array,
+): number[] {
+  const scalesOpacity = store.getPackedData().scalesOpacity
+    .array as Float32Array;
+  const result: number[] = [];
+  for (let slot = 0; slot < store.getPackedData().count; slot++) {
+    if (scalesOpacity[slot * 4 + 3]! > 0) result.push(values[slot]!);
+  }
+  return result;
+}
 
 function limitsForGaussianCapacity(capacity: number, shDegree: 0 | 1 | 2 | 3) {
   const bytes = capacity * (shDegree + 1) ** 2 * 16;

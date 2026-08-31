@@ -249,6 +249,22 @@ A capacity or SH-degree change still requires a full buffer rebuild. Inactive
 pool slots have zero opacity and exit the projection kernel before covariance
 or spherical-harmonic work.
 
+Optional packed attributes share the same stable slot index as the core Store
+buffers. The current selected cell LOD is the first built-in attribute and is
+allocated only when explicitly enabled:
+
+```ts
+const lodLevelAttribute = store.enablePackedLodLevelAttribute();
+store.pack({ limits: device.limits });
+
+console.log(store.attributes.get("lodLevel") === lodLevelAttribute); // true
+console.log(lodLevelAttribute.array[packedGaussianIndex]);
+```
+
+The `u32` value is filled for newly packed slots and updated for retained slots
+when their cell changes LOD. Without `enablePackedLodLevelAttribute()`, the
+Store creates and updates no auxiliary attribute buffer.
+
 The sandbox exercises this path continuously. Its cloud uses tiered packing
 around a white marker moving as `x = 5 sin(t)`, and calls `pack()` after each
 0.5 m displacement. Diagnostics show CPU pack time, repack count,

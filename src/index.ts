@@ -50,6 +50,11 @@ export {
   type GaussianStoreSlotRange,
 } from "./GaussianStore";
 export {
+  GaussianStoreAttributes,
+  GaussianStorePackedAttribute,
+  type GaussianStorePackedAttributeFormat,
+} from "./store-attributes";
+export {
   GaussianPass,
   type AntialiasMode,
   type DepthSortMode,

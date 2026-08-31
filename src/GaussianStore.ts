@@ -20,6 +20,16 @@ import {
   GaussianOctree,
   type GaussianOctreeBuildOptions,
 } from "./GaussianOctree";
+import {
+  disposeGaussianStoreAttributes,
+  GaussianStoreAttributes,
+  enableGaussianStoreAttribute,
+} from "./store-attributes/GaussianStoreAttributes";
+import {
+  replaceGaussianStoreAttribute,
+  updateGaussianStoreAttribute,
+} from "./store-attributes/GaussianStorePackedAttribute";
+import type { GaussianStorePackedAttribute } from "./store-attributes";
 
 export interface GaussianDataLoader {
   load(url: string): Promise<GaussianData>;
@@ -120,6 +130,11 @@ interface PlannedCell {
   readonly count: number;
 }
 
+interface PackedCellState {
+  readonly lodLevel: number;
+  readonly slots: Uint32Array;
+}
+
 const MAX_EXACT_FLOAT_INTEGER = 16_777_216;
 
 /**
@@ -131,15 +146,21 @@ export class GaussianStore {
   private readonly loader: GaussianDataLoader;
   readonly budgetingStrategy: GaussianStoreBudgetStrategy;
   readonly defaultPackingStrategy: GaussianLodPackingStrategy;
+  /** Optional attributes indexed by the same gaussianIndex as the packed data. */
+  readonly attributes = new GaussianStoreAttributes();
   private readonly entries: StoreEntry[] = [];
   private readonly cloudList: GaussianCloud[] = [];
   private packedData: GaussianData | null = null;
   private nextObjectId = 0;
   private packedObjectCapacity = 0;
   private gaussianCapacity = 0;
-  private cellSlotsByEntry = new Map<StoreEntry, Map<number, Uint32Array>>();
+  private cellSlotsByEntry = new Map<
+    StoreEntry,
+    Map<number, PackedCellState>
+  >();
   private freeSlots: number[] = [];
   private readonly scratchWrittenSlots: number[] = [];
+  private readonly scratchLodLevelWrittenSlots: number[] = [];
   private readonly scratchReleasedSlots: number[] = [];
   private readonly scratchClearedSlots: number[] = [];
   private slotMarks = new Uint32Array();
@@ -191,6 +212,27 @@ export class GaussianStore {
 
   get clouds(): readonly GaussianCloud[] {
     return this.cloudList;
+  }
+
+  /**
+   * Lazily enables one u32 per packed slot containing its selected cell LOD.
+   * Repeated calls return the same stable wrapper.
+   */
+  enablePackedLodLevelAttribute(): GaussianStorePackedAttribute {
+    this.assertUsable();
+    const existing = this.attributes.get("lodLevel");
+    if (existing !== undefined) return existing;
+    const attribute = this.attributes[enableGaussianStoreAttribute](
+      "lodLevel",
+      "u32",
+    );
+    if (this.packedData !== null) {
+      attribute[replaceGaussianStoreAttribute](
+        new Uint32Array(this.packedData.count),
+      );
+      this.populateAllLodLevels(this.cellSlotsByEntry, attribute.array);
+    }
+    return attribute;
   }
 
   async load(
@@ -478,6 +520,7 @@ export class GaussianStore {
     this.cloudList.length = 0;
     this.packedData?.dispose();
     this.packedData = null;
+    this.attributes[disposeGaussianStoreAttributes]();
   }
 
   private buildPackedData(
@@ -485,7 +528,7 @@ export class GaussianStore {
     slotCapacity: number,
   ): {
     data: GaussianData;
-    cellSlotsByEntry: Map<StoreEntry, Map<number, Uint32Array>>;
+    cellSlotsByEntry: Map<StoreEntry, Map<number, PackedCellState>>;
     freeSlots: number[];
     stats: GaussianStorePackStats;
   } {
@@ -497,12 +540,18 @@ export class GaussianStore {
     const shCoefficients = new Float32Array(
       slotCapacity * coefficientCount * 4,
     );
+    const lodLevelAttribute = this.attributes.get("lodLevel");
+    const lodLevels =
+      lodLevelAttribute === undefined ? null : new Uint32Array(slotCapacity);
 
-    const cellSlotsByEntry = new Map<StoreEntry, Map<number, Uint32Array>>();
+    const cellSlotsByEntry = new Map<
+      StoreEntry,
+      Map<number, PackedCellState>
+    >();
     let slot = 0;
     for (const plan of planned) {
       const { entry } = plan;
-      const entryCells = new Map<number, Uint32Array>();
+      const entryCells = new Map<number, PackedCellState>();
       for (const cell of this.plannedCells(plan)) {
         const cellSlots = new Uint32Array(cell.count);
         for (let local = 0; local < cell.count; local++) {
@@ -519,9 +568,15 @@ export class GaussianStore {
           );
           cellSlots[local] = slot++;
         }
-        entryCells.set(cell.nodeId, cellSlots);
+        entryCells.set(cell.nodeId, {
+          lodLevel: cell.lodLevel,
+          slots: cellSlots,
+        });
       }
       cellSlotsByEntry.set(entry, entryCells);
+    }
+    if (lodLevels !== null) {
+      this.populateAllLodLevels(cellSlotsByEntry, lodLevels);
     }
     const freeSlots = Array.from(
       { length: slotCapacity - slot },
@@ -537,6 +592,9 @@ export class GaussianStore {
       },
       { count: slotCapacity, shDegree: degree, ownsBuffers: true },
     );
+    if (lodLevelAttribute !== undefined && lodLevels !== null) {
+      lodLevelAttribute[replaceGaussianStoreAttribute](lodLevels);
+    }
 
     return {
       data,
@@ -549,7 +607,11 @@ export class GaussianStore {
         reusedSlots: 0,
         writtenSlots: slot,
         clearedSlots: 0,
-        estimatedUploadBytes: slot * (3 * 16 + coefficientCount * 16),
+        estimatedUploadBytes:
+          slot *
+          (3 * 16 +
+            coefficientCount * 16 +
+            (lodLevelAttribute === undefined ? 0 : 4)),
         writtenSlotRanges: slot === 0 ? [] : [{ start: 0, count: slot }],
         clearedSlotRanges: [],
         planningMs: 0,
@@ -563,7 +625,7 @@ export class GaussianStore {
     data: GaussianData,
   ): {
     data: GaussianData;
-    cellSlotsByEntry: Map<StoreEntry, Map<number, Uint32Array>>;
+    cellSlotsByEntry: Map<StoreEntry, Map<number, PackedCellState>>;
     freeSlots: number[];
     stats: GaussianStorePackStats;
   } {
@@ -587,7 +649,8 @@ export class GaussianStore {
     for (const [entry, previousCells] of this.cellSlotsByEntry) {
       const nextCells = targetCells.get(entry);
       if (nextCells === undefined && plannedEntries.has(entry)) continue;
-      for (const [nodeId, previousSlots] of previousCells) {
+      for (const [nodeId, previousCell] of previousCells) {
+        const previousSlots = previousCell.slots;
         const retainedCount = Math.min(
           previousSlots.length,
           nextCells?.get(nodeId)?.count ?? 0,
@@ -600,9 +663,15 @@ export class GaussianStore {
       }
     }
 
-    const cellSlotsByEntry = new Map<StoreEntry, Map<number, Uint32Array>>();
+    const cellSlotsByEntry = new Map<
+      StoreEntry,
+      Map<number, PackedCellState>
+    >();
     const writtenSlots = this.scratchWrittenSlots;
     writtenSlots.length = 0;
+    const lodLevelAttribute = this.attributes.get("lodLevel");
+    const lodLevelWrittenSlots = this.scratchLodLevelWrittenSlots;
+    lodLevelWrittenSlots.length = 0;
     let reusedSlots = 0;
     for (const plan of planned) {
       const previousCells = this.cellSlotsByEntry.get(plan.entry);
@@ -611,9 +680,10 @@ export class GaussianStore {
         reusedSlots += plan.count;
         continue;
       }
-      const nextCells = new Map<number, Uint32Array>();
+      const nextCells = new Map<number, PackedCellState>();
       for (const cell of targetCells.get(plan.entry)?.values() ?? []) {
-        const previousSlots = previousCells?.get(cell.nodeId);
+        const previousCell = previousCells?.get(cell.nodeId);
+        const previousSlots = previousCell?.slots;
         const retainedCount = Math.min(previousSlots?.length ?? 0, cell.count);
         const nextSlots =
           previousSlots !== undefined && previousSlots.length === cell.count
@@ -645,7 +715,19 @@ export class GaussianStore {
           nextSlots[local] = slot;
           writtenSlots.push(slot);
         }
-        nextCells.set(cell.nodeId, nextSlots);
+        if (lodLevelAttribute !== undefined) {
+          const lodStart =
+            previousCell?.lodLevel === cell.lodLevel ? retainedCount : 0;
+          for (let local = lodStart; local < nextSlots.length; local++) {
+            const slot = nextSlots[local]!;
+            lodLevelAttribute.array[slot] = cell.lodLevel;
+            lodLevelWrittenSlots.push(slot);
+          }
+        }
+        nextCells.set(cell.nodeId, {
+          lodLevel: cell.lodLevel,
+          slots: nextSlots,
+        });
       }
       cellSlotsByEntry.set(plan.entry, nextCells);
     }
@@ -663,6 +745,7 @@ export class GaussianStore {
     const clearedSlotCount = clearedSlots.length;
     const writtenSlotRanges = mergedSlotRanges(writtenSlots, 4, 0.15);
     const clearedSlotRanges = mergedSlotRanges(clearedSlots, 16, 0.25);
+    const lodLevelSlotRanges = mergedSlotRanges(lodLevelWrittenSlots, 16, 0.25);
     markRangesUpdated(data.means, writtenSlotRanges, 4);
     markRangesUpdated(data.scalesOpacity, writtenSlotRanges, 4);
     markRangesUpdated(data.scalesOpacity, clearedSlotRanges, 4);
@@ -672,9 +755,11 @@ export class GaussianStore {
       writtenSlotRanges,
       data.shCoefficientCount * 4,
     );
+    lodLevelAttribute?.[updateGaussianStoreAttribute](lodLevelSlotRanges);
 
     const uploadedWrittenSlots = rangeSlotCount(writtenSlotRanges);
     const uploadedClearedSlots = rangeSlotCount(clearedSlotRanges);
+    const uploadedLodLevelSlots = rangeSlotCount(lodLevelSlotRanges);
 
     return {
       data,
@@ -689,7 +774,8 @@ export class GaussianStore {
         clearedSlots: clearedSlotCount,
         estimatedUploadBytes:
           uploadedWrittenSlots * (3 * 16 + data.shCoefficientCount * 16) +
-          uploadedClearedSlots * 16,
+          uploadedClearedSlots * 16 +
+          uploadedLodLevelSlots * 4,
         writtenSlotRanges,
         clearedSlotRanges,
         planningMs: 0,
@@ -710,6 +796,17 @@ export class GaussianStore {
           plan.packing!.lodLevels[index]!
         ]!,
     }));
+  }
+
+  private populateAllLodLevels(
+    cellsByEntry: ReadonlyMap<StoreEntry, ReadonlyMap<number, PackedCellState>>,
+    destination: Uint32Array,
+  ): void {
+    for (const cells of cellsByEntry.values()) {
+      for (const cell of cells.values()) {
+        for (const slot of cell.slots) destination[slot] = cell.lodLevel;
+      }
+    }
   }
 
   private cellSourceIndex(
