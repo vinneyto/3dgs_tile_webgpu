@@ -22,6 +22,10 @@ export {
 } from "./GaussianLod";
 export { LodHelper, type LodHelperOptions } from "./LodHelper";
 export {
+  GaussianLodColorHelper,
+  type GaussianLodColorHelperOptions,
+} from "./GaussianLodColorHelper";
+export {
   MaximumLodPackingStrategy,
   RadialLodPackingStrategy,
   TieredRadialLodPackingStrategy,
@@ -49,6 +53,11 @@ export {
   type GaussianStorePackStats,
   type GaussianStoreSlotRange,
 } from "./GaussianStore";
+export {
+  GaussianStoreAttributes,
+  GaussianStorePackedAttribute,
+  type GaussianStorePackedAttributeFormat,
+} from "./store-attributes";
 export {
   GaussianPass,
   type AntialiasMode,

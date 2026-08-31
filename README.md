@@ -45,6 +45,7 @@ src/
 │   └── SourceFractionBudgetStrategy.ts source-relative budget cap
 ├── OctreeHelper.ts                 local-space octree wireframe helper
 ├── LodHelper.ts                    color-coded active LOD volumes
+├── GaussianLodColorHelper.ts       packed-LOD Gaussian color override
 ├── GaussianStore.ts                packed multi-cloud buffer ownership
 ├── GaussianPass.ts                 Three.js PassNode integration
 ├── createGaussianPass.ts           public pass factory
@@ -248,6 +249,43 @@ console.log(store.lastPackStats);
 A capacity or SH-degree change still requires a full buffer rebuild. Inactive
 pool slots have zero opacity and exit the projection kernel before covariance
 or spherical-harmonic work.
+
+Optional packed attributes share the same stable slot index as the core Store
+buffers. The current selected cell LOD is the first built-in attribute and is
+allocated only when explicitly enabled:
+
+```ts
+const lodLevelAttribute = store.enablePackedLodLevelAttribute();
+store.pack({ limits: device.limits });
+
+console.log(store.attributes.get("lodLevel") === lodLevelAttribute); // true
+console.log(lodLevelAttribute.array[packedGaussianIndex]);
+```
+
+The `u32` value is filled for newly packed slots and updated for retained slots
+when their cell changes LOD. Without `enablePackedLodLevelAttribute()`, the
+Store creates and updates no auxiliary attribute buffer.
+
+`GaussianLodColorHelper` connects that attribute to the raster color slot and
+mixes the LOD tint with each Gaussian's rendered color. LOD 0, 1 and 2 use a
+soft red, amber and green palette by default:
+
+```ts
+const lodColors = new GaussianLodColorHelper(pass, {
+  tintStrength: 0.45,
+});
+
+lodColors.enabled = false; // restore the previous rasterColorNode
+lodColors.enabled = true;
+
+store.pack({ limits: device.limits });
+lodColors.update(); // only rebuilds the node after a full buffer replacement
+```
+
+Incremental LOD repacks keep the same buffer and require no shader rebuild.
+The normal projection path still evaluates the cloud's color, including SH
+when present. Tinting happens in the rasterizer, where the extra LOD buffer
+stays within the WebGPU baseline storage-binding limit.
 
 The sandbox exercises this path continuously. Its cloud uses tiered packing
 around a white marker moving as `x = 5 sin(t)`, and calls `pack()` after each
@@ -510,7 +548,8 @@ http://localhost:5173/?ply=/my-cloud.ply&sort=packed16&dpr=1
 ```
 
 Open **Octree / LOD visualization** in the sandbox HUD to toggle the local
-octree grid and any combination of the color-coded LOD 0, 1 and 2 volumes.
+octree grid or color the rendered splats by their current packed LOD. The
+sandbox uses the packed-attribute helper instead of LOD volume boxes.
 
 Files addressed by URL belong in `sandbox/public/`; the file picker and drag-and-drop do not require copying
 the file into the repository. The loader accepts ASCII, binary little-endian, and binary big-endian scalar PLY

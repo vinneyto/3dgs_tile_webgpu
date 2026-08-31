@@ -19,11 +19,14 @@
           <input id="show-octree" type="checkbox" />
           Octree grid
         </label>
-        <span>LOD volumes</span>
-        <div class="lod-levels">
-          <label><input data-lod-level="0" type="checkbox" /> LOD 0</label>
-          <label><input data-lod-level="1" type="checkbox" /> LOD 1</label>
-          <label><input data-lod-level="2" type="checkbox" /> LOD 2</label>
+        <label>
+          <input id="color-splats-by-lod" type="checkbox" checked />
+          Color splats by LOD
+        </label>
+        <div class="lod-palette" aria-label="LOD color palette">
+          <span data-lod-color="0">LOD 0</span>
+          <span data-lod-color="1">LOD 1</span>
+          <span data-lod-color="2">LOD 2</span>
         </div>
       </details>
       <pre id="metrics" aria-label="WebGPU diagnostics"></pre>

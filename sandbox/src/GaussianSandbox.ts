@@ -15,8 +15,8 @@ import {
   gaussianPass,
   type GaussianData,
   type GaussianCloud,
+  GaussianLodColorHelper,
   GaussianLod,
-  LodHelper,
   OctreeHelper,
   GaussianOctree,
   GaussianStore,
@@ -64,12 +64,11 @@ export class GaussianSandbox {
   private store: GaussianStore | null = null;
   private helperPass: ReturnType<typeof scenePass> | null = null;
   private readonly octreeHelpers: OctreeHelper[] = [];
-  private readonly lodHelpers: LodHelper[] = [];
   private octreeHelpersVisible = false;
-  private lodHelperLevels: readonly number[] = [];
+  private lodColoringEnabled = true;
   private primaryCloud: GaussianCloud | null = null;
   private primaryPackingStrategy: TieredRadialLodPackingStrategy | null = null;
-  private primaryLodHelper: LodHelper | null = null;
+  private lodColorHelper: GaussianLodColorHelper | null = null;
   private packingCenterMarker: Mesh<SphereGeometry, MeshBasicMaterial> | null =
     null;
   private lastPackedCenterX = Number.NaN;
@@ -156,22 +155,10 @@ export class GaussianSandbox {
     for (const helper of this.octreeHelpers) helper.visible = visible;
   }
 
-  setLodHelperLevels(levels: readonly number[]): void {
-    const wasHidden = this.lodHelperLevels.length === 0;
-    const currentPacking = this.primaryCloud?.lodPacking ?? null;
-    this.lodHelperLevels = [...levels];
-    if (
-      wasHidden &&
-      levels.length > 0 &&
-      this.primaryLodHelper !== null &&
-      currentPacking !== null &&
-      this.primaryLodHelper.lodPacking !== currentPacking
-    ) {
-      this.primaryLodHelper.setPacking(currentPacking);
-    }
-    for (const helper of this.lodHelpers) {
-      helper.setLevels(levels);
-      helper.visible = levels.length > 0;
+  setLodColoringEnabled(enabled: boolean): void {
+    this.lodColoringEnabled = enabled;
+    if (this.lodColorHelper !== null) {
+      this.lodColorHelper.enabled = enabled;
     }
   }
 
@@ -232,6 +219,8 @@ export class GaussianSandbox {
     primaryPackingStrategy: TieredRadialLodPackingStrategy,
     limits: GaussianStorePackLimits,
   ): void {
+    this.lodColorHelper?.dispose();
+    this.lodColorHelper = null;
     this.pass?.dispose();
     this.helperPass?.dispose();
     this.pipeline?.dispose();
@@ -239,7 +228,6 @@ export class GaussianSandbox {
     this.store?.dispose();
     this.primaryCloud = null;
     this.primaryPackingStrategy = null;
-    this.primaryLodHelper = null;
     this.packingCenterMarker = null;
 
     const primaryData = primaryCloud.lod!.octree.data;
@@ -250,7 +238,7 @@ export class GaussianSandbox {
     this.primaryPackingStrategy = primaryPackingStrategy;
     this.lastPackedCenterX = 0;
     this.scene.add(primaryCloud);
-    this.primaryLodHelper = this.addSpatialHelpers(primaryCloud);
+    this.addSpatialHelpers(primaryCloud);
     this.addPackingCenterMarker(primaryCloud, primaryBounds);
     this.frameCloud(primaryBounds);
 
@@ -273,6 +261,9 @@ export class GaussianSandbox {
       profileKernels:
         new URLSearchParams(location.search).get("profile") === "kernels",
       radixBackend: readRadixBackend(),
+    });
+    this.lodColorHelper = new GaussianLodColorHelper(this.pass, {
+      enabled: this.lodColoringEnabled,
     });
     this.debugPanel.setPass(this.pass);
     this.pipeline = new RenderPipeline(this.renderer);
@@ -330,11 +321,9 @@ export class GaussianSandbox {
     cloud.invalidatePacking();
     const started = performance.now();
     store.pack({ limits });
+    this.lodColorHelper?.update();
     const duration = performance.now() - started;
     this.lastPackedCenterX = centerX;
-    if (this.lodHelperLevels.length > 0 && cloud.lodPacking !== null) {
-      this.primaryLodHelper?.setPacking(cloud.lodPacking);
-    }
     const stats = store.lastPackStats;
     if (stats !== null) this.debugPanel.recordPack(stats, duration, centerX);
   }
@@ -359,28 +348,19 @@ export class GaussianSandbox {
     this.packingCenterMarker = marker;
   }
 
-  private addSpatialHelpers(cloud: GaussianCloud): LodHelper | null {
-    if (cloud.lod === null || cloud.lodPacking === null) return null;
+  private addSpatialHelpers(cloud: GaussianCloud): void {
+    if (cloud.lod === null) return;
     const octreeHelper = new OctreeHelper(cloud.lod.octree, {
       opacity: 0.42,
     });
     octreeHelper.visible = this.octreeHelpersVisible;
-    const lodHelper = new LodHelper(cloud.lod, cloud.lodPacking, {
-      levels: this.lodHelperLevels,
-      opacity: 0.12,
-    });
-    lodHelper.visible = this.lodHelperLevels.length > 0;
-    cloud.add(octreeHelper, lodHelper);
+    cloud.add(octreeHelper);
     this.octreeHelpers.push(octreeHelper);
-    this.lodHelpers.push(lodHelper);
-    return lodHelper;
   }
 
   private disposeSpatialHelpers(): void {
     for (const helper of this.octreeHelpers) helper.dispose();
-    for (const helper of this.lodHelpers) helper.dispose();
     this.octreeHelpers.length = 0;
-    this.lodHelpers.length = 0;
     if (this.packingCenterMarker !== null) {
       this.packingCenterMarker.geometry.dispose();
       this.packingCenterMarker.material.dispose();
