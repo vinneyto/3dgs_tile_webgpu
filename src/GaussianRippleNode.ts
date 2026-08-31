@@ -28,6 +28,8 @@ export interface GaussianRippleNodeOptions {
   speed?: number;
   /** Width of the moving wave packet. Defaults to 2.5 wavelengths. */
   packetWidth?: number;
+  /** Vertical Gaussian falloff width. Defaults to 2 wavelengths. */
+  verticalWidth?: number;
   /** Exponential decay per second. Defaults to 0.7. */
   decay?: number;
   /** Gaussian hit radius in standard deviations. Defaults to 3. */
@@ -55,6 +57,10 @@ export function createGaussianRippleNode(
     options.packetWidth ?? wavelength * 2.5,
     "packetWidth",
   );
+  const verticalWidth = positive(
+    options.verticalWidth ?? wavelength * 2,
+    "verticalWidth",
+  );
   const decay = nonNegative(options.decay ?? 0.7, "decay");
   const raycastRadiusScale = positive(
     options.raycastRadiusScale ?? 3,
@@ -72,12 +78,19 @@ export function createGaussianRippleNode(
     .negate()
     .exp()
     .mul(elapsed.mul(-decay).exp());
+  const verticalEnvelope = gaussianPositionLocal.y
+    .sub(centerNode.y)
+    .div(verticalWidth)
+    .pow2()
+    .negate()
+    .exp();
   const carrier = signedDistance
     .mul((Math.PI * 2) / wavelength)
     .add(Math.PI * 0.5)
     .sin();
   const displacement = carrier
     .mul(envelope)
+    .mul(verticalEnvelope)
     .mul(amplitude)
     .mul(options.strengthNode ?? float(1));
 

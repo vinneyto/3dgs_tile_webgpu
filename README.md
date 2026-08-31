@@ -420,11 +420,13 @@ Call `clicks.abort()` when the controller is no longer needed. Internally,
 Three.js TSL's built-in `time` node supplies a renderer-managed uniform in
 seconds. Concentric rings spread from the click through local `XZ`, displace
 centers along local `Y`, and decay both away from the moving front and over
-time. Raycasting uses the base CPU octree rather than the temporarily deformed
-GPU positions.
+time. A Gaussian falloff around the clicked local `Y` plane keeps objects above
+or below that surface from moving with it. Raycasting uses the base CPU octree
+rather than the temporarily deformed GPU positions.
 The default amplitude and wavelength are both `0.05` local-space units, which
 means 5 cm for a meter-scaled scene; both can be overridden in the factory
-options.
+options. The default vertical falloff width is `0.10`, also configurable with
+`verticalWidth`.
 
 `rasterGaussianCoord` is a whitened ellipse coordinate, so its squared length
 is the conic quadratic form and length `1` is the one-sigma contour.

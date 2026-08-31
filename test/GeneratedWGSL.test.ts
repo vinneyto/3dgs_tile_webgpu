@@ -120,7 +120,7 @@ describe("generated Gaussian WGSL", () => {
     expect(rasterSource).toContain("vec3<f32>");
   });
 
-  it("builds a time-driven concentric position wave in projection", () => {
+  it("builds a vertically localized concentric wave in projection", () => {
     const data = oneGaussian();
     const octree = GaussianOctree.build(data);
     const lod = GaussianLod.build(octree, {
@@ -143,6 +143,7 @@ describe("generated Gaussian WGSL", () => {
 
     expect(projectionSource).toContain("sin(");
     expect(projectionSource).toContain("exp(");
+    expect(projectionSource.match(/exp\(/g)?.length).toBeGreaterThanOrEqual(3);
     expect(projectionSource).toContain("length(");
     expect(projectionSource).toContain("gaussianPositionLocalValue");
     expect(projectionSource.match(/var<storage/g)).toHaveLength(8);
