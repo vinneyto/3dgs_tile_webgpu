@@ -20,11 +20,11 @@ export interface GaussianRippleNodeOptions {
   signal: AbortSignal;
   /** Optional runtime multiplier, useful for an enable/disable uniform. */
   strengthNode?: Node<"float">;
-  /** Peak local-space displacement. Defaults to 0.8% of the cloud radius. */
+  /** Peak local-space displacement. Defaults to 0.05 (5 cm when units are meters). */
   amplitude?: number;
-  /** Distance between carrier rings. Defaults to 5.5% of the cloud radius. */
+  /** Distance between carrier rings. Defaults to 0.05 (5 cm when units are meters). */
   wavelength?: number;
-  /** Local-space propagation speed per second. Defaults to 45% of the cloud radius. */
+  /** Local-space propagation speed per second. Defaults to 0.35. */
   speed?: number;
   /** Width of the moving wave packet. Defaults to 2.5 wavelengths. */
   packetWidth?: number;
@@ -48,17 +48,9 @@ export function createGaussianRippleNode(
     );
   }
 
-  const size = lod.octree.bounds.getSize(new Vector3());
-  const cloudRadius = Math.max(size.length() * 0.5, 0.1);
-  const amplitude = positive(
-    options.amplitude ?? cloudRadius * 0.008,
-    "amplitude",
-  );
-  const wavelength = positive(
-    options.wavelength ?? cloudRadius * 0.055,
-    "wavelength",
-  );
-  const speed = positive(options.speed ?? cloudRadius * 0.45, "speed");
+  const amplitude = positive(options.amplitude ?? 0.05, "amplitude");
+  const wavelength = positive(options.wavelength ?? 0.05, "wavelength");
+  const speed = positive(options.speed ?? 0.35, "speed");
   const packetWidth = positive(
     options.packetWidth ?? wavelength * 2.5,
     "packetWidth",

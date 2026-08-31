@@ -421,6 +421,9 @@ Three.js TSL's built-in `time` node supplies a renderer-managed uniform in
 seconds. The ripple travels in local `XZ`, displaces centers along local `Y`,
 and decays both away from its moving front and over time. Raycasting uses the
 base CPU octree rather than the temporarily deformed GPU positions.
+The default amplitude and wavelength are both `0.05` local-space units, which
+means 5 cm for a meter-scaled scene; both can be overridden in the factory
+options.
 
 `rasterGaussianCoord` is a whitened ellipse coordinate, so its squared length
 is the conic quadratic form and length `1` is the one-sigma contour.
