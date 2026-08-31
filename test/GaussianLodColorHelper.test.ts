@@ -18,25 +18,36 @@ const TEST_LIMITS = {
 describe("GaussianLodColorHelper", () => {
   it("overrides and restores the GaussianPass color node", () => {
     const { pass, store } = createPass();
-    const original = pass.gaussianColorNode;
+    const original = pass.rasterColorNode;
     const helper = new GaussianLodColorHelper(pass);
 
     expect(store.attributes.get("lodLevel")).toBe(helper.lodLevelAttribute);
-    expect(pass.gaussianColorNode).not.toBe(original);
+    expect(pass.rasterColorNode).not.toBe(original);
 
     helper.enabled = false;
-    expect(pass.gaussianColorNode).toBe(original);
+    expect(pass.rasterColorNode).toBe(original);
 
     helper.enabled = true;
-    expect(pass.gaussianColorNode).not.toBe(original);
+    expect(pass.rasterColorNode).not.toBe(original);
     helper.dispose();
-    expect(pass.gaussianColorNode).toBe(original);
+    expect(pass.rasterColorNode).toBe(original);
+  });
+
+  it("validates the LOD tint strength", () => {
+    const { pass } = createPass();
+
+    expect(
+      () => new GaussianLodColorHelper(pass, { tintStrength: -0.01 }),
+    ).toThrow(RangeError);
+    expect(
+      () => new GaussianLodColorHelper(pass, { tintStrength: 1.01 }),
+    ).toThrow(RangeError);
   });
 
   it("rebuilds its color graph after a full Store buffer replacement", () => {
     const { pass, store } = createPass();
     const helper = new GaussianLodColorHelper(pass);
-    const previousNode = pass.gaussianColorNode;
+    const previousNode = pass.rasterColorNode;
     const previousBuffer = helper.lodLevelAttribute.bufferAttribute;
 
     store.add(oneGaussian());
@@ -44,7 +55,7 @@ describe("GaussianLodColorHelper", () => {
     helper.update();
 
     expect(helper.lodLevelAttribute.bufferAttribute).not.toBe(previousBuffer);
-    expect(pass.gaussianColorNode).not.toBe(previousNode);
+    expect(pass.rasterColorNode).not.toBe(previousNode);
   });
 });
 

@@ -266,13 +266,16 @@ The `u32` value is filled for newly packed slots and updated for retained slots
 when their cell changes LOD. Without `enablePackedLodLevelAttribute()`, the
 Store creates and updates no auxiliary attribute buffer.
 
-`GaussianLodColorHelper` connects that attribute to the projection color slot.
-LOD 0, 1 and 2 use a soft red, amber and green palette by default:
+`GaussianLodColorHelper` connects that attribute to the raster color slot and
+mixes the LOD tint with each Gaussian's rendered color. LOD 0, 1 and 2 use a
+soft red, amber and green palette by default:
 
 ```ts
-const lodColors = new GaussianLodColorHelper(pass);
+const lodColors = new GaussianLodColorHelper(pass, {
+  tintStrength: 0.45,
+});
 
-lodColors.enabled = false; // restore the previous gaussianColorNode
+lodColors.enabled = false; // restore the previous rasterColorNode
 lodColors.enabled = true;
 
 store.pack({ limits: device.limits });
@@ -280,9 +283,9 @@ lodColors.update(); // only rebuilds the node after a full buffer replacement
 ```
 
 Incremental LOD repacks keep the same buffer and require no shader rebuild.
-Because the helper completely replaces SH color, TSL removes the unused SH
-evaluation and binding; the LOD buffer takes its place without exceeding the
-eight-storage-buffer baseline limit.
+The normal projection path still evaluates the cloud's color, including SH
+when present. Tinting happens in the rasterizer, where the extra LOD buffer
+stays within the WebGPU baseline storage-binding limit.
 
 The sandbox exercises this path continuously. Its cloud uses tiered packing
 around a white marker moving as `x = 5 sin(t)`, and calls `pack()` after each

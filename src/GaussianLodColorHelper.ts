@@ -4,15 +4,17 @@ import {
   type Node,
   type StorageBufferAttribute,
 } from "three/webgpu";
-import { storage, uint, vec3 } from "three/tsl";
+import { float, mix, storage, uint, vec3 } from "three/tsl";
 
 import type { GaussianPass } from "./GaussianPass";
-import { gaussianIndex } from "./nodes/GaussianContextNodes";
+import { rasterGaussianIndex } from "./nodes/GaussianContextNodes";
 import type { GaussianStorePackedAttribute } from "./store-attributes";
 
 export interface GaussianLodColorHelperOptions {
   /** Coarsest-to-finest colors. Extra LOD levels cycle the palette. */
   colors?: readonly ColorRepresentation[];
+  /** Amount of LOD tint mixed into the rendered Gaussian color. Defaults to 0.45. */
+  tintStrength?: number;
   /** Defaults to true. */
   enabled?: boolean;
 }
@@ -21,10 +23,11 @@ const DEFAULT_COLORS: readonly ColorRepresentation[] = [
   0xe85d68, 0xf2b84b, 0x4ac58b,
 ];
 
-/** Replaces GaussianPass color with a packed current-LOD debug palette. */
+/** Tints GaussianPass raster color with a packed current-LOD debug palette. */
 export class GaussianLodColorHelper {
   readonly isGaussianLodColorHelper = true;
   readonly lodLevelAttribute: GaussianStorePackedAttribute;
+  readonly tintStrength: number;
 
   private readonly colors: readonly ColorRepresentation[];
   private baseColorNode: Node | null = null;
@@ -40,7 +43,18 @@ export class GaussianLodColorHelper {
     if (options.colors !== undefined && options.colors.length === 0) {
       throw new RangeError("Gaussian LOD color palette must not be empty");
     }
+    const tintStrength = options.tintStrength ?? 0.45;
+    if (
+      !Number.isFinite(tintStrength) ||
+      tintStrength < 0 ||
+      tintStrength > 1
+    ) {
+      throw new RangeError(
+        "Gaussian LOD tint strength must be between 0 and 1",
+      );
+    }
     this.colors = [...(options.colors ?? DEFAULT_COLORS)];
+    this.tintStrength = tintStrength;
     this.lodLevelAttribute = pass.gaussianStore.enablePackedLodLevelAttribute();
     this.enabled = options.enabled ?? true;
   }
@@ -53,13 +67,13 @@ export class GaussianLodColorHelper {
     this.assertUsable();
     if (value === this.active) return;
     if (value) {
-      this.baseColorNode = this.pass.gaussianColorNode;
+      this.baseColorNode = this.pass.rasterColorNode;
       this.active = true;
       this.rebuildColorNode();
       return;
     }
-    if (this.pass.gaussianColorNode === this.helperColorNode) {
-      this.pass.gaussianColorNode = this.baseColorNode!;
+    if (this.pass.rasterColorNode === this.helperColorNode) {
+      this.pass.rasterColorNode = this.baseColorNode!;
     }
     this.active = false;
     this.baseColorNode = null;
@@ -78,8 +92,8 @@ export class GaussianLodColorHelper {
 
   dispose(): void {
     if (this.disposed) return;
-    if (this.active && this.pass.gaussianColorNode === this.helperColorNode) {
-      this.pass.gaussianColorNode = this.baseColorNode!;
+    if (this.active && this.pass.rasterColorNode === this.helperColorNode) {
+      this.pass.rasterColorNode = this.baseColorNode!;
     }
     this.active = false;
     this.baseColorNode = null;
@@ -92,7 +106,7 @@ export class GaussianLodColorHelper {
     const attribute = this.lodLevelAttribute.bufferAttribute;
     const level = storage(attribute, "uint", attribute.count)
       .toReadOnly()
-      .element(gaussianIndex)
+      .element(rasterGaussianIndex)
       .mod(uint(this.colors.length));
     const palette = this.colors.map((value) => {
       const rgb = new Color(value).getRGB(
@@ -101,13 +115,18 @@ export class GaussianLodColorHelper {
       );
       return vec3(rgb.r, rgb.g, rgb.b);
     });
-    let color: Node<"vec3"> = palette[palette.length - 1]!;
+    let tint: Node<"vec3"> = palette[palette.length - 1]!;
     for (let index = palette.length - 2; index >= 0; index--) {
-      color = level.equal(uint(index)).select(palette[index]!, color);
+      tint = level.equal(uint(index)).select(palette[index]!, tint);
     }
+    const color = mix(
+      this.baseColorNode! as Node<"vec3">,
+      tint,
+      float(this.tintStrength),
+    );
     this.boundBuffer = attribute;
     this.helperColorNode = color;
-    this.pass.gaussianColorNode = color;
+    this.pass.rasterColorNode = color;
   }
 
   private assertUsable(): void {

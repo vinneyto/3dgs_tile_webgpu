@@ -117,7 +117,7 @@ describe("generated Gaussian WGSL", () => {
     expect(rasterSource).toContain("vec3<f32>");
   });
 
-  it("replaces the unused SH binding with packed LOD color lookup", () => {
+  it("mixes projected color with packed LOD tint in the rasterizer", () => {
     const store = new GaussianStore();
     store.add(oneGaussian());
     store.pack({ limits: TEST_LIMITS });
@@ -125,30 +125,16 @@ describe("generated Gaussian WGSL", () => {
       hasFeature: () => false,
     } as unknown as WebGPURenderer;
     const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
-    new GaussianLodColorHelper(pass);
+    new GaussianLodColorHelper(pass, { tintStrength: 0.45 });
     const nodes = createDefaultGaussianNodeSlots();
-    nodes.gaussianColorNode = pass.gaussianColorNode;
-    const packed = store.getPackedData();
-    const frame = new FrameUniforms(new PerspectiveCamera(), [0, 0, 0, 0]);
-    const objects = new ObjectFrameState(
-      new PerspectiveCamera(),
-      store,
-      packed.count,
-    );
-    const projection = new ProjectionStage(
-      packed,
-      frame,
-      objects,
-      "compensated",
-      nodes,
-    );
+    nodes.rasterColorNode = pass.rasterColorNode;
+    const { projectionSource, rasterSource } = buildPipeline(nodes);
 
-    const source = buildCompute(
-      (projection as unknown as { computeNode: unknown }).computeNode,
-    );
-
-    expect(source.match(/var<storage/g)).toHaveLength(8);
-    expect(source).toContain("% 3u");
+    expect(projectionSource).toContain("evaluate_gaussian_sh");
+    expect(projectionSource.match(/var<storage/g)).toHaveLength(8);
+    expect(rasterSource).toContain("% 3u");
+    expect(rasterSource).toContain("0.45");
+    expect(rasterSource.match(/var<storage/g)).toHaveLength(6);
   });
 });
 
