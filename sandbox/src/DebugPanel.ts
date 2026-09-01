@@ -148,10 +148,15 @@ export class DebugPanel {
         ? "requested      —"
         : `requested      ${formatInteger(this.stats.requestedIntersections)}  overflow ${this.stats.overflow ? "YES" : "no"}`;
     const timings = this.timingInspector?.latest ?? null;
+    const profileKernels = debug?.profileKernels ?? false;
     const timestampLine =
       this.timingInspector === null
-        ? "GPU timestamp  unavailable on this adapter"
-        : `GPU compute    ${formatMs(timings?.computeMs ?? null)}  present ${formatMs(timings?.renderMs ?? null)}`;
+        ? profileKernels
+          ? "GPU timestamp  unavailable: adapter lacks timestamp-query"
+          : "GPU timings    ?profile=kernels enables timestamp profiling"
+        : timings === null
+          ? "GPU timings    waiting for timestamp resolution"
+          : `GPU compute    ${formatMs(timings.computeMs)}  present ${formatMs(timings.renderMs)}`;
     const pipelineLine =
       debug === null || !debug.initialized
         ? "pipeline       waiting for first frame"
@@ -161,6 +166,7 @@ export class DebugPanel {
         ? "stages         —"
         : `stages         rebuilds ${debug.tileStageRebuilds}  radix ${debug.radixBackend} depth ${debug.depthRadixPasses} + tile ${debug.tileRadixPasses}`;
     const packingLines = this.packStatsLines();
+    const profileLines = this.profileStatsLines(profileKernels);
 
     this.element.textContent = [
       `FPS ${fps.toFixed(1).padStart(5)}  frame ${formatMs(this.averageFrameMs)}`,
@@ -172,6 +178,7 @@ export class DebugPanel {
       requestedLine,
       pipelineLine,
       stagesLine,
+      ...profileLines,
       "",
       ...packingLines,
       "",
@@ -185,7 +192,25 @@ export class DebugPanel {
         : "stats readback disabled · ?debug=0 disables diagnostics",
     ].join("\n");
 
-    this.renderKernelTimings(debug?.profileKernels ?? false);
+    this.renderKernelTimings(profileKernels);
+  }
+
+  private profileStatsLines(profileKernels: boolean): string[] {
+    if (!profileKernels) {
+      return ["tile profile   ?profile=kernels enables distribution stats"];
+    }
+    const profile = this.stats?.profile ?? null;
+    if (profile === null) {
+      return ["tile profile   waiting for GPU readback"];
+    }
+    const loads = profile.tileLoads;
+    return [
+      `tile splats    max ${formatInteger(loads.max)}  mean ${loads.mean.toFixed(1)}  median ${loads.median.toFixed(1)}`,
+      `percentiles    p95 ${formatInteger(loads.p95)}  p99 ${formatInteger(loads.p99)}`,
+      `heavy tiles    >256 ${formatInteger(loads.tilesOver256)}  >512 ${formatInteger(loads.tilesOver512)}`,
+      `               >1024 ${formatInteger(loads.tilesOver1024)}  >2048 ${formatInteger(loads.tilesOver2048)}`,
+      `subpixel       zero-pixel ${formatInteger(profile.zeroPixelSubpixelSplats)}`,
+    ];
   }
 
   private packStatsLines(): string[] {
@@ -208,7 +233,9 @@ export class DebugPanel {
     if (this.timingInspector === null) {
       setTextPreservingScroll(
         this.kernelElement,
-        "Timestamp queries are unavailable.",
+        profileKernels
+          ? "Timestamp queries are unavailable on this adapter.\nThe tile and subpixel profile remains available above."
+          : "Open with ?profile=kernels to collect individual GPU kernel timings and distribution metrics.",
       );
       return;
     }

@@ -114,18 +114,18 @@ export class GaussianSandbox {
   ): Promise<GaussianSandbox> {
     if (!navigator.gpu)
       throw new Error("WebGPU is unavailable in this browser");
-    const debugEnabled =
-      new URLSearchParams(location.search).get("debug") !== "0";
-    const statsEnabled =
-      new URLSearchParams(location.search).get("stats") !== "0";
+    const parameters = new URLSearchParams(location.search);
+    const debugEnabled = parameters.get("debug") !== "0";
+    const profileEnabled = parameters.get("profile") === "kernels";
+    const statsEnabled = profileEnabled || parameters.get("stats") !== "0";
     const renderer = new WebGPURenderer({
       antialias: false,
-      trackTimestamp: debugEnabled,
+      trackTimestamp: profileEnabled,
     });
     await renderer.init();
     renderer.setClearColor(0x000000, 0);
     const timingInspector =
-      debugEnabled && renderer.hasFeature("timestamp-query")
+      profileEnabled && renderer.hasFeature("timestamp-query")
         ? new KernelTimingInspector()
         : null;
     if (timingInspector !== null) renderer.inspector = timingInspector;

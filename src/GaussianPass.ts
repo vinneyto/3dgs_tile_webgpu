@@ -371,6 +371,7 @@ export class GaussianPass extends PassNode {
       requestedIntersections: 0,
       intersectionCapacity: this.intersectionCapacity,
       overflow: false,
+      profile: null,
     });
   }
 
@@ -446,8 +447,10 @@ export type {
   DepthSortMode,
   GaussianPassDebugInfo,
   GaussianPassOptions,
+  GaussianPassProfileStats,
   GaussianPassResources,
   GaussianPassStats,
+  GaussianTileLoadStats,
   RadixBackend,
   ResolvedRadixBackend,
 } from "./pipeline/types";

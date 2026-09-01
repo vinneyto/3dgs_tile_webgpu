@@ -64,8 +64,10 @@ export {
   type DepthSortMode,
   type GaussianPassDebugInfo,
   type GaussianPassOptions,
+  type GaussianPassProfileStats,
   type GaussianPassResources,
   type GaussianPassStats,
+  type GaussianTileLoadStats,
   type RadixBackend,
   type ResolvedRadixBackend,
 } from "./GaussianPass";

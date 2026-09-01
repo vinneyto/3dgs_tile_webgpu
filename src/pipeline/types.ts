@@ -22,7 +22,7 @@ export interface GaussianPassOptions {
   outputDepth?: boolean;
   /** Encoding of reconstructed SH RGB values. The pass converts it to Three.js working-linear; canonical 3DGS PLY is sRGB. */
   colorSpace?: ColorSpace;
-  /** Split normally batched compute groups so timestamp tools can measure every kernel. */
+  /** Enable individual kernel profiling plus tile-load and subpixel coverage diagnostics. */
   profileKernels?: boolean;
   /** Select subgroup-accelerated or portable workgroup radix. Defaults to feature-based auto detection. */
   radixBackend?: RadixBackend;
@@ -34,6 +34,25 @@ export interface GaussianPassStats {
   requestedIntersections: number;
   intersectionCapacity: number;
   overflow: boolean;
+  /** Expensive distribution/readback metrics available with profileKernels. */
+  profile: GaussianPassProfileStats | null;
+}
+
+export interface GaussianTileLoadStats {
+  max: number;
+  mean: number;
+  median: number;
+  p95: number;
+  p99: number;
+  tilesOver256: number;
+  tilesOver512: number;
+  tilesOver1024: number;
+  tilesOver2048: number;
+}
+
+export interface GaussianPassProfileStats {
+  tileLoads: GaussianTileLoadStats;
+  zeroPixelSubpixelSplats: number;
 }
 
 /** CPU-side lifecycle counters. Reading these values never synchronizes with the GPU. */

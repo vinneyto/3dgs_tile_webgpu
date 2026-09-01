@@ -24,6 +24,7 @@ import {
 import { FrameUniforms } from "../src/pipeline/FrameUniforms";
 import { ObjectFrameState } from "../src/pipeline/ObjectFrameState";
 import { ProjectionStage } from "../src/pipeline/ProjectionStage";
+import { ProfileDiagnosticsStage } from "../src/pipeline/ProfileDiagnosticsStage";
 import { TileRasterizer } from "../src/pipeline/TileRasterizer";
 
 const TEST_LIMITS = {
@@ -115,6 +116,39 @@ describe("generated Gaussian WGSL", () => {
     expect(projectionSource).toContain("vec3<f32>( 1.0, 0.75, 0.5 )");
     expect(rasterSource).toContain("0.25");
     expect(rasterSource).toContain("vec3<f32>");
+  });
+
+  it("builds the profiling-only subpixel coverage kernel", () => {
+    const data = oneGaussian();
+    const store = new GaussianStore();
+    store.add(data);
+    store.pack({ limits: TEST_LIMITS });
+    const packed = store.getPackedData();
+    const camera = new PerspectiveCamera();
+    const frame = new FrameUniforms(camera, [0, 0, 0, 0]);
+    const objects = new ObjectFrameState(camera, store, packed.count);
+    const projection = new ProjectionStage(
+      packed,
+      frame,
+      objects,
+      "compensated",
+      createDefaultGaussianNodeSlots(),
+    );
+    const diagnostics = new ProfileDiagnosticsStage(
+      {} as never,
+      packed.count,
+      projection.projectedMean,
+      projection.projectedConic,
+      frame,
+    );
+
+    const source = buildCompute(
+      (diagnostics as unknown as { computeNode: unknown }).computeNode,
+    );
+
+    expect(source).toContain("profile_subpixel_coverage");
+    expect(source).toContain("zero_pixel_flags");
+    expect(source).toContain("pixel_x");
   });
 
   it("mixes projected color with packed LOD tint in the rasterizer", () => {
