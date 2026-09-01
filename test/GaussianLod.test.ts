@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Ray, StorageBufferAttribute, Vector3 } from "three/webgpu";
 
 import { GaussianData } from "../src/GaussianData";
@@ -71,6 +71,87 @@ describe("GaussianLod", () => {
     expect(Array.from(root.sortedGaussianIndices.slice(0, 3))).toEqual([
       9, 8, 7,
     ]);
+  });
+
+  it("stores source indices only in leaf LOD nodes", () => {
+    const source = gaussianData(
+      Array.from({ length: 16 }, (_, index) => [index - 8, index % 2, 0]),
+    );
+    const octree = GaussianOctree.build(source, { leafCapacity: 2 });
+    const lod = GaussianLod.build(octree, {
+      levels: [{ retention: 0.5 }, { retention: 1 }],
+    });
+
+    const internalNodeIds = octree.nodes
+      .filter((node) => !node.isLeaf)
+      .map((node) => node.id);
+    expect(internalNodeIds.length).toBeGreaterThan(0);
+    for (const nodeId of internalNodeIds) {
+      expect(lod.nodes[nodeId]!.sortedGaussianIndices).toHaveLength(0);
+      expect(Array.from(lod.nodes[nodeId]!.levelCounts)).toEqual([0, 0]);
+    }
+    expect(
+      Array.from(octree.leafNodeIds).reduce(
+        (count, nodeId) =>
+          count + lod.nodes[nodeId]!.sortedGaussianIndices.length,
+        0,
+      ),
+    ).toBe(source.count);
+  });
+
+  it("rejects packings that reference internal octree nodes", () => {
+    const octree = GaussianOctree.build(
+      gaussianData([
+        [-1, 0, 0],
+        [1, 0, 0],
+      ]),
+      { leafCapacity: 1 },
+    );
+    const lod = GaussianLod.build(octree);
+    const packing = {
+      nodeIds: Uint32Array.of(octree.rootNode),
+      lodLevels: Uint8Array.of(0),
+      gaussianCount: 0,
+    };
+
+    expect(() => lod.indicesForPacking(packing)).toThrow(/leaf nodes/);
+    expect(() =>
+      lod.raycast(
+        new Ray(new Vector3(0, 0, 2), new Vector3(0, 0, -1)),
+        packing,
+      ),
+    ).toThrow(/leaf nodes/);
+  });
+
+  it("raycasts selected leaf prefixes without building one candidate list", () => {
+    const octree = GaussianOctree.build(
+      gaussianData(
+        [
+          [-1, 0, 0],
+          [1, 0, 0],
+        ],
+        [1, 1],
+      ),
+      { leafCapacity: 1 },
+    );
+    const lod = GaussianLod.build(octree);
+    const packing = new MaximumLodPackingStrategy().pack({
+      lod,
+      maxGaussians: 2,
+    });
+    const ray = new Ray(new Vector3(0, 0, 2), new Vector3(0, 0, -1));
+    const expected = octree.raycastIndices(ray, lod.indicesForPacking(packing));
+    const raycastIndices = vi.spyOn(octree, "raycastIndices");
+
+    const actual = lod.raycast(ray, packing);
+
+    expect(raycastIndices).not.toHaveBeenCalled();
+    expect(actual.map(({ gaussianIndex }) => gaussianIndex)).toEqual(
+      expected.map(({ gaussianIndex }) => gaussianIndex),
+    );
+    expect(actual.map(({ distance }) => distance)).toEqual(
+      expected.map(({ distance }) => distance),
+    );
   });
 
   it("packs maximum detail and respects a radial object budget", () => {

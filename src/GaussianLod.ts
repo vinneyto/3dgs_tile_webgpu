@@ -1,4 +1,4 @@
-import type { Ray } from "three/webgpu";
+import { Vector3, type Ray } from "three/webgpu";
 
 import {
   GaussianOctree,
@@ -26,7 +26,11 @@ export interface GaussianLodPacking {
   readonly gaussianCount: number;
 }
 
-/** LOD representations for one spatial cell, stored as nested prefixes. */
+/**
+ * LOD representations for one leaf cell, stored as nested prefixes. Internal
+ * octree nodes keep an empty representation so source indices are not copied
+ * into every ancestor.
+ */
 export class GaussianLodNode {
   constructor(
     readonly octreeNodeId: number,
@@ -41,7 +45,7 @@ const DEFAULT_LEVELS: readonly GaussianLodLevelOptions[] = [
   { retention: 1 },
 ];
 
-/** Full CPU-side LOD hierarchy built over a GaussianOctree. */
+/** Leaf-cell LOD representations built over a GaussianOctree. */
 export class GaussianLod {
   static build(
     octree: GaussianOctree,
@@ -69,25 +73,21 @@ export class GaussianLod {
       scores[index] = Number.isFinite(score) ? score : -Infinity;
     }
 
-    const mutableNodes = new Array<GaussianLodNode>(octree.nodes.length);
-    const buildNode = (nodeId: number): Uint32Array => {
-      const octreeNode = octree.nodes[nodeId]!;
-      let sortedIndices: Uint32Array;
-      if (octreeNode.gaussianIndices !== null) {
-        sortedIndices = Uint32Array.from(
-          Array.from(octreeNode.gaussianIndices).sort(
-            (left, right) => scores[right]! - scores[left]! || left - right,
-          ),
-        );
-      } else {
-        sortedIndices = mergeSortedIndices(
-          octreeNode.children.map((childId) => buildNode(childId)),
-          scores,
+    this.nodes = octree.nodes.map((octreeNode) => {
+      if (octreeNode.gaussianIndices === null) {
+        return new GaussianLodNode(
+          octreeNode.id,
+          new Uint32Array(),
+          new Uint32Array(this.levels.length),
         );
       }
-
-      mutableNodes[nodeId] = new GaussianLodNode(
-        nodeId,
+      const sortedIndices = Uint32Array.from(
+        Array.from(octreeNode.gaussianIndices).sort(
+          (left, right) => scores[right]! - scores[left]! || left - right,
+        ),
+      );
+      return new GaussianLodNode(
+        octreeNode.id,
         sortedIndices,
         Uint32Array.from(
           this.levels.map(({ retention }) =>
@@ -98,11 +98,7 @@ export class GaussianLod {
           ),
         ),
       );
-      return sortedIndices;
-    };
-
-    buildNode(octree.rootNode);
-    this.nodes = mutableNodes;
+    });
   }
 
   get levelCount(): number {
@@ -130,10 +126,17 @@ export class GaussianLod {
     }
 
     const result = new Uint32Array(packing.gaussianCount);
-    const selected = new Uint8Array(this.octree.data.count);
+    const selectedNodes = new Set<number>();
     let destination = 0;
     for (let entry = 0; entry < packing.nodeIds.length; entry++) {
-      const node = this.getNode(packing.nodeIds[entry]!);
+      const nodeId = packing.nodeIds[entry]!;
+      const node = this.getLeafNode(nodeId);
+      if (selectedNodes.has(nodeId)) {
+        throw new Error(
+          `GaussianLodPacking contains duplicate leaf node ${nodeId}`,
+        );
+      }
+      selectedNodes.add(nodeId);
       const level = packing.lodLevels[entry]!;
       const count = node.levelCounts[level];
       if (count === undefined) {
@@ -143,14 +146,7 @@ export class GaussianLod {
         throw new RangeError("GaussianLodPacking gaussianCount is too small");
       }
       for (let local = 0; local < count; local++) {
-        const sourceIndex = node.sortedGaussianIndices[local]!;
-        if (selected[sourceIndex] !== 0) {
-          throw new Error(
-            "GaussianLodPacking contains overlapping octree representations",
-          );
-        }
-        selected[sourceIndex] = 1;
-        result[destination++] = sourceIndex;
+        result[destination++] = node.sortedGaussianIndices[local]!;
       }
     }
     if (destination !== result.length) {
@@ -168,10 +164,37 @@ export class GaussianLod {
   ): GaussianOctreeRaycastHit[] {
     this.assertUsable();
     const radiusScale = options.radiusScale ?? 3;
+    if (!(radiusScale > 0)) {
+      throw new RangeError(
+        "GaussianOctree raycast radiusScale must be positive",
+      );
+    }
     const maxHits = options.maxHits ?? Infinity;
-    const candidates: number[] = [];
+    if (!(maxHits > 0)) return [];
+    if (packing.nodeIds.length !== packing.lodLevels.length) {
+      throw new RangeError("GaussianLodPacking arrays must have equal lengths");
+    }
+
+    const means = this.octree.data.means.array as Float32Array;
+    const scalesOpacity = this.octree.data.scalesOpacity.array as Float32Array;
+    const center = new Vector3();
+    const closest = new Vector3();
+    const hits: GaussianOctreeRaycastHit[] = [];
+    const selectedNodes = new Set<number>();
     for (let entry = 0; entry < packing.nodeIds.length; entry++) {
       const nodeId = packing.nodeIds[entry]!;
+      const lodNode = this.getLeafNode(nodeId);
+      if (selectedNodes.has(nodeId)) {
+        throw new Error(
+          `GaussianLodPacking contains duplicate leaf node ${nodeId}`,
+        );
+      }
+      selectedNodes.add(nodeId);
+      const level = packing.lodLevels[entry]!;
+      const count = lodNode.levelCounts[level];
+      if (count === undefined) {
+        throw new RangeError(`GaussianLod level ${level} does not exist`);
+      }
       const octreeNode = this.octree.nodes[nodeId]!;
       const expansion =
         Math.max(0, radiusScale - 3) * octreeNode.maxSplatRadius;
@@ -180,13 +203,28 @@ export class GaussianLod {
           ? octreeNode.raycastBounds
           : octreeNode.raycastBounds.clone().expandByScalar(expansion);
       if (!ray.intersectsBox(hitBounds)) continue;
-      const lodNode = this.nodes[nodeId]!;
-      const count = lodNode.levelCounts[packing.lodLevels[entry]!]!;
       for (let local = 0; local < count; local++) {
-        candidates.push(lodNode.sortedGaussianIndices[local]!);
+        const gaussianIndex = lodNode.sortedGaussianIndices[local]!;
+        const offset = gaussianIndex * 4;
+        center.set(means[offset]!, means[offset + 1]!, means[offset + 2]!);
+        const radius =
+          Math.max(
+            scalesOpacity[offset]!,
+            scalesOpacity[offset + 1]!,
+            scalesOpacity[offset + 2]!,
+          ) * radiusScale;
+        ray.closestPointToPoint(center, closest);
+        if (closest.distanceToSquared(center) > radius * radius) continue;
+        hits.push({
+          gaussianIndex,
+          distance: ray.origin.distanceTo(closest),
+          point: closest.clone(),
+        });
       }
     }
-    return this.octree.raycastIndices(ray, candidates, radiusScale, maxHits);
+    hits.sort((left, right) => left.distance - right.distance);
+    if (hits.length > maxHits) hits.length = maxHits;
+    return hits;
   }
 
   dispose(): void {
@@ -197,6 +235,16 @@ export class GaussianLod {
 
   private assertUsable(): void {
     if (this.disposed) throw new Error("GaussianLod has been disposed");
+  }
+
+  private getLeafNode(nodeId: number): GaussianLodNode {
+    const node = this.getNode(nodeId);
+    if (this.octree.nodes[nodeId]?.isLeaf !== true) {
+      throw new Error(
+        `GaussianLodPacking must reference leaf nodes; node ${nodeId} is internal`,
+      );
+    }
+    return node;
   }
 }
 
@@ -231,32 +279,4 @@ function defaultImportance(
   const scales = [values[offset]!, values[offset + 1]!, values[offset + 2]!];
   scales.sort((left, right) => right - left);
   return values[offset + 3]! * scales[0]! * scales[1]!;
-}
-
-function mergeSortedIndices(
-  sources: readonly Uint32Array[],
-  scores: Float64Array,
-): Uint32Array {
-  const length = sources.reduce((sum, source) => sum + source.length, 0);
-  const result = new Uint32Array(length);
-  const offsets = new Uint32Array(sources.length);
-  for (let destination = 0; destination < length; destination++) {
-    let bestSource = -1;
-    let bestIndex = -1;
-    for (let source = 0; source < sources.length; source++) {
-      const candidate = sources[source]![offsets[source]!];
-      if (candidate === undefined) continue;
-      if (
-        bestSource < 0 ||
-        scores[candidate]! > scores[bestIndex]! ||
-        (scores[candidate] === scores[bestIndex] && candidate < bestIndex)
-      ) {
-        bestSource = source;
-        bestIndex = candidate;
-      }
-    }
-    result[destination] = bestIndex;
-    offsets[bestSource] = offsets[bestSource]! + 1;
-  }
-  return result;
 }
