@@ -24,7 +24,7 @@ export interface GaussianPassOptions {
   colorSpace?: ColorSpace;
   /** Enable individual kernel profiling plus tile-load and subpixel coverage diagnostics. */
   profileKernels?: boolean;
-  /** Optional diagnostic raster-only per-tile cap. Disabled by default. Intersections are still emitted and sorted. */
+  /** Per-tile raster sample budget. Defaults to 8192; null disables it. Intersections are still emitted and sorted. */
   maxRasterizedSplatsPerTile?: number | null;
   /** Cull subpixel Gaussians whose alpha support contains no pixel center. Defaults to true. */
   subpixelSampleCulling?: boolean;
