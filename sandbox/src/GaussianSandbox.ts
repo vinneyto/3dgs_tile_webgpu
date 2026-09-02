@@ -18,7 +18,6 @@ import {
   GaussianOctree,
   GaussianStore,
   RadialLodWorkerPlanner,
-  SourceFractionBudgetStrategy,
   StreamingLodPackingStrategy,
   TieredRadialLodPackingStrategy,
   type GaussianPass,
@@ -31,7 +30,6 @@ import { KernelTimingInspector } from "./KernelTimingInspector";
 const MAX_INDIRECT_CAPACITY = 256 * 65_535;
 const REPACK_DISTANCE_FRACTION = 0.025;
 const MIN_REPACK_DISTANCE = 0.05;
-const PRIMARY_BUDGET_FRACTION = 0.97;
 const LOD_LEVELS = [
   { retention: 0.2 },
   { retention: 0.5 },
@@ -168,9 +166,6 @@ export class GaussianSandbox {
     const primaryPackingStrategy = createPrimaryPackingStrategy();
     const store = new GaussianStore({
       loader: this.loader,
-      budgetingStrategy: new SourceFractionBudgetStrategy(
-        PRIMARY_BUDGET_FRACTION,
-      ),
       defaultPackingStrategy: primaryPackingStrategy,
     });
     try {
@@ -193,9 +188,6 @@ export class GaussianSandbox {
     const primaryPackingStrategy = createPrimaryPackingStrategy();
     const store = new GaussianStore({
       loader: this.loader,
-      budgetingStrategy: new SourceFractionBudgetStrategy(
-        PRIMARY_BUDGET_FRACTION,
-      ),
       defaultPackingStrategy: primaryPackingStrategy,
     });
     try {
