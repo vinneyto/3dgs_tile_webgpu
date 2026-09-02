@@ -17,5 +17,7 @@ export {
 } from "./DistanceAwareRadialLodPackingStrategy";
 export {
   StreamingLodPackingStrategy,
+  type StreamingLodCellTransition,
+  type StreamingLodPackingBatch,
   type StreamingLodPackingOptions,
 } from "./StreamingLodPackingStrategy";

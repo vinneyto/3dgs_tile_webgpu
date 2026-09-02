@@ -35,6 +35,8 @@ export {
   type GaussianLodPackingContext,
   type GaussianLodPackingStrategy,
   type RadialLodPackingOptions,
+  type StreamingLodCellTransition,
+  type StreamingLodPackingBatch,
   type StreamingLodPackingOptions,
   type TieredRadialLodPackingOptions,
 } from "./lod-packing";
@@ -51,6 +53,7 @@ export {
   type GaussianStoreAddLodOptions,
   type GaussianStoreAddOptions,
   type GaussianStoreLoadOptions,
+  type GaussianStoreLodBatchResult,
   type GaussianStoreOptions,
   type GaussianStorePackLimits,
   type GaussianStorePackOptions,

@@ -242,15 +242,17 @@ distancePacking.setCenter(cameraPositionInCloudLocalSpace);
 streamingPacking.invalidateTarget();
 
 if (streamingPacking.needsPack) {
-  cloud.invalidatePacking();
-  store.pack({ limits: device.limits });
+  store.packLodBatch(cloud);
 }
 ```
 
 Downgrades and removals are applied before uploads; upgrades follow the wrapped
 strategy's target order. The byte limit is a conservative estimate that
 includes update-range merging. At least one whole leaf is processed so a leaf
-larger than the configured byte limit cannot stall the transition.
+larger than the configured byte limit cannot stall the transition. The wrapped
+strategy and its full transition plan run only when the target changes.
+Subsequent batches update only their listed leaves and bypass global Store
+budget planning and unchanged-cell scans.
 
 Packing remains an individual cloud characteristic when needed:
 

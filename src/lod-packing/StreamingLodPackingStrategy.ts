@@ -10,15 +10,25 @@ const DEFAULT_MAX_CHANGED_CELLS = 16;
 const RANGE_MERGE_ALLOWANCE = 1.25;
 
 export interface StreamingLodPackingOptions {
-  /** Approximate upload budget applied by each pack(). Defaults to 1 MiB. */
+  /** Approximate upload budget applied by each batch. Defaults to 1 MiB. */
   maxUploadBytesPerPack?: number;
-  /** Maximum whole leaf transitions applied by each pack(). Defaults to 16. */
+  /** Maximum whole leaf transitions applied by each batch. Defaults to 16. */
   maxChangedCellsPerPack?: number;
 }
 
-interface CellChange {
+export interface StreamingLodCellTransition {
   readonly nodeId: number;
-  readonly targetLevel: number | null;
+  readonly lodLevel: number | null;
+}
+
+export interface StreamingLodPackingBatch {
+  /** A transient view of the strategy's current selection. */
+  readonly packing: GaussianLodPacking;
+  readonly transitions: readonly StreamingLodCellTransition[];
+  readonly pending: boolean;
+}
+
+interface CellChange extends StreamingLodCellTransition {
   readonly gaussianDelta: number;
   readonly estimatedUploadBytes: number;
 }
@@ -26,7 +36,8 @@ interface CellChange {
 /**
  * Applies a stateful, latest-target-wins transition around another LOD packing
  * strategy. One instance must belong to one GaussianCloud. The initial packing
- * is immediate; later target changes are split into bounded whole-leaf batches.
+ * is immediate; later target changes are planned once and split into bounded
+ * whole-leaf batches.
  */
 export class StreamingLodPackingStrategy<
   T extends GaussianLodPackingStrategy = GaussianLodPackingStrategy,
@@ -36,11 +47,17 @@ export class StreamingLodPackingStrategy<
   readonly maxChangedCellsPerPack: number;
 
   private lod: GaussianLod | null = null;
-  private appliedPacking: GaussianLodPacking | null = null;
+  private appliedNodeIds = new Uint32Array();
+  private appliedLodLevels = new Uint8Array();
+  private appliedIndices = new Int32Array();
+  private appliedCellCount = 0;
+  private appliedGaussianCount = 0;
   private targetPacking: GaussianLodPacking | null = null;
   private targetBudget = -1;
   private targetDirty = true;
-  private transitionPending = false;
+  private changes: CellChange[] = [];
+  private changeCursor = 0;
+  private initialized = false;
 
   constructor(targetStrategy: T, options: StreamingLodPackingOptions = {}) {
     this.targetStrategy = targetStrategy;
@@ -69,48 +86,93 @@ export class StreamingLodPackingStrategy<
   /** Discard an unfinished target after changing the wrapped strategy. */
   invalidateTarget(): this {
     this.targetDirty = true;
-    this.transitionPending = true;
     return this;
   }
 
-  /** Whether another bounded pack() step is needed. */
+  /** Whether another target plan or bounded batch is needed. */
   get needsPack(): boolean {
-    return this.targetDirty || this.transitionPending;
+    return this.targetDirty || this.changeCursor < this.changes.length;
   }
 
+  /**
+   * Compatibility path used by the Store's initial/global pack. For later
+   * camera updates prefer GaussianStore.packLodBatch().
+   */
   pack(context: GaussianLodPackingContext): GaussianLodPacking {
     validateGaussianLodBudget(context.maxGaussians);
     this.bindLod(context.lod);
+    if (!this.initialized) {
+      const target = this.buildTarget(context);
+      this.initializeApplied(target);
+      this.initialized = true;
+      this.changes = [];
+      this.changeCursor = 0;
+      return target;
+    }
+    return this.takeNextBatch(context)?.packing ?? this.currentPacking();
+  }
+
+  /**
+   * Plan the newest target once, then mutate the current dense selection by one
+   * bounded batch. A newer invalidation drops all unconsumed old work.
+   */
+  takeNextBatch(
+    context: GaussianLodPackingContext,
+  ): StreamingLodPackingBatch | null {
+    validateGaussianLodBudget(context.maxGaussians);
+    this.bindLod(context.lod);
+    if (!this.initialized) {
+      throw new Error(
+        "StreamingLodPackingStrategy must be initialized by store.pack() before incremental batches",
+      );
+    }
     if (
       this.targetDirty ||
       this.targetPacking === null ||
       this.targetBudget !== context.maxGaussians
     ) {
-      this.targetPacking = this.targetStrategy.pack(context);
-      this.targetBudget = context.maxGaussians;
-      this.targetDirty = false;
+      const target = this.buildTarget(context);
+      this.changes = this.planChanges(context.lod, target);
+      this.changeCursor = 0;
+    }
+    if (this.changeCursor >= this.changes.length) return null;
+
+    const transitions: StreamingLodCellTransition[] = [];
+    let uploadBytes = 0;
+    while (this.changeCursor < this.changes.length) {
+      const change = this.changes[this.changeCursor]!;
+      const exceedsBatch =
+        transitions.length >= this.maxChangedCellsPerPack ||
+        uploadBytes + change.estimatedUploadBytes > this.maxUploadBytesPerPack;
+      // Always make progress. Removals may also exceed the batch budget while
+      // restoring a newly reduced Store allocation.
+      if (
+        transitions.length > 0 &&
+        exceedsBatch &&
+        this.appliedGaussianCount <= context.maxGaussians
+      ) {
+        break;
+      }
+      this.applyChange(change);
+      transitions.push({ nodeId: change.nodeId, lodLevel: change.lodLevel });
+      uploadBytes += change.estimatedUploadBytes;
+      this.changeCursor++;
     }
 
-    if (this.appliedPacking === null) {
-      this.appliedPacking = this.targetPacking;
-      this.transitionPending = false;
-      return this.appliedPacking;
-    }
-
-    const next = this.applyBatch(
-      context.lod,
-      context.maxGaussians,
-      this.appliedPacking,
-      this.targetPacking,
-    );
-    this.appliedPacking = next;
-    this.transitionPending = !samePacking(next, this.targetPacking);
-    return next;
+    return {
+      packing: this.currentPacking(),
+      transitions,
+      pending: this.changeCursor < this.changes.length,
+    };
   }
 
   private bindLod(lod: GaussianLod): void {
     if (this.lod === null) {
       this.lod = lod;
+      this.appliedNodeIds = new Uint32Array(lod.nodes.length);
+      this.appliedLodLevels = new Uint8Array(lod.nodes.length);
+      this.appliedIndices = new Int32Array(lod.nodes.length);
+      this.appliedIndices.fill(-1);
       return;
     }
     if (this.lod !== lod) {
@@ -120,74 +182,95 @@ export class StreamingLodPackingStrategy<
     }
   }
 
-  private applyBatch(
+  private buildTarget(context: GaussianLodPackingContext): GaussianLodPacking {
+    const target = this.targetStrategy.pack(context);
+    validatePacking(context.lod, target, context.maxGaussians);
+    this.targetPacking = target;
+    this.targetBudget = context.maxGaussians;
+    this.targetDirty = false;
+    return target;
+  }
+
+  private initializeApplied(packing: GaussianLodPacking): void {
+    this.appliedCellCount = packing.nodeIds.length;
+    this.appliedGaussianCount = packing.gaussianCount;
+    this.appliedNodeIds.set(packing.nodeIds);
+    this.appliedLodLevels.set(packing.lodLevels);
+    for (let index = 0; index < packing.nodeIds.length; index++) {
+      this.appliedIndices[packing.nodeIds[index]!] = index;
+    }
+  }
+
+  private planChanges(
     lod: GaussianLod,
-    maxGaussians: number,
-    applied: GaussianLodPacking,
     target: GaussianLodPacking,
-  ): GaussianLodPacking {
-    if (samePacking(applied, target)) return applied;
-    const appliedLevels = packingLevels(applied);
-    const targetLevels = packingLevels(target);
-    const changes = orderedChanges(
-      lod,
-      applied,
-      target,
-      appliedLevels,
-      targetLevels,
-    );
-    let gaussianCount = applied.gaussianCount;
-    let changedCells = 0;
-    let uploadBytes = 0;
+  ): CellChange[] {
+    const targetLevels = new Int16Array(lod.nodes.length);
+    targetLevels.fill(-1);
+    for (let index = 0; index < target.nodeIds.length; index++) {
+      targetLevels[target.nodeIds[index]!] = target.lodLevels[index]!;
+    }
 
-    for (const change of changes) {
-      const exceedsBatch =
-        changedCells >= this.maxChangedCellsPerPack ||
-        uploadBytes + change.estimatedUploadBytes > this.maxUploadBytesPerPack;
-      // Always make progress. A reduced Store allocation is also a hard limit,
-      // so cheap removals may exceed the streaming budget until it is restored.
-      if (changedCells > 0 && exceedsBatch && gaussianCount <= maxGaussians) {
-        break;
+    const cheap: CellChange[] = [];
+    const expensive: CellChange[] = [];
+    for (let index = this.appliedCellCount - 1; index >= 0; index--) {
+      const nodeId = this.appliedNodeIds[index]!;
+      const appliedLevel = this.appliedLodLevels[index]!;
+      const targetLevel = targetLevels[nodeId]!;
+      if (targetLevel < 0 || targetLevel < appliedLevel) {
+        cheap.push(
+          cellChange(
+            lod,
+            nodeId,
+            appliedLevel,
+            targetLevel < 0 ? null : targetLevel,
+          ),
+        );
       }
-      if (change.targetLevel === null) appliedLevels.delete(change.nodeId);
-      else appliedLevels.set(change.nodeId, change.targetLevel);
-      gaussianCount += change.gaussianDelta;
-      uploadBytes += change.estimatedUploadBytes;
-      changedCells++;
     }
+    for (let index = 0; index < target.nodeIds.length; index++) {
+      const nodeId = target.nodeIds[index]!;
+      const targetLevel = target.lodLevels[index]!;
+      const appliedIndex = this.appliedIndices[nodeId]!;
+      const appliedLevel =
+        appliedIndex < 0 ? null : this.appliedLodLevels[appliedIndex]!;
+      if (appliedLevel === null || targetLevel > appliedLevel) {
+        expensive.push(cellChange(lod, nodeId, appliedLevel, targetLevel));
+      }
+    }
+    return [...cheap, ...expensive];
+  }
 
-    return packingFromLevels(lod, appliedLevels, target);
+  private applyChange(change: CellChange): void {
+    const index = this.appliedIndices[change.nodeId]!;
+    if (change.lodLevel === null) {
+      if (index < 0) return;
+      const lastIndex = --this.appliedCellCount;
+      if (index !== lastIndex) {
+        const movedNodeId = this.appliedNodeIds[lastIndex]!;
+        this.appliedNodeIds[index] = movedNodeId;
+        this.appliedLodLevels[index] = this.appliedLodLevels[lastIndex]!;
+        this.appliedIndices[movedNodeId] = index;
+      }
+      this.appliedIndices[change.nodeId] = -1;
+    } else if (index < 0) {
+      const nextIndex = this.appliedCellCount++;
+      this.appliedNodeIds[nextIndex] = change.nodeId;
+      this.appliedLodLevels[nextIndex] = change.lodLevel;
+      this.appliedIndices[change.nodeId] = nextIndex;
+    } else {
+      this.appliedLodLevels[index] = change.lodLevel;
+    }
+    this.appliedGaussianCount += change.gaussianDelta;
   }
-}
 
-function orderedChanges(
-  lod: GaussianLod,
-  applied: GaussianLodPacking,
-  target: GaussianLodPacking,
-  appliedLevels: ReadonlyMap<number, number>,
-  targetLevels: ReadonlyMap<number, number>,
-): CellChange[] {
-  const cheap: CellChange[] = [];
-  const expensive: CellChange[] = [];
-  for (let index = applied.nodeIds.length - 1; index >= 0; index--) {
-    const nodeId = applied.nodeIds[index]!;
-    const appliedLevel = applied.lodLevels[index]!;
-    const targetLevel = targetLevels.get(nodeId);
-    if (targetLevel === undefined || targetLevel < appliedLevel) {
-      cheap.push(cellChange(lod, nodeId, appliedLevel, targetLevel ?? null));
-    }
+  private currentPacking(): GaussianLodPacking {
+    return {
+      nodeIds: this.appliedNodeIds.subarray(0, this.appliedCellCount),
+      lodLevels: this.appliedLodLevels.subarray(0, this.appliedCellCount),
+      gaussianCount: this.appliedGaussianCount,
+    };
   }
-  for (let index = 0; index < target.nodeIds.length; index++) {
-    const nodeId = target.nodeIds[index]!;
-    const targetLevel = target.lodLevels[index]!;
-    const appliedLevel = appliedLevels.get(nodeId);
-    if (appliedLevel === undefined || targetLevel > appliedLevel) {
-      expensive.push(
-        cellChange(lod, nodeId, appliedLevel ?? null, targetLevel),
-      );
-    }
-  }
-  return [...cheap, ...expensive];
 }
 
 function cellChange(
@@ -209,7 +292,7 @@ function cellChange(
     3 * 16 + lod.octree.data.shCoefficientCount * 16 + 4;
   return {
     nodeId,
-    targetLevel: toLevel,
+    lodLevel: toLevel,
     gaussianDelta: toCount - fromCount,
     estimatedUploadBytes: Math.ceil(
       (added * fullGaussianBytes + removed * 16 + relabeled * 4) *
@@ -218,54 +301,40 @@ function cellChange(
   };
 }
 
-function packingLevels(packing: GaussianLodPacking): Map<number, number> {
-  return new Map(
-    Array.from(packing.nodeIds, (nodeId, index) => [
-      nodeId,
-      packing.lodLevels[index]!,
-    ]),
-  );
-}
-
-function packingFromLevels(
+function validatePacking(
   lod: GaussianLod,
-  levels: ReadonlyMap<number, number>,
-  target: GaussianLodPacking,
-): GaussianLodPacking {
-  const targetOrder = new Map(
-    Array.from(target.nodeIds, (nodeId, index) => [nodeId, index]),
-  );
-  const cells = [...levels].sort(
-    ([left], [right]) =>
-      (targetOrder.get(left) ?? Number.MAX_SAFE_INTEGER) -
-        (targetOrder.get(right) ?? Number.MAX_SAFE_INTEGER) || left - right,
-  );
+  packing: GaussianLodPacking,
+  maxGaussians: number,
+): void {
+  if (packing.gaussianCount > maxGaussians) {
+    throw new RangeError(
+      `Streaming LOD target exceeded its allocation of ${maxGaussians} Gaussians`,
+    );
+  }
+  if (packing.nodeIds.length !== packing.lodLevels.length) {
+    throw new RangeError("GaussianLodPacking arrays must have equal lengths");
+  }
+  const selected = new Set<number>();
   let gaussianCount = 0;
-  for (const [nodeId, level] of cells) {
-    gaussianCount += lod.nodes[nodeId]!.levelCounts[level]!;
-  }
-  return {
-    nodeIds: Uint32Array.from(cells.map(([nodeId]) => nodeId)),
-    lodLevels: Uint8Array.from(cells.map(([, level]) => level)),
-    gaussianCount,
-  };
-}
-
-function samePacking(
-  left: GaussianLodPacking,
-  right: GaussianLodPacking,
-): boolean {
-  if (
-    left.gaussianCount !== right.gaussianCount ||
-    left.nodeIds.length !== right.nodeIds.length
-  ) {
-    return false;
-  }
-  const rightLevels = packingLevels(right);
-  for (let index = 0; index < left.nodeIds.length; index++) {
-    if (rightLevels.get(left.nodeIds[index]!) !== left.lodLevels[index]) {
-      return false;
+  for (let index = 0; index < packing.nodeIds.length; index++) {
+    const nodeId = packing.nodeIds[index]!;
+    const level = packing.lodLevels[index]!;
+    const node = lod.nodes[nodeId];
+    const count = node?.levelCounts[level];
+    if (count === undefined || lod.octree.nodes[nodeId]?.isLeaf !== true) {
+      throw new RangeError(
+        `GaussianLod packing references invalid leaf ${nodeId} or level ${level}`,
+      );
     }
+    if (selected.has(nodeId)) {
+      throw new Error(`GaussianLod packing contains duplicate node ${nodeId}`);
+    }
+    selected.add(nodeId);
+    gaussianCount += count;
   }
-  return true;
+  if (gaussianCount !== packing.gaussianCount) {
+    throw new RangeError(
+      `GaussianLodPacking declares ${packing.gaussianCount} Gaussians but selects ${gaussianCount}`,
+    );
+  }
 }

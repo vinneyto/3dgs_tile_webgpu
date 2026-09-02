@@ -20,7 +20,6 @@ import {
   DistanceAwareRadialLodPackingStrategy,
   SourceFractionBudgetStrategy,
   StreamingLodPackingStrategy,
-  type GaussianStorePackLimits,
   type GaussianPass,
   type RadixBackend,
 } from "../../src/index";
@@ -67,7 +66,6 @@ export class GaussianSandbox {
   private primaryPackingStrategy: StreamingLodPackingStrategy<DistanceAwareRadialLodPackingStrategy> | null =
     null;
   private lodColorHelper: GaussianLodColorHelper | null = null;
-  private deviceLimits: GaussianStorePackLimits | null = null;
   private readonly packingCenter = new Vector3();
   private readonly lastPackedCenter = new Vector3(
     Number.NaN,
@@ -181,7 +179,7 @@ export class GaussianSandbox {
       });
       const limits = webGpuDeviceLimits(this.renderer);
       store.pack({ limits });
-      this.show(store, url, primaryCloud, primaryPackingStrategy, limits);
+      this.show(store, url, primaryCloud, primaryPackingStrategy);
     } catch (error) {
       store.dispose();
       this.setError(error);
@@ -207,7 +205,7 @@ export class GaussianSandbox {
       );
       const limits = webGpuDeviceLimits(this.renderer);
       store.pack({ limits });
-      this.show(store, file.name, primaryCloud, primaryPackingStrategy, limits);
+      this.show(store, file.name, primaryCloud, primaryPackingStrategy);
     } catch (error) {
       store.dispose();
       this.setError(error);
@@ -219,7 +217,6 @@ export class GaussianSandbox {
     source: string,
     primaryCloud: GaussianCloud,
     primaryPackingStrategy: StreamingLodPackingStrategy<DistanceAwareRadialLodPackingStrategy>,
-    limits: GaussianStorePackLimits,
   ): void {
     this.lodColorHelper?.dispose();
     this.lodColorHelper = null;
@@ -234,7 +231,6 @@ export class GaussianSandbox {
     const primaryData = primaryCloud.lod!.octree.data;
     const primaryBounds = measureCloud(primaryData);
     this.store = store;
-    this.deviceLimits = limits;
     this.primaryCloud = primaryCloud;
     this.primaryPackingStrategy = primaryPackingStrategy;
     this.lastPackedCenter.set(Number.NaN, Number.NaN, Number.NaN);
@@ -308,13 +304,7 @@ export class GaussianSandbox {
     const store = this.store;
     const strategy = this.primaryPackingStrategy;
     const cloud = this.primaryCloud;
-    const limits = this.deviceLimits;
-    if (
-      store === null ||
-      strategy === null ||
-      cloud === null ||
-      limits === null
-    ) {
+    if (store === null || strategy === null || cloud === null) {
       return;
     }
     this.camera.getWorldPosition(this.packingCenter);
@@ -330,9 +320,9 @@ export class GaussianSandbox {
     }
     if (!strategy.needsPack) return;
 
-    cloud.invalidatePacking();
     const started = performance.now();
-    store.pack({ limits });
+    const result = store.packLodBatch(cloud);
+    if (!result.applied) return;
     this.lodColorHelper?.update();
     const duration = performance.now() - started;
     const stats = store.lastPackStats;
@@ -341,7 +331,7 @@ export class GaussianSandbox {
         stats,
         duration,
         this.packingCenter.distanceTo(this.packingBoundsCenter),
-        strategy.needsPack,
+        result.pending,
       );
     }
   }

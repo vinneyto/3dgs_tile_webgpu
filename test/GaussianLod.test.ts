@@ -333,7 +333,7 @@ describe("GaussianLod", () => {
       { levels: [{ retention: 0.5 }, { retention: 1 }] },
     );
     let target = packingAtLevel(lod, 0);
-    const targetStrategy = { pack: () => target };
+    const targetStrategy = { pack: vi.fn(() => target) };
     const streaming = new StreamingLodPackingStrategy(targetStrategy, {
       maxChangedCellsPerPack: 1,
       maxUploadBytesPerPack: 1,
@@ -351,6 +351,7 @@ describe("GaussianLod", () => {
       [...partialUpgrade.lodLevels].filter((level) => level === 1),
     ).toHaveLength(1);
     expect(streaming.needsPack).toBe(true);
+    expect(targetStrategy.pack).toHaveBeenCalledTimes(2);
 
     target = packingAtLevel(lod, 0);
     streaming.invalidateTarget();
@@ -359,6 +360,7 @@ describe("GaussianLod", () => {
       Array.from(target.lodLevels),
     );
     expect(streaming.needsPack).toBe(false);
+    expect(targetStrategy.pack).toHaveBeenCalledTimes(3);
   });
 
   it("validates streaming batch limits", () => {
