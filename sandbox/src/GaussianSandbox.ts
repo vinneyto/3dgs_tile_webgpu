@@ -114,18 +114,18 @@ export class GaussianSandbox {
   ): Promise<GaussianSandbox> {
     if (!navigator.gpu)
       throw new Error("WebGPU is unavailable in this browser");
-    const debugEnabled =
-      new URLSearchParams(location.search).get("debug") !== "0";
-    const statsEnabled =
-      new URLSearchParams(location.search).get("stats") !== "0";
+    const parameters = new URLSearchParams(location.search);
+    const debugEnabled = parameters.get("debug") !== "0";
+    const profileEnabled = parameters.get("profile") === "kernels";
+    const statsEnabled = profileEnabled || parameters.get("stats") !== "0";
     const renderer = new WebGPURenderer({
       antialias: false,
-      trackTimestamp: debugEnabled,
+      trackTimestamp: profileEnabled,
     });
     await renderer.init();
     renderer.setClearColor(0x000000, 0);
     const timingInspector =
-      debugEnabled && renderer.hasFeature("timestamp-query")
+      profileEnabled && renderer.hasFeature("timestamp-query")
         ? new KernelTimingInspector()
         : null;
     if (timingInspector !== null) renderer.inspector = timingInspector;
@@ -260,6 +260,9 @@ export class GaussianSandbox {
       background: [0.018, 0.022, 0.032, 1],
       profileKernels:
         new URLSearchParams(location.search).get("profile") === "kernels",
+      maxRasterizedSplatsPerTile: readTileCap(),
+      subpixelSampleCulling:
+        new URLSearchParams(location.search).get("subpixelCull") !== "0",
       radixBackend: readRadixBackend(),
     });
     this.lodColorHelper = new GaussianLodColorHelper(this.pass, {
@@ -487,6 +490,16 @@ function readRadixBackend(): RadixBackend {
     return requested;
   }
   return "auto";
+}
+
+function readTileCap(): number | undefined {
+  const raw = new URLSearchParams(location.search).get("tileCap");
+  if (raw === null || raw === "0") return undefined;
+  const cap = Number(raw);
+  if (!Number.isSafeInteger(cap) || cap <= 0) {
+    throw new RangeError("tileCap must be a positive integer or 0");
+  }
+  return cap;
 }
 
 function webGpuDeviceLimits(renderer: WebGPURenderer): GPUSupportedLimits {

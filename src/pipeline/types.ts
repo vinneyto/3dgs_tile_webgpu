@@ -22,8 +22,12 @@ export interface GaussianPassOptions {
   outputDepth?: boolean;
   /** Encoding of reconstructed SH RGB values. The pass converts it to Three.js working-linear; canonical 3DGS PLY is sRGB. */
   colorSpace?: ColorSpace;
-  /** Split normally batched compute groups so timestamp tools can measure every kernel. */
+  /** Enable individual kernel profiling plus tile-load and subpixel coverage diagnostics. */
   profileKernels?: boolean;
+  /** Diagnostic raster-only cap. Intersections are still emitted and sorted so its timing isolates raster tail cost. */
+  maxRasterizedSplatsPerTile?: number;
+  /** Cull subpixel Gaussians whose alpha support contains no pixel center. Defaults to true. */
+  subpixelSampleCulling?: boolean;
   /** Select subgroup-accelerated or portable workgroup radix. Defaults to feature-based auto detection. */
   radixBackend?: RadixBackend;
 }
@@ -34,6 +38,43 @@ export interface GaussianPassStats {
   requestedIntersections: number;
   intersectionCapacity: number;
   overflow: boolean;
+  /** Expensive distribution/readback metrics available with profileKernels. */
+  profile: GaussianPassProfileStats | null;
+}
+
+export interface GaussianTileLoadStats {
+  max: number;
+  mean: number;
+  median: number;
+  p95: number;
+  p99: number;
+  tilesOver256: number;
+  tilesOver512: number;
+  tilesOver1024: number;
+  tilesOver2048: number;
+  /** Number of 256-splat outer-loop iterations summed over all tiles. */
+  totalBatches: number;
+  /** Longest 256-splat outer loop executed by a single tile. */
+  maxBatches: number;
+}
+
+export interface GaussianTileCapStats {
+  cap: number;
+  rasterizedIntersections: number;
+  droppedIntersections: number;
+  droppedFraction: number;
+  affectedTiles: number;
+  totalBatches: number;
+  maxBatches: number;
+}
+
+export interface GaussianPassProfileStats {
+  tileLoads: GaussianTileLoadStats;
+  /** What the configured raster-only cap did to this frame, or null when disabled. */
+  appliedTileCap: GaussianTileCapStats | null;
+  /** Counterfactual raster work at the standard diagnostic caps. */
+  tileCapEstimates: readonly GaussianTileCapStats[];
+  zeroPixelSubpixelSplats: number;
 }
 
 /** CPU-side lifecycle counters. Reading these values never synchronizes with the GPU. */
@@ -49,6 +90,8 @@ export interface GaussianPassDebugInfo {
   tileRadixPasses: number;
   radixBackend: ResolvedRadixBackend;
   profileKernels: boolean;
+  maxRasterizedSplatsPerTile: number | null;
+  subpixelSampleCulling: boolean;
 }
 
 /** Three.js-owned intermediate attributes reusable by other node code or wgslFn kernels. */

@@ -16,6 +16,7 @@ import { FrameUniforms } from "./FrameUniforms";
 import { IntersectionStage } from "./IntersectionStage";
 import { ObjectFrameState } from "./ObjectFrameState";
 import { ProjectionStage } from "./ProjectionStage";
+import { ProfileDiagnosticsStage } from "./ProfileDiagnosticsStage";
 import { RadixSorter } from "./RadixSorter";
 import { TileOffsetBuilder } from "./TileOffsetBuilder";
 import { TileRasterizer } from "./TileRasterizer";
@@ -34,6 +35,7 @@ export class TiledGaussianPipeline {
   readonly frame: FrameUniforms;
   readonly objects: ObjectFrameState;
   readonly projection: ProjectionStage;
+  readonly profileDiagnostics: ProfileDiagnosticsStage | null;
   readonly visibleScan: ExclusiveScanStage;
   readonly visible: VisibleGaussianStage;
   readonly depthSorter: RadixSorter;
@@ -60,6 +62,8 @@ export class TiledGaussianPipeline {
     private readonly capacity: number,
     background: readonly [number, number, number, number],
     private readonly profileKernels: boolean,
+    private readonly maxRasterizedSplatsPerTile: number | null,
+    private readonly subpixelSampleCulling: boolean,
     private readonly radixBackend: ResolvedRadixBackend,
     private readonly nodes: GaussianNodeSlots,
   ) {
@@ -71,7 +75,18 @@ export class TiledGaussianPipeline {
       this.objects,
       antialiasMode,
       nodes,
+      subpixelSampleCulling,
     );
+    this.profileDiagnostics = profileKernels
+      ? new ProfileDiagnosticsStage(
+          renderer,
+          data.count,
+          this.projection.projectedMean,
+          this.projection.projectedConic,
+          this.frame,
+          maxRasterizedSplatsPerTile,
+        )
+      : null;
     this.visibleScan = new ExclusiveScanStage(
       this.projection.projectedMean,
       data.count,
@@ -153,6 +168,7 @@ export class TiledGaussianPipeline {
       );
     }
     this.projection.encode(this.renderer);
+    this.profileDiagnostics?.encode();
     this.visibleScan.encode(this.renderer);
     this.visible.encode();
     this.depthSorter.encode(this.profileKernels);
@@ -172,8 +188,18 @@ export class TiledGaussianPipeline {
     this.rasterizer?.rebuild(nodes);
   }
 
-  readStats(): Promise<GaussianPassStats> {
-    return this.intersections.readStats();
+  async readStats(): Promise<GaussianPassStats> {
+    if (this.profileDiagnostics === null || this.tileOffsets === null) {
+      return this.intersections.readStats();
+    }
+    const [stats, profile] = await Promise.all([
+      this.intersections.readStats(),
+      this.profileDiagnostics.readStats(this.tileOffsets.offsets),
+    ]);
+    return {
+      ...stats,
+      profile,
+    };
   }
 
   getDebugInfo(): GaussianPassDebugInfo {
@@ -189,6 +215,8 @@ export class TiledGaussianPipeline {
       tileRadixPasses: this.sorter.passCount,
       radixBackend: this.radixBackend,
       profileKernels: this.profileKernels,
+      maxRasterizedSplatsPerTile: this.maxRasterizedSplatsPerTile,
+      subpixelSampleCulling: this.subpixelSampleCulling,
     };
   }
 
@@ -221,6 +249,7 @@ export class TiledGaussianPipeline {
     this.depthSorter.dispose();
     this.visible.dispose();
     this.visibleScan.dispose();
+    this.profileDiagnostics?.dispose();
     this.projection.dispose();
     this.objects.dispose();
   }
@@ -266,6 +295,7 @@ export class TiledGaussianPipeline {
       colorTexture,
       depthTexture,
       this.frame,
+      this.maxRasterizedSplatsPerTile,
       this.nodes,
     );
     this.width = width;

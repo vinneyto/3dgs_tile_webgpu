@@ -157,6 +157,42 @@ fn evaluate_gaussian_sh(
 }
 `;
 
+/**
+ * Exact sampled-alpha test for support AABBs no larger than one pixel in both
+ * dimensions. Larger splats are conservatively retained without enumeration.
+ */
+export const subpixelHasSampleWGSL = /* wgsl */ `
+fn subpixel_has_sample(
+  center: vec2<f32>,
+  conic: vec3<f32>,
+  power_threshold: f32,
+  extent: vec2<f32>,
+  viewport: vec2<u32>
+) -> bool {
+  if (extent.x * 2.0 > 1.0 || extent.y * 2.0 > 1.0) { return true; }
+  let pixel_min = vec2<i32>(
+    max(i32(ceil(center.x - extent.x - 0.5)), 0),
+    max(i32(ceil(center.y - extent.y - 0.5)), 0)
+  );
+  let pixel_max = vec2<i32>(
+    min(i32(floor(center.x + extent.x - 0.5)), i32(viewport.x) - 1),
+    min(i32(floor(center.y + extent.y - 0.5)), i32(viewport.y) - 1)
+  );
+  for (var pixel_y = pixel_min.y; pixel_y <= pixel_max.y; pixel_y++) {
+    for (var pixel_x = pixel_min.x; pixel_x <= pixel_max.x; pixel_x++) {
+      let delta = vec2<f32>(f32(pixel_x) + 0.5, f32(pixel_y) + 0.5) - center;
+      let sigma = 0.5 * (
+        conic.x * delta.x * delta.x +
+        2.0 * conic.y * delta.x * delta.y +
+        conic.z * delta.y * delta.y
+      );
+      if (sigma <= power_threshold) { return true; }
+    }
+  }
+  return false;
+}
+`;
+
 export function countContributingTilesWGSL(): string {
   const contribution = tileContributionWGSL({
     center: "center",

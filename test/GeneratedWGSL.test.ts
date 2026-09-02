@@ -24,6 +24,7 @@ import {
 import { FrameUniforms } from "../src/pipeline/FrameUniforms";
 import { ObjectFrameState } from "../src/pipeline/ObjectFrameState";
 import { ProjectionStage } from "../src/pipeline/ProjectionStage";
+import { ProfileDiagnosticsStage } from "../src/pipeline/ProfileDiagnosticsStage";
 import { TileRasterizer } from "../src/pipeline/TileRasterizer";
 
 const TEST_LIMITS = {
@@ -65,6 +66,7 @@ describe("generated Gaussian WGSL", () => {
       new StorageTexture(16, 16),
       null,
       frame,
+      2_048,
       nodes,
     );
 
@@ -79,7 +81,10 @@ describe("generated Gaussian WGSL", () => {
       "project_gaussian_covariance_compensated",
     );
     expect(projectionSource).toContain("count_contributing_tiles");
+    expect(projectionSource).toContain("subpixel_has_sample");
     expect(rasterSource).toContain("compact_morton_bits_16");
+    expect(rasterSource).toContain("rasterTileEnd");
+    expect(rasterSource).toContain("2048u");
     expect(rasterSource).toContain("workgroupBarrier");
     expect(projectionSource).not.toMatch(/return;\s*return;/);
     expect(rasterSource).not.toMatch(/continue;\s*continue;/);
@@ -117,6 +122,49 @@ describe("generated Gaussian WGSL", () => {
     expect(rasterSource).toContain("vec3<f32>");
   });
 
+  it("omits subpixel sample culling when disabled", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    const enabled = buildPipeline(nodes, true).projectionSource;
+    const disabled = buildPipeline(nodes, false).projectionSource;
+
+    expect(enabled).toContain("subpixel_has_sample");
+    expect(disabled).not.toContain("subpixel_has_sample");
+  });
+
+  it("builds the profiling-only subpixel coverage kernel", () => {
+    const data = oneGaussian();
+    const store = new GaussianStore();
+    store.add(data);
+    store.pack({ limits: TEST_LIMITS });
+    const packed = store.getPackedData();
+    const camera = new PerspectiveCamera();
+    const frame = new FrameUniforms(camera, [0, 0, 0, 0]);
+    const objects = new ObjectFrameState(camera, store, packed.count);
+    const projection = new ProjectionStage(
+      packed,
+      frame,
+      objects,
+      "compensated",
+      createDefaultGaussianNodeSlots(),
+    );
+    const diagnostics = new ProfileDiagnosticsStage(
+      {} as never,
+      packed.count,
+      projection.projectedMean,
+      projection.projectedConic,
+      frame,
+      null,
+    );
+
+    const source = buildCompute(
+      (diagnostics as unknown as { computeNode: unknown }).computeNode,
+    );
+
+    expect(source).toContain("profile_subpixel_coverage");
+    expect(source).toContain("zero_pixel_flags");
+    expect(source).toContain("pixel_x");
+  });
+
   it("mixes projected color with packed LOD tint in the rasterizer", () => {
     const store = new GaussianStore();
     store.add(oneGaussian());
@@ -140,6 +188,7 @@ describe("generated Gaussian WGSL", () => {
 
 function buildPipeline(
   nodes: ReturnType<typeof createDefaultGaussianNodeSlots>,
+  subpixelSampleCulling = true,
 ) {
   const data = oneGaussian();
   const store = new GaussianStore();
@@ -155,6 +204,7 @@ function buildPipeline(
     objects,
     "compensated",
     nodes,
+    subpixelSampleCulling,
   );
   const rasterizer = new TileRasterizer(
     {} as never,
@@ -170,6 +220,7 @@ function buildPipeline(
     new StorageTexture(16, 16),
     null,
     frame,
+    null,
     nodes,
   );
 

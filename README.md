@@ -565,18 +565,48 @@ vertex data. Matching `lidar_sim`, it performs these boundary conversions:
 - `rot_0..3`: canonical PLY `wxyz` to normalized Three.js/renderer `xyzw`;
 - `f_dc_*` and channel-major `f_rest_*`: Gaussian-major SH coefficient vectors.
 
-The HUD also reports CPU encoding time, Three.js compute-call count, GPU compute/present time (when the adapter
-supports timestamp queries), requested/emitted intersection counts, capacity overflow, tile-stage rebuilds and
-Three.js-tracked GPU memory. It also reports `N_visible`, so the benefit of moving depth sorting from `K` to
-the compact visible set can be measured directly. Expand **Kernel timings** for timestamp-query timings of every
-named compute group.
-Append `?profile=kernels` to split the normally batched prepare/emit group into separate compute passes. Radix
-stages already require distinct passes because their direct and indirect dispatch dimensions differ. Profiling
-mode adds a pass boundary and should not be used as the final production-performance number.
+The HUD also reports CPU encoding time, Three.js compute-call count,
+requested/emitted intersection counts, capacity overflow, tile-stage rebuilds
+and Three.js-tracked GPU memory. It also reports `N_visible`, so the benefit of
+moving depth sorting from `K` to the compact visible set can be measured
+directly.
+
+Append `?profile=kernels` to enable the heavier profiling mode. It requests GPU
+timestamp queries, opens **Kernel timings**, and splits the normally batched
+prepare/emit group into separate compute passes. Timestamp rows are available
+only when the browser and adapter expose `timestamp-query`; the HUD reports
+that limitation explicitly otherwise. Radix stages already require distinct
+passes because their direct and indirect dispatch dimensions differ.
+
+The same flag adds an asynchronous readback of emitted splats per tile: max,
+mean, median, p95, p99, and counts above 256, 512, 1024 and 2048. It also runs a
+profiling-only projection kernel that counts zero-pixel subpixel splats whose
+alpha-support AABB is at most one pixel in both dimensions but contains no
+pixel center. With subpixel culling enabled this is the number removed during
+projection; with culling disabled it is the number of candidates that continue
+through the pipeline. Profiling adds a compute pass, timestamp overhead and two
+diagnostic readbacks, so its FPS is not the final production-performance number.
+
+The tile profile also reports total and worst-tile raster batches (256 splats
+per batch), plus counterfactual dropped-intersection, affected-tile and batch
+counts for caps of 2048, 4096 and 8192. To run the corresponding raster-only
+experiment, append `&tileCap=2048` (or another positive integer). The cap is
+applied only when the raster kernel reads each sorted tile range: intersection
+emission and radix sorting remain unchanged, so the GPU timing difference
+isolates the long-tail raster cost. The nearest depth-sorted splats are retained.
+Omit `tileCap` or use `tileCap=0` for the unchanged renderer.
+
+Subpixel sample culling is enabled by default. During projection, Gaussians
+whose alpha-support AABB is at most one pixel in both dimensions are tested
+against actual pixel centers. A Gaussian with no sample at or above the
+`1/255` alpha cutoff is removed before visible compaction, both radix sorts,
+intersection emission and rasterization. Set `?subpixelCull=0` in the sandbox
+or pass `{ subpixelSampleCulling: false }` to disable it for A/B timing.
 
 The memory delta is captured after a 30-frame warm-up, making accidental per-frame resource growth visible.
-Diagnostic intersection readback runs asynchronously every 1.5 seconds; `?stats=0` disables that readback while
-retaining GPU timestamps. Append `?debug=0` to disable all diagnostics when measuring the undisturbed renderer.
+Diagnostic intersection readback runs asynchronously every 1.5 seconds;
+`?stats=0` disables that readback outside profiling mode. Append `?debug=0` to
+hide the HUD when measuring the undisturbed renderer.
 The demo defaults to `dpr=1`; raising it to `dpr=2` quadruples the number of rasterized pixels and is therefore
 an explicit quality/performance choice rather than an automatic use of the display pixel ratio.
 

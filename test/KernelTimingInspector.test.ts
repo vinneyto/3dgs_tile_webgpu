@@ -1,41 +1,20 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { KernelTimingInspector } from "../sandbox/src/KernelTimingInspector";
 
 describe("KernelTimingInspector", () => {
-  it("records timestamp queries only on sampled frames", () => {
+  it("records every frame in explicit profiling mode", () => {
     const inspector = new KernelTimingInspector();
-    const backend = {
-      trackTimestamp: true,
-      timestampQueryPool: {},
-    };
     inspector.setRenderer({
-      backend,
+      backend: { trackTimestamp: true, timestampQueryPool: {} },
       _nodes: { nodeFrame: { frameId: 1 } },
     } as never);
-    let time = 1_000;
-    const now = vi.spyOn(performance, "now").mockImplementation(() => time);
-
     inspector.begin();
-    expect(backend.trackTimestamp).toBe(true);
-    inspector.beginCompute("sample:f1", { name: "sample" } as never);
+    inspector.beginCompute("profile:f1", { name: "profile" } as never);
+
     expect(
       (inspector as unknown as { currentFrame: { computes: unknown[] } })
         .currentFrame.computes,
     ).toHaveLength(1);
-
-    time = 1_100;
-    inspector.begin();
-    expect(backend.trackTimestamp).toBe(false);
-    inspector.beginCompute("skipped:f2", { name: "skipped" } as never);
-    expect(
-      (inspector as unknown as { currentFrame: { computes: unknown[] } })
-        .currentFrame.computes,
-    ).toHaveLength(1);
-
-    time = 1_200;
-    inspector.begin();
-    expect(backend.trackTimestamp).toBe(true);
-    now.mockRestore();
   });
 
   it("aggregates repeated kernels and preserves batched group names", () => {

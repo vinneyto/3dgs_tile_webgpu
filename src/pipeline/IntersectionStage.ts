@@ -143,6 +143,7 @@ export class IntersectionStage {
       requestedIntersections: values[1] ?? 0,
       intersectionCapacity: this.capacity,
       overflow: (values[3] ?? 0) !== 0,
+      profile: null,
     };
   }
 

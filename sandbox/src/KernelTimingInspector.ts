@@ -1,8 +1,6 @@
 import type { ComputeNode } from "three/webgpu";
 import { RendererInspector } from "three/addons/inspector/RendererInspector.js";
 
-const TIMING_SAMPLE_INTERVAL_MS = 200;
-
 export interface KernelTiming {
   name: string;
   calls: number;
@@ -38,54 +36,12 @@ interface ResolvedInspectorFrame {
 /** Uses Three.js' inspector/timestamp integration without accessing GPUDevice. */
 export class KernelTimingInspector extends RendererInspector {
   latest: FrameKernelTimings | null = null;
-  private lastSampleTime = -Infinity;
-  private sampling = false;
 
   constructor() {
     super();
     // RendererInspector retains frame metadata for its UI. The sandbox only
     // needs the latest samples, so keep this bounded and small.
     Object.assign(this, { maxFrames: 8 });
-  }
-
-  override begin(): void {
-    const now = performance.now();
-    this.sampling = now - this.lastSampleTime >= TIMING_SAMPLE_INTERVAL_MS;
-    this.setTimestampTracking(this.sampling);
-    if (!this.sampling) return;
-    this.lastSampleTime = now;
-    super.begin();
-  }
-
-  override finish(): void {
-    if (!this.sampling) return;
-    super.finish();
-    this.sampling = false;
-    this.setTimestampTracking(false);
-  }
-
-  override beginCompute(
-    ...args: Parameters<RendererInspector["beginCompute"]>
-  ): void {
-    if (this.sampling) super.beginCompute(...args);
-  }
-
-  override finishCompute(
-    ...args: Parameters<RendererInspector["finishCompute"]>
-  ): void {
-    if (this.sampling) super.finishCompute(...args);
-  }
-
-  override beginRender(
-    ...args: Parameters<RendererInspector["beginRender"]>
-  ): void {
-    if (this.sampling) super.beginRender(...args);
-  }
-
-  override finishRender(
-    ...args: Parameters<RendererInspector["finishRender"]>
-  ): void {
-    if (this.sampling) super.finishRender(...args);
   }
 
   resolveFrame(value: unknown): void {
@@ -137,15 +93,6 @@ export class KernelTimingInspector extends RendererInspector {
     }
     for (const stats of frame.renders) {
       pools.render?.timestamps.delete(stats.uid);
-    }
-  }
-
-  private setTimestampTracking(enabled: boolean): void {
-    const renderer = this.getRenderer() as unknown as {
-      backend?: { trackTimestamp: boolean };
-    } | null;
-    if (renderer?.backend !== undefined) {
-      renderer.backend.trackTimestamp = enabled;
     }
   }
 }
