@@ -663,13 +663,13 @@ diagnostic readbacks, so its FPS is not the final production-performance number.
 
 The tile profile also reports total and worst-tile raster batches (256 splats
 per batch), plus counterfactual dropped-intersection, affected-tile and batch
-counts for caps of 2048, 4096 and 8192. The diagnostic raster cap is disabled
-by default because dropping a tile's sorted tail can leave visible tile-shaped
-artifacts. Append `&tileCap=8192` (or another positive integer) to enable the
-experiment; `tileCap=0` explicitly disables it. The cap is applied only when
-the raster kernel reads each sorted tile range: intersection emission and radix
-sorting remain unchanged. The stable tile sort preserves front-to-back depth
-order, so the nearest splats are retained and only the far tail is skipped.
+counts for caps of 2048, 4096 and 8192. Rasterization samples at most 8192
+splats per tile by default. Append `&tileCap=2048` (or another positive integer)
+to change it, or use `tileCap=0` to disable it. Overflowing tiles are sampled at
+evenly spaced bin centers across their complete depth-ordered ranges instead of
+rendering a contiguous prefix; this avoids the black tile-shaped holes caused
+by missing far-range coverage. Intersection emission and radix sorting remain
+unchanged.
 
 Subpixel sample culling is enabled by default. During projection, Gaussians
 whose alpha-support AABB is at most one pixel in both dimensions are tested
