@@ -172,7 +172,9 @@ export function planTieredRadialLod(
   let gaussianCount = 0;
   let cumulativeShare = 0;
   for (let tier = 0; tier < tierLevels.length; tier++) {
-    cumulativeShare += request.budgetShares[tier]!;
+    const share = request.budgetShares[tier]!;
+    cumulativeShare += share;
+    if (share === 0) continue;
     const tierLimit =
       tier === tierLevels.length - 1
         ? request.maxGaussians
