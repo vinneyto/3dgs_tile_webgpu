@@ -30,10 +30,10 @@ describe("GaussianPass node slots", () => {
     expect(pass.gaussianPositionWorldNode).toBe(gaussianPositionWorld);
     expect(pass.gaussianColorNode).toBe(gaussianColor);
     expect(pass.rasterColorNode).toBe(rasterGaussianColor);
-    expect(pass.maxRasterizedSplatsPerTile).toBe(8_192);
+    expect(pass.maxRasterizedSplatsPerTile).toBeNull();
 
-    const uncapped = createPass({ maxRasterizedSplatsPerTile: null }).pass;
-    expect(uncapped.maxRasterizedSplatsPerTile).toBeNull();
+    const capped = createPass({ maxRasterizedSplatsPerTile: 8_192 }).pass;
+    expect(capped.maxRasterizedSplatsPerTile).toBe(8_192);
   });
 
   it("rebuilds only the stage whose root node changed", () => {
