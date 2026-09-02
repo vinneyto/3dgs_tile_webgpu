@@ -58,6 +58,7 @@ export class GaussianPass extends PassNode {
   readonly colorSpace: ColorSpace;
   readonly profileKernels: boolean;
   readonly maxRasterizedSplatsPerTile: number | null;
+  readonly pixelAabbReject: boolean;
   readonly radixBackend: ResolvedRadixBackend;
   readonly colorTexture: StorageTexture;
   readonly depthTexture: StorageTexture | null;
@@ -134,6 +135,7 @@ export class GaussianPass extends PassNode {
     this.colorSpace = options.colorSpace ?? SRGBColorSpace;
     this.profileKernels = options.profileKernels ?? false;
     this.maxRasterizedSplatsPerTile = maxRasterizedSplatsPerTile;
+    this.pixelAabbReject = options.pixelAabbReject ?? true;
     this.radixBackend = radixBackend;
 
     this.renderTarget.texture.dispose();
@@ -347,6 +349,7 @@ export class GaussianPass extends PassNode {
         this.background,
         this.profileKernels,
         this.maxRasterizedSplatsPerTile,
+        this.pixelAabbReject,
         this.radixBackend,
         this.nodeSlots,
       );
@@ -405,6 +408,7 @@ export class GaussianPass extends PassNode {
         radixBackend: this.radixBackend,
         profileKernels: this.profileKernels,
         maxRasterizedSplatsPerTile: this.maxRasterizedSplatsPerTile,
+        pixelAabbReject: this.pixelAabbReject,
       }
     );
   }

@@ -595,6 +595,11 @@ emission and radix sorting remain unchanged, so the GPU timing difference
 isolates the long-tail raster cost. The nearest depth-sorted splats are retained.
 Omit `tileCap` or use `tileCap=0` for the unchanged renderer.
 
+The rasterizer rejects pixel/Gaussian pairs outside each projected support
+AABB before evaluating the conic and material nodes. This fast path is enabled
+by default and adds only one 256-float workgroup array; set `?pixelAabb=0` in
+the sandbox or pass `{ pixelAabbReject: false }` to disable it for A/B timing.
+
 The memory delta is captured after a 30-frame warm-up, making accidental per-frame resource growth visible.
 Diagnostic intersection readback runs asynchronously every 1.5 seconds;
 `?stats=0` disables that readback outside profiling mode. Append `?debug=0` to

@@ -67,6 +67,7 @@ describe("generated Gaussian WGSL", () => {
       null,
       frame,
       2_048,
+      true,
       nodes,
     );
 
@@ -84,6 +85,7 @@ describe("generated Gaussian WGSL", () => {
     expect(rasterSource).toContain("compact_morton_bits_16");
     expect(rasterSource).toContain("rasterTileEnd");
     expect(rasterSource).toContain("2048u");
+    expect(rasterSource).toMatch(/var<workgroup> .*array< f32, 256 >/);
     expect(rasterSource).toContain("workgroupBarrier");
     expect(projectionSource).not.toMatch(/return;\s*return;/);
     expect(rasterSource).not.toMatch(/continue;\s*continue;/);
@@ -119,6 +121,15 @@ describe("generated Gaussian WGSL", () => {
     expect(projectionSource).toContain("vec3<f32>( 1.0, 0.75, 0.5 )");
     expect(rasterSource).toContain("0.25");
     expect(rasterSource).toContain("vec3<f32>");
+  });
+
+  it("omits the pixel-AABB fast path when disabled", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    const enabled = buildPipeline(nodes, true).rasterSource;
+    const disabled = buildPipeline(nodes, false).rasterSource;
+
+    expect(enabled).toMatch(/var<workgroup> .*array< f32, 256 >/);
+    expect(disabled).not.toMatch(/var<workgroup> .*array< f32, 256 >/);
   });
 
   it("builds the profiling-only subpixel coverage kernel", () => {
@@ -178,6 +189,7 @@ describe("generated Gaussian WGSL", () => {
 
 function buildPipeline(
   nodes: ReturnType<typeof createDefaultGaussianNodeSlots>,
+  pixelAabbReject = true,
 ) {
   const data = oneGaussian();
   const store = new GaussianStore();
@@ -209,6 +221,7 @@ function buildPipeline(
     null,
     frame,
     null,
+    pixelAabbReject,
     nodes,
   );
 

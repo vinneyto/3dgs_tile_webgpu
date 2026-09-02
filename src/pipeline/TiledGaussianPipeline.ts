@@ -63,6 +63,7 @@ export class TiledGaussianPipeline {
     background: readonly [number, number, number, number],
     private readonly profileKernels: boolean,
     private readonly maxRasterizedSplatsPerTile: number | null,
+    private readonly pixelAabbReject: boolean,
     private readonly radixBackend: ResolvedRadixBackend,
     private readonly nodes: GaussianNodeSlots,
   ) {
@@ -214,6 +215,7 @@ export class TiledGaussianPipeline {
       radixBackend: this.radixBackend,
       profileKernels: this.profileKernels,
       maxRasterizedSplatsPerTile: this.maxRasterizedSplatsPerTile,
+      pixelAabbReject: this.pixelAabbReject,
     };
   }
 
@@ -293,6 +295,7 @@ export class TiledGaussianPipeline {
       depthTexture,
       this.frame,
       this.maxRasterizedSplatsPerTile,
+      this.pixelAabbReject,
       this.nodes,
     );
     this.width = width;

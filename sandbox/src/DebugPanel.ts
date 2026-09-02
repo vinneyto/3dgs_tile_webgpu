@@ -166,6 +166,10 @@ export class DebugPanel {
       debug === null
         ? "stages         —"
         : `stages         rebuilds ${debug.tileStageRebuilds}  radix ${debug.radixBackend} depth ${debug.depthRadixPasses} + tile ${debug.tileRadixPasses}`;
+    const pixelAabbLine =
+      debug === null
+        ? "pixel AABB     —"
+        : `pixel AABB     ${debug.pixelAabbReject ? "on" : "OFF"} · ?pixelAabb=0 disables it`;
     const packingLines = this.packStatsLines();
     const profileLines = this.profileStatsLines(profileKernels);
 
@@ -179,6 +183,7 @@ export class DebugPanel {
       requestedLine,
       pipelineLine,
       stagesLine,
+      pixelAabbLine,
       ...profileLines,
       "",
       ...packingLines,
