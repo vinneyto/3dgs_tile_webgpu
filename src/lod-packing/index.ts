@@ -15,3 +15,7 @@ export {
   DistanceAwareRadialLodPackingStrategy,
   type DistanceAwareRadialLodPackingOptions,
 } from "./DistanceAwareRadialLodPackingStrategy";
+export {
+  StreamingLodPackingStrategy,
+  type StreamingLodPackingOptions,
+} from "./StreamingLodPackingStrategy";

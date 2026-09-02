@@ -19,6 +19,7 @@ import {
   GaussianStore,
   DistanceAwareRadialLodPackingStrategy,
   SourceFractionBudgetStrategy,
+  StreamingLodPackingStrategy,
   type GaussianStorePackLimits,
   type GaussianPass,
   type RadixBackend,
@@ -63,7 +64,7 @@ export class GaussianSandbox {
   private octreeHelpersVisible = false;
   private lodColoringEnabled = true;
   private primaryCloud: GaussianCloud | null = null;
-  private primaryPackingStrategy: DistanceAwareRadialLodPackingStrategy | null =
+  private primaryPackingStrategy: StreamingLodPackingStrategy<DistanceAwareRadialLodPackingStrategy> | null =
     null;
   private lodColorHelper: GaussianLodColorHelper | null = null;
   private deviceLimits: GaussianStorePackLimits | null = null;
@@ -217,7 +218,7 @@ export class GaussianSandbox {
     store: GaussianStore,
     source: string,
     primaryCloud: GaussianCloud,
-    primaryPackingStrategy: DistanceAwareRadialLodPackingStrategy,
+    primaryPackingStrategy: StreamingLodPackingStrategy<DistanceAwareRadialLodPackingStrategy>,
     limits: GaussianStorePackLimits,
   ): void {
     this.lodColorHelper?.dispose();
@@ -318,26 +319,29 @@ export class GaussianSandbox {
     }
     this.camera.getWorldPosition(this.packingCenter);
     cloud.worldToLocal(this.packingCenter);
-    if (
-      this.packingCenter.distanceToSquared(this.lastPackedCenter) <
-      this.repackDistance * this.repackDistance
-    ) {
-      return;
+    const centerChanged =
+      !Number.isFinite(this.lastPackedCenter.x) ||
+      this.packingCenter.distanceToSquared(this.lastPackedCenter) >=
+        this.repackDistance * this.repackDistance;
+    if (centerChanged) {
+      strategy.targetStrategy.setCenter(this.packingCenter);
+      strategy.invalidateTarget();
+      this.lastPackedCenter.copy(this.packingCenter);
     }
+    if (!strategy.needsPack) return;
 
-    strategy.setCenter(this.packingCenter);
     cloud.invalidatePacking();
     const started = performance.now();
     store.pack({ limits });
     this.lodColorHelper?.update();
     const duration = performance.now() - started;
-    this.lastPackedCenter.copy(this.packingCenter);
     const stats = store.lastPackStats;
     if (stats !== null) {
       this.debugPanel.recordPack(
         stats,
         duration,
         this.packingCenter.distanceTo(this.packingBoundsCenter),
+        strategy.needsPack,
       );
     }
   }
@@ -492,11 +496,17 @@ function webGpuDeviceLimits(renderer: WebGPURenderer): GPUSupportedLimits {
   return backend.device.limits;
 }
 
-function createPrimaryPackingStrategy(): DistanceAwareRadialLodPackingStrategy {
-  return new DistanceAwareRadialLodPackingStrategy({
-    center: new Vector3(0, 0, 0),
-    levelDistance: readLodLevelDistance(),
-  });
+function createPrimaryPackingStrategy(): StreamingLodPackingStrategy<DistanceAwareRadialLodPackingStrategy> {
+  return new StreamingLodPackingStrategy(
+    new DistanceAwareRadialLodPackingStrategy({
+      center: new Vector3(0, 0, 0),
+      levelDistance: readLodLevelDistance(),
+    }),
+    {
+      maxUploadBytesPerPack: readPositiveQuery("lodUploadKiB", 1024) * 1024,
+      maxChangedCellsPerPack: readPositiveIntegerQuery("lodCells", 16),
+    },
+  );
 }
 
 function readLodLevelDistance(): number {
@@ -507,4 +517,22 @@ function readLodLevelDistance(): number {
     throw new RangeError("lodDistance must be finite and positive");
   }
   return distance;
+}
+
+function readPositiveQuery(name: string, fallback: number): number {
+  const raw = new URLSearchParams(location.search).get(name);
+  if (raw === null) return fallback;
+  const value = Number(raw);
+  if (!(value > 0) || !Number.isFinite(value)) {
+    throw new RangeError(`${name} must be finite and positive`);
+  }
+  return value;
+}
+
+function readPositiveIntegerQuery(name: string, fallback: number): number {
+  const value = readPositiveQuery(name, fallback);
+  if (!Number.isInteger(value)) {
+    throw new RangeError(`${name} must be a positive integer`);
+  }
+  return value;
 }

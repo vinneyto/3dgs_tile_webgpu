@@ -39,7 +39,8 @@ src/
 │   ├── MaximumLodPackingStrategy.ts  strict full-detail packing
 │   ├── RadialLodPackingStrategy.ts   fixed-LOD center-out clipping
 │   ├── TieredRadialLodPackingStrategy.ts 60/20/20 radial LOD tiers
-│   └── DistanceAwareRadialLodPackingStrategy.ts distance-based radial tiers
+│   ├── DistanceAwareRadialLodPackingStrategy.ts distance-based radial tiers
+│   └── StreamingLodPackingStrategy.ts bounded latest-target transitions
 ├── store-budgeting/                 global Store budget assignment
 │   ├── GaussianStoreBudgetStrategy.ts shared strategy contract
 │   ├── RemainingCapacityBudgetStrategy.ts default remaining-budget policy
@@ -191,8 +192,9 @@ store.pack({ limits: device.limits });
 `GaussianLodPackingStrategy` is an interface with a `pack()` method.
 `MaximumLodPackingStrategy`, `RadialLodPackingStrategy`,
 `TieredRadialLodPackingStrategy`, and
-`DistanceAwareRadialLodPackingStrategy` are its built-in implementations.
-Built-in and custom strategies must reference leaf cells in their returned
+`DistanceAwareRadialLodPackingStrategy` are its stateless built-in
+implementations. `StreamingLodPackingStrategy` wraps one of them with bounded
+stateful transitions. Built-in and custom strategies must reference leaf cells in their returned
 `GaussianLodPacking`. `GaussianLod` stores importance-sorted nested prefixes
 only for leaves; internal octree nodes retain their bounds, children and counts
 without duplicating every descendant Gaussian index.
@@ -222,6 +224,33 @@ cameraPacking.setCenter(cameraPositionInCloudLocalSpace);
 cloud.invalidatePacking();
 store.pack({ limits: device.limits });
 ```
+
+Large camera-driven changes can be spread over frames with a latest-target-wins
+wrapper. Its initial packing is immediate. Later calls transition whole leaf
+cells within both limits; calling `invalidateTarget()` again discards the
+unfinished target and diffs the actually applied packing against the newest
+one. A streaming instance is stateful and must belong to one cloud.
+
+```ts
+const distancePacking = new DistanceAwareRadialLodPackingStrategy();
+const streamingPacking = new StreamingLodPackingStrategy(distancePacking, {
+  maxUploadBytesPerPack: 1024 * 1024,
+  maxChangedCellsPerPack: 16,
+});
+
+distancePacking.setCenter(cameraPositionInCloudLocalSpace);
+streamingPacking.invalidateTarget();
+
+if (streamingPacking.needsPack) {
+  cloud.invalidatePacking();
+  store.pack({ limits: device.limits });
+}
+```
+
+Downgrades and removals are applied before uploads; upgrades follow the wrapped
+strategy's target order. The byte limit is a conservative estimate that
+includes update-range merging. At least one whole leaf is processed so a leaf
+larger than the configured byte limit cannot stall the transition.
 
 Packing remains an individual cloud characteristic when needed:
 
@@ -578,7 +607,8 @@ sandbox uses the packed-attribute helper instead of LOD volume boxes.
 Its radial packing focus follows the camera and repacks after meaningful camera
 movement; CPU planning and buffer updates remain synchronous for now.
 Use `?lodDistance=2` to change the number of octree-root half-diagonals per LOD
-step.
+step. Camera-driven transitions default to 1 MiB and 16 changed leaves per
+frame; use `?lodUploadKiB=1024&lodCells=16` to tune those limits.
 
 Files addressed by URL belong in `sandbox/public/`; the file picker and drag-and-drop do not require copying
 the file into the repository. The loader accepts ASCII, binary little-endian, and binary big-endian scalar PLY

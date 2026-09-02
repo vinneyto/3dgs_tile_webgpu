@@ -7,6 +7,7 @@ import {
   DistanceAwareRadialLodPackingStrategy,
   MaximumLodPackingStrategy,
   RadialLodPackingStrategy,
+  StreamingLodPackingStrategy,
   TieredRadialLodPackingStrategy,
 } from "../src/lod-packing";
 import { GaussianOctree } from "../src/GaussianOctree";
@@ -317,7 +318,84 @@ describe("GaussianLod", () => {
       () => new DistanceAwareRadialLodPackingStrategy({ levelDistance: 0 }),
     ).toThrow(/levelDistance/);
   });
+
+  it("streams whole-cell transitions and replaces an unfinished target", () => {
+    const lod = GaussianLod.build(
+      GaussianOctree.build(
+        gaussianData([
+          [-1, -1, -1],
+          [-0.9, -0.9, -0.9],
+          [1, 1, 1],
+          [0.9, 0.9, 0.9],
+        ]),
+        { leafCapacity: 2 },
+      ),
+      { levels: [{ retention: 0.5 }, { retention: 1 }] },
+    );
+    let target = packingAtLevel(lod, 0);
+    const targetStrategy = { pack: () => target };
+    const streaming = new StreamingLodPackingStrategy(targetStrategy, {
+      maxChangedCellsPerPack: 1,
+      maxUploadBytesPerPack: 1,
+    });
+    const context = { lod, maxGaussians: 4 };
+
+    const initial = streaming.pack(context);
+    expect(initial).toBe(target);
+    expect(streaming.needsPack).toBe(false);
+
+    target = packingAtLevel(lod, 1);
+    streaming.invalidateTarget();
+    const partialUpgrade = streaming.pack(context);
+    expect(
+      [...partialUpgrade.lodLevels].filter((level) => level === 1),
+    ).toHaveLength(1);
+    expect(streaming.needsPack).toBe(true);
+
+    target = packingAtLevel(lod, 0);
+    streaming.invalidateTarget();
+    const replaced = streaming.pack(context);
+    expect(Array.from(replaced.lodLevels)).toEqual(
+      Array.from(target.lodLevels),
+    );
+    expect(streaming.needsPack).toBe(false);
+  });
+
+  it("validates streaming batch limits", () => {
+    const targetStrategy = {
+      pack: () => ({
+        nodeIds: new Uint32Array(),
+        lodLevels: new Uint8Array(),
+        gaussianCount: 0,
+      }),
+    };
+    expect(
+      () =>
+        new StreamingLodPackingStrategy(targetStrategy, {
+          maxUploadBytesPerPack: 0,
+        }),
+    ).toThrow(/maxUploadBytesPerPack/);
+    expect(
+      () =>
+        new StreamingLodPackingStrategy(targetStrategy, {
+          maxChangedCellsPerPack: 1.5,
+        }),
+    ).toThrow(/maxChangedCellsPerPack/);
+  });
 });
+
+function packingAtLevel(lod: GaussianLod, level: number) {
+  const nodeIds = lod.octree.leafNodeIds.slice();
+  const lodLevels = new Uint8Array(nodeIds.length).fill(level);
+  return {
+    nodeIds,
+    lodLevels,
+    gaussianCount: Array.from(nodeIds).reduce(
+      (count, nodeId) => count + lod.nodes[nodeId]!.levelCounts[level]!,
+      0,
+    ),
+  };
+}
 
 function gaussianData(
   points: readonly (readonly number[])[],

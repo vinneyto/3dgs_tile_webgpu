@@ -29,11 +29,13 @@ export {
   MaximumLodPackingStrategy,
   DistanceAwareRadialLodPackingStrategy,
   RadialLodPackingStrategy,
+  StreamingLodPackingStrategy,
   TieredRadialLodPackingStrategy,
   type DistanceAwareRadialLodPackingOptions,
   type GaussianLodPackingContext,
   type GaussianLodPackingStrategy,
   type RadialLodPackingOptions,
+  type StreamingLodPackingOptions,
   type TieredRadialLodPackingOptions,
 } from "./lod-packing";
 export {

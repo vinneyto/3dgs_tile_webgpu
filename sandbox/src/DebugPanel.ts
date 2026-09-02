@@ -29,6 +29,7 @@ export class DebugPanel {
   private packDurationMs = 0;
   private packCount = 0;
   private packingFocusDistance = 0;
+  private packingPending = false;
   private kernelScrollActiveUntil = -Infinity;
 
   constructor(
@@ -61,16 +62,19 @@ export class DebugPanel {
     this.packDurationMs = 0;
     this.packCount = 0;
     this.packingFocusDistance = 0;
+    this.packingPending = false;
   }
 
   recordPack(
     stats: GaussianStorePackStats,
     durationMs: number,
     focusDistance: number,
+    pending: boolean,
   ): void {
     this.packStats = stats;
     this.packDurationMs = durationMs;
     this.packingFocusDistance = focusDistance;
+    this.packingPending = pending;
     this.packCount++;
   }
 
@@ -237,6 +241,7 @@ export class DebugPanel {
     if (stats === null) return ["LOD repack     waiting for camera movement"];
     return [
       `LOD repack     #${this.packCount}  CPU ${formatMs(this.packDurationMs)}  camera distance ${this.packingFocusDistance.toFixed(2)} m`,
+      `LOD stream     ${this.packingPending ? "pending" : "settled"}`,
       `pack phases    plan ${formatMs(stats.planningMs)}  slots ${formatMs(stats.slotUpdateMs)}`,
       `slots          active ${formatInteger(stats.activeGaussians)} / ${formatInteger(stats.slotCapacity)}`,
       `slot delta     reused ${formatInteger(stats.reusedSlots)}  written ${formatInteger(stats.writtenSlots)}  cleared ${formatInteger(stats.clearedSlots)}`,
