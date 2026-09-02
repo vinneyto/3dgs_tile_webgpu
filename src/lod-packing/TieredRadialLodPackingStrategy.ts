@@ -11,7 +11,7 @@ import { type GaussianLodPackingCenter, radialLodCells } from "./radialCells";
 export interface TieredRadialLodPackingOptions {
   /** Local-space focus point. Defaults to the tight object-bounds center. */
   center?: GaussianLodPackingCenter;
-  /** Finest, middle and coarsest shares. Defaults to [0.6, 0.2, 0.2]. */
+  /** Finest, middle and coarsest shares. Defaults to [0.9, 0, 0.1]. */
   budgetShares?: readonly [number, number, number];
 }
 
@@ -29,7 +29,7 @@ export class TieredRadialLodPackingStrategy implements GaussianLodPackingStrateg
         ? options.center.clone()
         : (options.center ?? "bounds-center");
     this.budgetShares = validateBudgetShares(
-      options.budgetShares ?? [0.6, 0.2, 0.2],
+      options.budgetShares ?? [0.9, 0, 0.1],
     );
   }
 
@@ -63,7 +63,9 @@ export class TieredRadialLodPackingStrategy implements GaussianLodPackingStrateg
     let cumulativeShare = 0;
 
     for (let tier = 0; tier < levels.length; tier++) {
-      cumulativeShare += this.budgetShares[tier]!;
+      const share = this.budgetShares[tier]!;
+      cumulativeShare += share;
+      if (share === 0) continue;
       const tierLimit =
         tier === levels.length - 1
           ? maxGaussians
