@@ -189,8 +189,13 @@ store.pack({ limits: device.limits });
 
 `GaussianLodPackingStrategy` is an interface with a `pack()` method.
 `MaximumLodPackingStrategy`, `RadialLodPackingStrategy`, and
-`TieredRadialLodPackingStrategy` are its built-in implementations. The radial
-strategy walks leaf cells continuously from the focus outwards and packs one
+`TieredRadialLodPackingStrategy` are its built-in implementations. Built-in and
+custom strategies must reference leaf cells in their returned
+`GaussianLodPacking`. `GaussianLod` stores importance-sorted nested prefixes
+only for leaves; internal octree nodes retain their bounds, children and counts
+without duplicating every descendant Gaussian index.
+
+The radial strategy walks leaf cells continuously from the focus outwards and packs one
 requested LOD for every selected cell. It stops before the first whole cell that
 would exceed the allocation; that cell and all farther cells are clipped.
 `"finest"` resolves to the last configured LOD level. The tiered strategy first

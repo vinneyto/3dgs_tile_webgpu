@@ -975,11 +975,17 @@ function validatePackingStructure(
   for (let index = 0; index < packing.nodeIds.length; index++) {
     const nodeId = packing.nodeIds[index]!;
     const node = lod.nodes[nodeId];
+    const octreeNode = lod.octree.nodes[nodeId];
     const level = packing.lodLevels[index]!;
     const count = node?.levelCounts[level];
-    if (count === undefined) {
+    if (count === undefined || octreeNode === undefined) {
       throw new RangeError(
         `GaussianLod packing references invalid node ${nodeId} or level ${level}`,
+      );
+    }
+    if (!octreeNode.isLeaf) {
+      throw new Error(
+        `GaussianLodPacking must reference leaf nodes; node ${nodeId} is internal`,
       );
     }
     if (selected.has(nodeId)) {
@@ -993,19 +999,6 @@ function validatePackingStructure(
       `GaussianLodPacking declares ${packing.gaussianCount} Gaussians but selects ${gaussianCount}`,
     );
   }
-
-  const visit = (nodeId: number, selectedAncestor: boolean): void => {
-    const selectedHere = selected.has(nodeId);
-    if (selectedAncestor && selectedHere) {
-      throw new Error(
-        "GaussianLodPacking contains overlapping octree representations",
-      );
-    }
-    for (const childId of lod.octree.nodes[nodeId]!.children) {
-      visit(childId, selectedAncestor || selectedHere);
-    }
-  };
-  visit(lod.octree.rootNode, false);
 }
 
 function capacityFromLimits(
