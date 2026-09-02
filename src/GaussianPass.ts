@@ -37,8 +37,6 @@ import type {
 } from "./pipeline/types";
 
 const drawingBufferSize = new Vector2();
-const DEFAULT_MAX_RASTERIZED_SPLATS_PER_TILE = 8_192;
-
 const enum DirtyStage {
   None = 0,
   Projection = 1 << 0,
@@ -114,9 +112,7 @@ export class GaussianPass extends PassNode {
       );
     }
     const maxRasterizedSplatsPerTile =
-      options.maxRasterizedSplatsPerTile === undefined
-        ? DEFAULT_MAX_RASTERIZED_SPLATS_PER_TILE
-        : options.maxRasterizedSplatsPerTile;
+      options.maxRasterizedSplatsPerTile ?? null;
     if (
       maxRasterizedSplatsPerTile !== null &&
       (!Number.isInteger(maxRasterizedSplatsPerTile) ||
