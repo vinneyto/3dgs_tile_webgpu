@@ -3,6 +3,14 @@ export {
   type GaussianBuffers,
   type GaussianDataOptions,
 } from "./GaussianData";
+export {
+  FLOAT32_SH_BYTES_PER_COEFFICIENT,
+  RGB8E8_SH_BYTES_PER_COEFFICIENT,
+  packShRgb8e8,
+  shBytesPerCoefficient,
+  unpackShRgb8e8,
+  type GaussianShFormat,
+} from "./GaussianSh";
 export { CanonicalGaussianPlyLoader } from "./CanonicalGaussianPlyLoader";
 export { GaussianCloud, type GaussianRaycastMode } from "./GaussianCloud";
 export {

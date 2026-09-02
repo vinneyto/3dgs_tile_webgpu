@@ -1,4 +1,5 @@
 import type { AntialiasMode } from "../pipeline/types";
+import type { GaussianShFormat } from "../GaussianSh";
 import { tileContributionWGSL } from "./tileContribution";
 
 export function projectionCovarianceWGSL(antialiasMode: AntialiasMode): string {
@@ -113,49 +114,68 @@ fn project_gaussian_covariance_${antialiasMode}(
 `;
 }
 
-export const evaluateShWGSL = /* wgsl */ `
-fn evaluate_gaussian_sh(
+export function evaluateShWGSL(format: GaussianShFormat): string {
+  const coefficientType = format === "rgb8e8" ? "u32" : "vec4<f32>";
+  const decode =
+    format === "rgb8e8"
+      ? /* wgsl */ `
+fn decode_sh_rgb8e8(packed: u32) -> vec3<f32> {
+  let mantissa = unpack4x8snorm(packed).xyz;
+  let exponent = i32((packed >> 24u) & 255u) - 127;
+  return mantissa * exp2(f32(exponent));
+}`
+      : "";
+  const coefficient = (offset: number): string => {
+    const index = offset === 0 ? "base" : `base + ${offset}u`;
+    return format === "rgb8e8"
+      ? `decode_sh_rgb8e8((*sh_coefficients)[${index}])`
+      : `(*sh_coefficients)[${index}].xyz`;
+  };
+  return /* wgsl */ `
+fn evaluate_gaussian_sh_${format}(
   gid: u32,
   sh_degree: u32,
   direction: vec3<f32>,
-  sh_coefficients: ptr<storage, array<vec4<f32>>, read>
+  sh_coefficients: ptr<storage, array<${coefficientType}>, read>
 ) -> vec3<f32> {
   let x = direction.x;
   let y = direction.y;
   let z = direction.z;
   let coefficient_count = (sh_degree + 1u) * (sh_degree + 1u);
   let base = gid * coefficient_count;
-  var color = 0.28209479177387814 * (*sh_coefficients)[base].xyz;
+  var color = 0.28209479177387814 * ${coefficient(0)};
   if (sh_degree >= 1u) {
-    color += (-0.4886025119029199 * y) * (*sh_coefficients)[base + 1u].xyz;
-    color += ( 0.4886025119029199 * z) * (*sh_coefficients)[base + 2u].xyz;
-    color += (-0.4886025119029199 * x) * (*sh_coefficients)[base + 3u].xyz;
+    color += (-0.4886025119029199 * y) * ${coefficient(1)};
+    color += ( 0.4886025119029199 * z) * ${coefficient(2)};
+    color += (-0.4886025119029199 * x) * ${coefficient(3)};
   }
   if (sh_degree >= 2u) {
     let xx = x * x;
     let yy = y * y;
     let zz = z * z;
-    color += ( 1.0925484305920792 * x * y) * (*sh_coefficients)[base + 4u].xyz;
-    color += (-1.0925484305920792 * y * z) * (*sh_coefficients)[base + 5u].xyz;
-    color += ( 0.31539156525252005 * (2.0 * zz - xx - yy)) * (*sh_coefficients)[base + 6u].xyz;
-    color += (-1.0925484305920792 * x * z) * (*sh_coefficients)[base + 7u].xyz;
-    color += ( 0.5462742152960396 * (xx - yy)) * (*sh_coefficients)[base + 8u].xyz;
+    color += ( 1.0925484305920792 * x * y) * ${coefficient(4)};
+    color += (-1.0925484305920792 * y * z) * ${coefficient(5)};
+    color += ( 0.31539156525252005 * (2.0 * zz - xx - yy)) * ${coefficient(6)};
+    color += (-1.0925484305920792 * x * z) * ${coefficient(7)};
+    color += ( 0.5462742152960396 * (xx - yy)) * ${coefficient(8)};
   }
   if (sh_degree >= 3u) {
     let xx = x * x;
     let yy = y * y;
     let zz = z * z;
-    color += (-0.5900435899266435 * y * (3.0 * xx - yy)) * (*sh_coefficients)[base + 9u].xyz;
-    color += ( 2.890611442640554 * x * y * z) * (*sh_coefficients)[base + 10u].xyz;
-    color += (-0.4570457994644658 * y * (4.0 * zz - xx - yy)) * (*sh_coefficients)[base + 11u].xyz;
-    color += ( 0.3731763325901154 * z * (2.0 * zz - 3.0 * xx - 3.0 * yy)) * (*sh_coefficients)[base + 12u].xyz;
-    color += (-0.4570457994644658 * x * (4.0 * zz - xx - yy)) * (*sh_coefficients)[base + 13u].xyz;
-    color += ( 1.445305721320277 * z * (xx - yy)) * (*sh_coefficients)[base + 14u].xyz;
-    color += (-0.5900435899266435 * x * (xx - 3.0 * yy)) * (*sh_coefficients)[base + 15u].xyz;
+    color += (-0.5900435899266435 * y * (3.0 * xx - yy)) * ${coefficient(9)};
+    color += ( 2.890611442640554 * x * y * z) * ${coefficient(10)};
+    color += (-0.4570457994644658 * y * (4.0 * zz - xx - yy)) * ${coefficient(11)};
+    color += ( 0.3731763325901154 * z * (2.0 * zz - 3.0 * xx - 3.0 * yy)) * ${coefficient(12)};
+    color += (-0.4570457994644658 * x * (4.0 * zz - xx - yy)) * ${coefficient(13)};
+    color += ( 1.445305721320277 * z * (xx - yy)) * ${coefficient(14)};
+    color += (-0.5900435899266435 * x * (xx - 3.0 * yy)) * ${coefficient(15)};
   }
   return clamp(color + vec3<f32>(0.5), vec3<f32>(0.0), vec3<f32>(1.0));
 }
+${decode}
 `;
+}
 
 /**
  * Exact sampled-alpha test for support AABBs no larger than one pixel in both

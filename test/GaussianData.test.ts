@@ -9,6 +9,10 @@ function attribute(items: number, itemSize = 4): StorageBufferAttribute {
   );
 }
 
+function uintAttribute(items: number): StorageBufferAttribute {
+  return new StorageBufferAttribute(new Uint32Array(items), 1);
+}
+
 describe("GaussianData", () => {
   it("accepts shareable Three.js storage attributes", () => {
     const data = new GaussianData(
@@ -50,6 +54,37 @@ describe("GaussianData", () => {
           { count: 1, shDegree: 1 },
         ),
     ).toThrow(/at least 4/);
+  });
+
+  it("accepts packed rgb8e8 SH and rejects representation mismatches", () => {
+    const buffers = {
+      means: attribute(2),
+      scalesOpacity: attribute(2),
+      rotations: attribute(2),
+      shCoefficients: uintAttribute(2 * 4),
+    };
+    const packed = new GaussianData(buffers, {
+      count: 2,
+      shDegree: 1,
+      shFormat: "rgb8e8",
+    });
+    expect(packed.shFormat).toBe("rgb8e8");
+    expect(packed.shCoefficients.itemSize).toBe(1);
+
+    expect(
+      () =>
+        new GaussianData(
+          { ...buffers, shCoefficients: attribute(2 * 4) },
+          { count: 2, shDegree: 1, shFormat: "rgb8e8" },
+        ),
+    ).toThrow(/itemSize.*expected 1/);
+    expect(
+      () =>
+        new GaussianData(
+          { ...buffers, shCoefficients: uintAttribute(2 * 4) },
+          { count: 2, shDegree: 1, shFormat: "float32" },
+        ),
+    ).toThrow(/itemSize.*expected 4/);
   });
 
   it("disposes owned attributes exactly once", () => {

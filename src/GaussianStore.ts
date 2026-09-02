@@ -3,6 +3,7 @@ import { StorageBufferAttribute } from "three/webgpu";
 import { CanonicalGaussianPlyLoader } from "./CanonicalGaussianPlyLoader";
 import { GaussianCloud } from "./GaussianCloud";
 import { GaussianData } from "./GaussianData";
+import { packShRgb8e8, shBytesPerCoefficient } from "./GaussianSh";
 import {
   GaussianLod,
   type GaussianLodBuildOptions,
@@ -157,6 +158,7 @@ export class GaussianStore {
   private readonly loader: GaussianDataLoader;
   readonly budgetingStrategy: GaussianStoreBudgetStrategy;
   readonly defaultPackingStrategy: GaussianLodPackingStrategy;
+  readonly packedShFormat = "rgb8e8" as const;
   /** Optional attributes indexed by the same gaussianIndex as the packed data. */
   readonly attributes = new GaussianStoreAttributes();
   private readonly attributePackers: GaussianStoreAttributePacker[] = [];
@@ -383,6 +385,7 @@ export class GaussianStore {
       oldData !== null &&
       oldData.count === slotCapacity &&
       oldData.shDegree === this.shDegree &&
+      oldData.shFormat === this.packedShFormat &&
       this.packedObjectCapacity === this.objectCapacity;
     const slotUpdateStarted = performance.now();
     const result = canUpdateInPlace
@@ -529,7 +532,7 @@ export class GaussianStore {
           data.means.array as Float32Array,
           data.scalesOpacity.array as Float32Array,
           data.rotations.array as Float32Array,
-          data.shCoefficients.array as Float32Array,
+          data.shCoefficients.array as Uint32Array,
           data.shCoefficientCount,
         );
         nextSlots[local] = slot;
@@ -564,7 +567,7 @@ export class GaussianStore {
     markSlotRangesUpdated(
       data.shCoefficients,
       writtenSlotRanges,
-      data.shCoefficientCount * 4,
+      data.shCoefficientCount * data.shCoefficients.itemSize,
     );
     const attributeUploadStats = this.commitAttributePackers();
     const activeGaussians =
@@ -587,7 +590,7 @@ export class GaussianStore {
       writtenSlots: writtenSlots.length,
       clearedSlots: clearedSlots.length,
       estimatedUploadBytes:
-        uploadedWrittenSlots * (3 * 16 + data.shCoefficientCount * 16) +
+        uploadedWrittenSlots * packedGaussianBytes(data) +
         uploadedClearedSlots * 16 +
         attributeUploadStats.estimatedUploadBytes,
       writtenSlotRanges,
@@ -738,9 +741,7 @@ export class GaussianStore {
     const means = new Float32Array(slotCapacity * 4);
     const scalesOpacity = new Float32Array(slotCapacity * 4);
     const rotations = new Float32Array(slotCapacity * 4);
-    const shCoefficients = new Float32Array(
-      slotCapacity * coefficientCount * 4,
-    );
+    const shCoefficients = new Uint32Array(slotCapacity * coefficientCount);
     const cellSlotsByEntry = new Map<
       StoreEntry,
       Map<number, PackedCellState>
@@ -782,9 +783,18 @@ export class GaussianStore {
         means: attribute("3dgs.store.means-object", means),
         scalesOpacity: attribute("3dgs.store.scales-opacity", scalesOpacity),
         rotations: attribute("3dgs.store.rotations", rotations),
-        shCoefficients: attribute("3dgs.store.sh-coefficients", shCoefficients),
+        shCoefficients: attribute(
+          "3dgs.store.sh-coefficients",
+          shCoefficients,
+          1,
+        ),
       },
-      { count: slotCapacity, shDegree: degree, ownsBuffers: true },
+      {
+        count: slotCapacity,
+        shDegree: degree,
+        shFormat: this.packedShFormat,
+        ownsBuffers: true,
+      },
     );
     const packedLayoutCells = this.collectPackedLayoutCells(cellSlotsByEntry);
     for (const packer of this.attributePackers) {
@@ -804,7 +814,7 @@ export class GaussianStore {
         writtenSlots: slot,
         clearedSlots: 0,
         estimatedUploadBytes:
-          slot * (3 * 16 + coefficientCount * 16) +
+          slot * packedGaussianBytes(data) +
           attributeUploadStats.estimatedUploadBytes,
         writtenSlotRanges: slot === 0 ? [] : [{ start: 0, count: slot }],
         clearedSlotRanges: [],
@@ -900,7 +910,7 @@ export class GaussianStore {
             data.means.array as Float32Array,
             data.scalesOpacity.array as Float32Array,
             data.rotations.array as Float32Array,
-            data.shCoefficients.array as Float32Array,
+            data.shCoefficients.array as Uint32Array,
             data.shCoefficientCount,
           );
           nextSlots[local] = slot;
@@ -942,7 +952,7 @@ export class GaussianStore {
     markSlotRangesUpdated(
       data.shCoefficients,
       writtenSlotRanges,
-      data.shCoefficientCount * 4,
+      data.shCoefficientCount * data.shCoefficients.itemSize,
     );
     const attributeUploadStats = this.commitAttributePackers();
 
@@ -961,7 +971,7 @@ export class GaussianStore {
         writtenSlots: writtenSlotCount,
         clearedSlots: clearedSlotCount,
         estimatedUploadBytes:
-          uploadedWrittenSlots * (3 * 16 + data.shCoefficientCount * 16) +
+          uploadedWrittenSlots * packedGaussianBytes(data) +
           uploadedClearedSlots * 16 +
           attributeUploadStats.estimatedUploadBytes,
         writtenSlotRanges,
@@ -1033,7 +1043,7 @@ export class GaussianStore {
     means: Float32Array,
     scalesOpacity: Float32Array,
     rotations: Float32Array,
-    shCoefficients: Float32Array,
+    shCoefficients: Uint32Array,
     destinationCoefficientCount: number,
   ): void {
     const source = entry.lod?.octree.data ?? entry.source;
@@ -1054,20 +1064,12 @@ export class GaussianStore {
       slot,
     );
     means[slot * 4 + 3] = entry.cloud.objectId;
-    const sourceCoefficientCount = source.shCoefficientCount;
-    const sourceBase = sourceIndex * sourceCoefficientCount * 4;
-    const destinationBase = slot * destinationCoefficientCount * 4;
-    shCoefficients.fill(
-      0,
-      destinationBase,
-      destinationBase + destinationCoefficientCount * 4,
-    );
-    shCoefficients.set(
-      (source.shCoefficients.array as Float32Array).subarray(
-        sourceBase,
-        sourceBase + sourceCoefficientCount * 4,
-      ),
-      destinationBase,
+    copyShCoefficients(
+      source,
+      sourceIndex,
+      shCoefficients,
+      slot,
+      destinationCoefficientCount,
     );
   }
 
@@ -1110,8 +1112,12 @@ export class GaussianStore {
   }
 }
 
-function attribute(name: string, array: Float32Array): StorageBufferAttribute {
-  const result = new StorageBufferAttribute(array, 4);
+function attribute(
+  name: string,
+  array: Float32Array | Uint32Array,
+  itemSize = 4,
+): StorageBufferAttribute {
+  const result = new StorageBufferAttribute(array, itemSize);
   result.name = name;
   return result;
 }
@@ -1125,6 +1131,58 @@ function copyVec4Item(
   destination.set(
     source.subarray(sourceItem * 4, sourceItem * 4 + 4),
     destinationItem * 4,
+  );
+}
+
+function copyShCoefficients(
+  source: GaussianData,
+  sourceIndex: number,
+  destination: Uint32Array,
+  destinationIndex: number,
+  destinationCoefficientCount: number,
+): void {
+  const sourceCoefficientCount = source.shCoefficientCount;
+  const copiedCoefficientCount = Math.min(
+    sourceCoefficientCount,
+    destinationCoefficientCount,
+  );
+  const destinationBase = destinationIndex * destinationCoefficientCount;
+
+  destination.fill(
+    0,
+    destinationBase,
+    destinationBase + destinationCoefficientCount,
+  );
+  if (source.shFormat === "rgb8e8") {
+    const sourceBase = sourceIndex * sourceCoefficientCount;
+    destination.set(
+      (source.shCoefficients.array as Uint32Array).subarray(
+        sourceBase,
+        sourceBase + copiedCoefficientCount,
+      ),
+      destinationBase,
+    );
+    return;
+  }
+  const sourceValues = source.shCoefficients.array as Float32Array;
+  const sourceBase = sourceIndex * sourceCoefficientCount * 4;
+  for (
+    let coefficient = 0;
+    coefficient < copiedCoefficientCount;
+    coefficient++
+  ) {
+    const offset = sourceBase + coefficient * 4;
+    destination[destinationBase + coefficient] = packShRgb8e8(
+      sourceValues[offset]!,
+      sourceValues[offset + 1]!,
+      sourceValues[offset + 2]!,
+    );
+  }
+}
+
+function packedGaussianBytes(data: GaussianData): number {
+  return (
+    3 * 16 + data.shCoefficientCount * shBytesPerCoefficient(data.shFormat)
   );
 }
 
@@ -1204,7 +1262,10 @@ function capacityFromLimits(
     "maxStorageBufferBindingSize",
   );
   const bufferSize = validateDeviceLimit(limits.maxBufferSize, "maxBufferSize");
-  const bytesPerGaussian = Math.max(16, (shDegree + 1) ** 2 * 16);
+  const bytesPerGaussian = Math.max(
+    16,
+    (shDegree + 1) ** 2 * shBytesPerCoefficient("rgb8e8"),
+  );
   return Math.floor(Math.min(bindingSize, bufferSize) / bytesPerGaussian);
 }
 

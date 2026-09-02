@@ -30,6 +30,7 @@ types and GPU binding helpers stay grouped:
 ```text
 src/
 ├── GaussianData.ts                 external Gaussian buffer contract
+├── GaussianSh.ts                   RGB8E8 SH packing and CPU reference decode
 ├── CanonicalGaussianPlyLoader.ts   canonical PLY parsing and activation
 ├── GaussianCloud.ts                transformable Three.js scene object
 ├── GaussianOctree.ts               full CPU spatial index and raycasts
@@ -160,8 +161,11 @@ The Store's default packing strategy uses the finest LOD and selects leaf cells
 radially from the object-bounds center until that cloud's allocation is full.
 `pack({ limits: device.limits })` derives the Gaussian capacity from the actual
 device's `maxStorageBufferBindingSize`, `maxBufferSize`, and the highest SH
-degree among all registered clouds. At degree 3, the standard 128 MiB binding
-limit produces a capacity of 524,288 Gaussians.
+degree among all registered clouds. The Store quantizes each packed RGB SH
+coefficient to RGB8E8: three signed 8-bit mantissas with one shared 8-bit
+exponent. At degree 3 this reduces the SH binding from 256 to 64 bytes per
+Gaussian, so the standard 128 MiB binding limit permits 2,097,152 packed
+Gaussians instead of 524,288. Means, scale/opacity and rotation remain float32.
 
 ```ts
 import {
@@ -490,6 +494,10 @@ code.
 
 The parser is responsible for applying source-format activations such as `exp(logScale)` and
 `sigmoid(opacityLogit)`. SH degrees 0–3 are supported (1, 4, 9, or 16 coefficients per Gaussian).
+Source data defaults to float32. `GaussianStore` converts it once while packing
+to `StorageBufferAttribute(Uint32Array, 1)` with `shFormat: "rgb8e8"`; projection
+decodes coefficients in WGSL. This keeps CPU LOD data lossless while reducing
+the GPU SH binding and per-frame LOD upload volume by 4×.
 
 `GaussianStore` packs clouds sequentially and writes each stable numeric `objectId` into `means.w`, avoiding a
 separate per-Gaussian ID buffer. It selects the maximum SH degree of all clouds and zero-pads lower-degree SH

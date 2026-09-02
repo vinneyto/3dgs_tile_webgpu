@@ -186,11 +186,18 @@ export class ProjectionStage {
       data.count,
     ).toReadOnly();
     const rotations = storage(data.rotations, "vec4", data.count).toReadOnly();
-    const shCoefficients = storage(
-      data.shCoefficients,
-      "vec4",
-      data.count * data.shCoefficientCount,
-    ).toReadOnly();
+    const shCoefficients =
+      data.shFormat === "rgb8e8"
+        ? storage(
+            data.shCoefficients,
+            "uint",
+            data.count * data.shCoefficientCount,
+          ).toReadOnly()
+        : storage(
+            data.shCoefficients,
+            "vec4",
+            data.count * data.shCoefficientCount,
+          ).toReadOnly();
     const projectedMean = storage(
       this.projectedMean,
       "vec4",
@@ -202,7 +209,7 @@ export class ProjectionStage {
     const projectCovariance = wgslFn<any>(
       projectionCovarianceWGSL(this.antialiasMode),
     );
-    const evaluateSh = wgslFn<any>(evaluateShWGSL);
+    const evaluateSh = wgslFn<any>(evaluateShWGSL(data.shFormat));
     const countTiles = wgslFn<any>(countContributingTilesWGSL());
     const subpixelHasSample = wgslFn<any>(subpixelHasSampleWGSL);
 

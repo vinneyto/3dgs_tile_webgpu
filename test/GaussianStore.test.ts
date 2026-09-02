@@ -9,6 +9,7 @@ import {
   TieredRadialLodPackingStrategy,
 } from "../src/lod-packing";
 import { GaussianOctree } from "../src/GaussianOctree";
+import { unpackShRgb8e8 } from "../src/GaussianSh";
 import { GaussianStore } from "../src/GaussianStore";
 import { SourceFractionBudgetStrategy } from "../src/store-budgeting";
 
@@ -34,6 +35,8 @@ describe("GaussianStore", () => {
     expect(packed.count).toBe(2);
     expect(packed.shDegree).toBe(1);
     expect(packed.shCoefficientCount).toBe(4);
+    expect(packed.shFormat).toBe("rgb8e8");
+    expect(packed.shCoefficients.array).toBeInstanceOf(Uint32Array);
     expect(Array.from(packed.means.array as Float32Array)).toEqual([
       10,
       11,
@@ -44,9 +47,15 @@ describe("GaussianStore", () => {
       22,
       dogCloud.objectId,
     ]);
-    expect(Array.from(packed.shCoefficients.array as Float32Array)).toEqual([
-      1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 0, 3, 3, 3, 0, 4,
-      4, 4, 0, 5, 5, 5, 0,
+    expectPackedSh(packed, [
+      [1, 1, 1],
+      [0, 0, 0],
+      [0, 0, 0],
+      [0, 0, 0],
+      [2, 2, 2],
+      [3, 3, 3],
+      [4, 4, 4],
+      [5, 5, 5],
     ]);
   });
 
@@ -82,9 +91,7 @@ describe("GaussianStore", () => {
     expect(packed.shDegree).toBe(0);
     expect(packed.shCoefficients.count).toBe(1);
     expect((packed.means.array as Float32Array)[3]).toBe(low.objectId);
-    expect(Array.from(packed.shCoefficients.array as Float32Array)).toEqual([
-      7, 7, 7, 0,
-    ]);
+    expectPackedSh(packed, [[7, 7, 7]]);
   });
 
   it("loads through an injected parser and retains the source for octree raycasts", async () => {
@@ -197,7 +204,7 @@ describe("GaussianStore", () => {
     store.pack({
       limits: {
         maxStorageBufferBindingSize: 1_024,
-        maxBufferSize: 2 * 4 * 16,
+        maxBufferSize: 2 * 4 * 4,
       },
     });
 
@@ -388,7 +395,7 @@ describe("GaussianStore", () => {
 
     store.pack({ limits });
     expect(activeAttributeValues(store, lodLevels.array)).toEqual([0, 0]);
-    expect(store.lastPackStats?.estimatedUploadBytes).toBe(2 * (64 + 4));
+    expect(store.lastPackStats?.estimatedUploadBytes).toBe(2 * (52 + 4));
 
     level = 1;
     cloud.invalidatePacking();
@@ -397,7 +404,7 @@ describe("GaussianStore", () => {
     expect(store.lastPackStats).toMatchObject({
       reusedSlots: 2,
       writtenSlots: 3,
-      estimatedUploadBytes: 3 * 64 + 5 * 4,
+      estimatedUploadBytes: 3 * 52 + 5 * 4,
     });
     expect(activeAttributeValues(store, lodLevels.array)).toEqual([
       1, 1, 1, 1, 1,
@@ -475,11 +482,25 @@ function activeAttributeValues(
 }
 
 function limitsForGaussianCapacity(capacity: number, shDegree: 0 | 1 | 2 | 3) {
-  const bytes = capacity * (shDegree + 1) ** 2 * 16;
+  const bytes = capacity * Math.max(16, (shDegree + 1) ** 2 * 4);
   return {
     maxStorageBufferBindingSize: bytes,
     maxBufferSize: bytes,
   };
+}
+
+function expectPackedSh(
+  data: GaussianData,
+  expected: readonly (readonly [number, number, number])[],
+): void {
+  const packed = data.shCoefficients.array as Uint32Array;
+  expect(packed).toHaveLength(expected.length);
+  expected.forEach((coefficient, index) => {
+    const decoded = unpackShRgb8e8(packed[index]!);
+    coefficient.forEach((value, channel) => {
+      expect(decoded[channel]).toBeCloseTo(value, 1);
+    });
+  });
 }
 
 function singleLevelLod(
