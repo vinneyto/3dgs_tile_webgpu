@@ -664,12 +664,12 @@ diagnostic readbacks, so its FPS is not the final production-performance number.
 
 The tile profile also reports total and worst-tile raster batches (256 splats
 per batch), plus counterfactual dropped-intersection, affected-tile and batch
-counts for caps of 2048, 4096 and 8192. Rasterization samples at most 8192
-splats per tile by default. Append `&tileCap=2048` (or another positive integer)
-to change it, or use `tileCap=0` to disable it. Overflowing tiles are sampled at
-evenly spaced bin centers across their complete depth-ordered ranges instead of
-rendering a contiguous prefix; this avoids the black tile-shaped holes caused
-by missing far-range coverage. Intersection emission and radix sorting remain
+counts for caps of 2048, 4096 and 8192. The raster sample cap is disabled by
+default because capped sampling can reveal a moving tile pattern. Append
+`&tileCap=8192` (or another positive integer) to enable the experiment;
+`tileCap=0` explicitly disables it. Overflowing tiles are sampled at evenly
+spaced bin centers across their complete depth-ordered ranges instead of
+rendering a contiguous prefix. Intersection emission and radix sorting remain
 unchanged.
 
 Subpixel sample culling is enabled by default. During projection, Gaussians
