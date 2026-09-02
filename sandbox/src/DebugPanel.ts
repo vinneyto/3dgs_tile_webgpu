@@ -28,7 +28,7 @@ export class DebugPanel {
   private packStats: GaussianStorePackStats | null = null;
   private packDurationMs = 0;
   private packCount = 0;
-  private packingCenterX = 0;
+  private packingFocusDistance = 0;
   private kernelScrollActiveUntil = -Infinity;
 
   constructor(
@@ -60,17 +60,17 @@ export class DebugPanel {
     this.packStats = null;
     this.packDurationMs = 0;
     this.packCount = 0;
-    this.packingCenterX = 0;
+    this.packingFocusDistance = 0;
   }
 
   recordPack(
     stats: GaussianStorePackStats,
     durationMs: number,
-    centerX: number,
+    focusDistance: number,
   ): void {
     this.packStats = stats;
     this.packDurationMs = durationMs;
-    this.packingCenterX = centerX;
+    this.packingFocusDistance = focusDistance;
     this.packCount++;
   }
 
@@ -234,9 +234,9 @@ export class DebugPanel {
 
   private packStatsLines(): string[] {
     const stats = this.packStats;
-    if (stats === null) return ["LOD repack     waiting for moving center"];
+    if (stats === null) return ["LOD repack     waiting for camera movement"];
     return [
-      `LOD repack     #${this.packCount}  CPU ${formatMs(this.packDurationMs)}  center.x ${this.packingCenterX.toFixed(2)} m`,
+      `LOD repack     #${this.packCount}  CPU ${formatMs(this.packDurationMs)}  camera distance ${this.packingFocusDistance.toFixed(2)} m`,
       `pack phases    plan ${formatMs(stats.planningMs)}  slots ${formatMs(stats.slotUpdateMs)}`,
       `slots          active ${formatInteger(stats.activeGaussians)} / ${formatInteger(stats.slotCapacity)}`,
       `slot delta     reused ${formatInteger(stats.reusedSlots)}  written ${formatInteger(stats.writtenSlots)}  cleared ${formatInteger(stats.clearedSlots)}`,

@@ -4,6 +4,7 @@ import { Ray, StorageBufferAttribute, Vector3 } from "three/webgpu";
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLod } from "../src/GaussianLod";
 import {
+  DistanceAwareRadialLodPackingStrategy,
   MaximumLodPackingStrategy,
   RadialLodPackingStrategy,
   TieredRadialLodPackingStrategy,
@@ -259,6 +260,62 @@ describe("GaussianLod", () => {
     const full = strategy.pack({ lod, maxGaussians: points.length });
     expect(full.gaussianCount).toBe(points.length);
     expect(new Set(full.lodLevels)).toEqual(new Set([lod.finestLevel]));
+  });
+
+  it("reduces radial detail with focus distance even when finest detail fits", () => {
+    const points: number[][] = [];
+    for (let octant = 0; octant < 8; octant++) {
+      const signs = [
+        octant & 1 ? 1 : -1,
+        octant & 2 ? 1 : -1,
+        octant & 4 ? 1 : -1,
+      ];
+      for (const distance of [0.7, 0.8, 0.9, 1]) {
+        points.push(signs.map((sign) => sign * distance));
+      }
+    }
+    const lod = GaussianLod.build(
+      GaussianOctree.build(gaussianData(points), { leafCapacity: 4 }),
+      { levels: [{ retention: 0.25 }, { retention: 0.5 }, { retention: 1 }] },
+    );
+    const strategy = new DistanceAwareRadialLodPackingStrategy({
+      center: new Vector3(),
+      levelDistance: 2,
+    });
+
+    const near = strategy.pack({ lod, maxGaussians: points.length });
+    strategy.setCenter(new Vector3(20, 0, 0));
+    const far = strategy.pack({ lod, maxGaussians: points.length });
+
+    expect(near.gaussianCount).toBe(points.length);
+    expect(new Set(near.lodLevels)).toEqual(new Set([lod.finestLevel]));
+    expect(far.nodeIds.length).toBe(lod.octree.leafNodeIds.length);
+    expect(new Set(far.lodLevels)).toEqual(new Set([0]));
+    expect(far.gaussianCount).toBeLessThan(near.gaussianCount);
+  });
+
+  it("enforces the budget by degrading and then clipping far radial cells", () => {
+    const points = Array.from({ length: 32 }, (_, index) => [index, 0, 0]);
+    const lod = GaussianLod.build(
+      GaussianOctree.build(gaussianData(points), { leafCapacity: 4 }),
+      { levels: [{ retention: 0.5 }, { retention: 1 }] },
+    );
+    const strategy = new DistanceAwareRadialLodPackingStrategy({
+      center: new Vector3(),
+      levelDistance: 100,
+    });
+
+    const packing = strategy.pack({ lod, maxGaussians: 7 });
+
+    expect(packing.gaussianCount).toBeLessThanOrEqual(7);
+    expect(packing.nodeIds.length).toBeLessThan(lod.octree.leafNodeIds.length);
+    expect(lod.indicesForPacking(packing)).toHaveLength(packing.gaussianCount);
+  });
+
+  it("validates the radial LOD distance step", () => {
+    expect(
+      () => new DistanceAwareRadialLodPackingStrategy({ levelDistance: 0 }),
+    ).toThrow(/levelDistance/);
   });
 });
 

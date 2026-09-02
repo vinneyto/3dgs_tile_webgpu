@@ -38,7 +38,8 @@ src/
 │   ├── GaussianLodPackingStrategy.ts shared strategy contract
 │   ├── MaximumLodPackingStrategy.ts  strict full-detail packing
 │   ├── RadialLodPackingStrategy.ts   fixed-LOD center-out clipping
-│   └── TieredRadialLodPackingStrategy.ts 60/20/20 radial LOD tiers
+│   ├── TieredRadialLodPackingStrategy.ts 60/20/20 radial LOD tiers
+│   └── DistanceAwareRadialLodPackingStrategy.ts distance-based radial tiers
 ├── store-budgeting/                 global Store budget assignment
 │   ├── GaussianStoreBudgetStrategy.ts shared strategy contract
 │   ├── RemainingCapacityBudgetStrategy.ts default remaining-budget policy
@@ -188,9 +189,10 @@ store.pack({ limits: device.limits });
 ```
 
 `GaussianLodPackingStrategy` is an interface with a `pack()` method.
-`MaximumLodPackingStrategy`, `RadialLodPackingStrategy`, and
-`TieredRadialLodPackingStrategy` are its built-in implementations. Built-in and
-custom strategies must reference leaf cells in their returned
+`MaximumLodPackingStrategy`, `RadialLodPackingStrategy`,
+`TieredRadialLodPackingStrategy`, and
+`DistanceAwareRadialLodPackingStrategy` are its built-in implementations.
+Built-in and custom strategies must reference leaf cells in their returned
 `GaussianLodPacking`. `GaussianLod` stores importance-sorted nested prefixes
 only for leaves; internal octree nodes retain their bounds, children and counts
 without duplicating every descendant Gaussian index.
@@ -202,6 +204,24 @@ would exceed the allocation; that cell and all farther cells are clipped.
 uses 60% for finest cells, 20% for middle-detail cells, and 20% for coarsest
 cells; if the complete finest representation fits, it keeps the whole object at
 finest detail.
+
+`DistanceAwareRadialLodPackingStrategy` selects the desired LOD from the
+distance between each leaf and a local-space focus such as the camera. Its
+`levelDistance` is measured in octree-root half-diagonals: each interval lowers
+the desired LOD by one level. Distance reduction applies even when the complete
+finest representation fits in memory. If the desired selection exceeds its
+allocation, the strategy degrades the farthest cells first and finally clips
+the farthest coarsest cells, keeping `maxGaussians` as a strict upper bound.
+
+```ts
+const cameraPacking = new DistanceAwareRadialLodPackingStrategy({
+  levelDistance: 2,
+});
+
+cameraPacking.setCenter(cameraPositionInCloudLocalSpace);
+cloud.invalidatePacking();
+store.pack({ limits: device.limits });
+```
 
 Packing remains an individual cloud characteristic when needed:
 
@@ -555,6 +575,10 @@ http://localhost:5173/?ply=/my-cloud.ply&sort=packed16&dpr=1
 Open **Octree / LOD visualization** in the sandbox HUD to toggle the local
 octree grid or color the rendered splats by their current packed LOD. The
 sandbox uses the packed-attribute helper instead of LOD volume boxes.
+Its radial packing focus follows the camera and repacks after meaningful camera
+movement; CPU planning and buffer updates remain synchronous for now.
+Use `?lodDistance=2` to change the number of octree-root half-diagonals per LOD
+step.
 
 Files addressed by URL belong in `sandbox/public/`; the file picker and drag-and-drop do not require copying
 the file into the repository. The loader accepts ASCII, binary little-endian, and binary big-endian scalar PLY

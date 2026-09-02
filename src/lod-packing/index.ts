@@ -11,3 +11,7 @@ export {
   TieredRadialLodPackingStrategy,
   type TieredRadialLodPackingOptions,
 } from "./TieredRadialLodPackingStrategy";
+export {
+  DistanceAwareRadialLodPackingStrategy,
+  type DistanceAwareRadialLodPackingOptions,
+} from "./DistanceAwareRadialLodPackingStrategy";

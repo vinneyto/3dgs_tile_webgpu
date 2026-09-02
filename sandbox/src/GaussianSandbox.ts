@@ -1,10 +1,7 @@
 import {
-  Mesh,
-  MeshBasicMaterial,
   PerspectiveCamera,
   RenderPipeline,
   Scene,
-  SphereGeometry,
   Vector3,
   WebGPURenderer,
   type Node,
@@ -20,8 +17,8 @@ import {
   OctreeHelper,
   GaussianOctree,
   GaussianStore,
+  DistanceAwareRadialLodPackingStrategy,
   SourceFractionBudgetStrategy,
-  TieredRadialLodPackingStrategy,
   type GaussianStorePackLimits,
   type GaussianPass,
   type RadixBackend,
@@ -31,9 +28,8 @@ import { DebugPanel } from "./DebugPanel";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 
 const MAX_INDIRECT_CAPACITY = 256 * 65_535;
-const PACKING_CENTER_CYCLE_SECONDS = 12;
-const PACKING_CENTER_AMPLITUDE = 5;
-const REPACK_DISTANCE = 0.5;
+const REPACK_DISTANCE_FRACTION = 0.025;
+const MIN_REPACK_DISTANCE = 0.05;
 const PRIMARY_BUDGET_FRACTION = 0.97;
 const LOD_LEVELS = [
   { retention: 0.2 },
@@ -67,13 +63,18 @@ export class GaussianSandbox {
   private octreeHelpersVisible = false;
   private lodColoringEnabled = true;
   private primaryCloud: GaussianCloud | null = null;
-  private primaryPackingStrategy: TieredRadialLodPackingStrategy | null = null;
-  private lodColorHelper: GaussianLodColorHelper | null = null;
-  private packingCenterMarker: Mesh<SphereGeometry, MeshBasicMaterial> | null =
+  private primaryPackingStrategy: DistanceAwareRadialLodPackingStrategy | null =
     null;
-  private lastPackedCenterX = Number.NaN;
+  private lodColorHelper: GaussianLodColorHelper | null = null;
   private deviceLimits: GaussianStorePackLimits | null = null;
   private readonly packingCenter = new Vector3();
+  private readonly lastPackedCenter = new Vector3(
+    Number.NaN,
+    Number.NaN,
+    Number.NaN,
+  );
+  private readonly packingBoundsCenter = new Vector3();
+  private repackDistance = MIN_REPACK_DISTANCE;
 
   private constructor(
     private readonly renderer: WebGPURenderer,
@@ -98,8 +99,8 @@ export class GaussianSandbox {
 
     renderer.setAnimationLoop((time) => {
       const encodeStart = performance.now();
-      this.updateAnimation(time);
       this.controls.update();
+      this.updatePackingCenter();
       this.pipeline?.render();
       this.debugPanel.update(time, performance.now() - encodeStart);
     });
@@ -216,7 +217,7 @@ export class GaussianSandbox {
     store: GaussianStore,
     source: string,
     primaryCloud: GaussianCloud,
-    primaryPackingStrategy: TieredRadialLodPackingStrategy,
+    primaryPackingStrategy: DistanceAwareRadialLodPackingStrategy,
     limits: GaussianStorePackLimits,
   ): void {
     this.lodColorHelper?.dispose();
@@ -228,7 +229,6 @@ export class GaussianSandbox {
     this.store?.dispose();
     this.primaryCloud = null;
     this.primaryPackingStrategy = null;
-    this.packingCenterMarker = null;
 
     const primaryData = primaryCloud.lod!.octree.data;
     const primaryBounds = measureCloud(primaryData);
@@ -236,11 +236,20 @@ export class GaussianSandbox {
     this.deviceLimits = limits;
     this.primaryCloud = primaryCloud;
     this.primaryPackingStrategy = primaryPackingStrategy;
-    this.lastPackedCenterX = 0;
+    this.lastPackedCenter.set(Number.NaN, Number.NaN, Number.NaN);
+    this.packingBoundsCenter.set(
+      primaryBounds.centerX,
+      primaryBounds.centerY,
+      primaryBounds.centerZ,
+    );
+    this.repackDistance = Math.max(
+      MIN_REPACK_DISTANCE,
+      primaryBounds.radius * REPACK_DISTANCE_FRACTION,
+    );
     this.scene.add(primaryCloud);
     this.addSpatialHelpers(primaryCloud);
-    this.addPackingCenterMarker(primaryCloud, primaryBounds);
     this.frameCloud(primaryBounds);
+    this.updatePackingCenter();
 
     const requestedCapacity = Math.max(65_536, store.count * 16);
     const intersectionCapacity = Math.min(
@@ -294,31 +303,27 @@ export class GaussianSandbox {
     this.controls.update();
   }
 
-  private updateAnimation(timeMilliseconds: number): void {
-    this.updatePackingCenter(timeMilliseconds);
-  }
-
-  private updatePackingCenter(timeMilliseconds: number): void {
+  private updatePackingCenter(): void {
     const store = this.store;
     const strategy = this.primaryPackingStrategy;
     const cloud = this.primaryCloud;
-    const marker = this.packingCenterMarker;
     const limits = this.deviceLimits;
     if (
       store === null ||
       strategy === null ||
       cloud === null ||
-      marker === null ||
       limits === null
     ) {
       return;
     }
-    const phase =
-      (timeMilliseconds * 0.001 * Math.PI * 2) / PACKING_CENTER_CYCLE_SECONDS;
-    const centerX = Math.sin(phase) * PACKING_CENTER_AMPLITUDE;
-    this.packingCenter.set(centerX, 0, 0);
-    marker.position.copy(this.packingCenter);
-    if (Math.abs(centerX - this.lastPackedCenterX) < REPACK_DISTANCE) return;
+    this.camera.getWorldPosition(this.packingCenter);
+    cloud.worldToLocal(this.packingCenter);
+    if (
+      this.packingCenter.distanceToSquared(this.lastPackedCenter) <
+      this.repackDistance * this.repackDistance
+    ) {
+      return;
+    }
 
     strategy.setCenter(this.packingCenter);
     cloud.invalidatePacking();
@@ -326,29 +331,15 @@ export class GaussianSandbox {
     store.pack({ limits });
     this.lodColorHelper?.update();
     const duration = performance.now() - started;
-    this.lastPackedCenterX = centerX;
+    this.lastPackedCenter.copy(this.packingCenter);
     const stats = store.lastPackStats;
-    if (stats !== null) this.debugPanel.recordPack(stats, duration, centerX);
-  }
-
-  private addPackingCenterMarker(
-    cloud: GaussianCloud,
-    bounds: CloudBounds,
-  ): void {
-    const marker = new Mesh(
-      new SphereGeometry(Math.max(0.08, Math.min(0.25, bounds.radius * 0.025))),
-      new MeshBasicMaterial({
-        color: 0xffffff,
-        depthTest: false,
-        depthWrite: false,
-        toneMapped: false,
-      }),
-    );
-    marker.name = "LOD packing center";
-    marker.renderOrder = 1_000;
-    marker.position.set(0, 0, 0);
-    cloud.add(marker);
-    this.packingCenterMarker = marker;
+    if (stats !== null) {
+      this.debugPanel.recordPack(
+        stats,
+        duration,
+        this.packingCenter.distanceTo(this.packingBoundsCenter),
+      );
+    }
   }
 
   private addSpatialHelpers(cloud: GaussianCloud): void {
@@ -364,12 +355,6 @@ export class GaussianSandbox {
   private disposeSpatialHelpers(): void {
     for (const helper of this.octreeHelpers) helper.dispose();
     this.octreeHelpers.length = 0;
-    if (this.packingCenterMarker !== null) {
-      this.packingCenterMarker.geometry.dispose();
-      this.packingCenterMarker.material.dispose();
-      this.packingCenterMarker.removeFromParent();
-      this.packingCenterMarker = null;
-    }
   }
 
   private resize(): void {
@@ -507,9 +492,19 @@ function webGpuDeviceLimits(renderer: WebGPURenderer): GPUSupportedLimits {
   return backend.device.limits;
 }
 
-function createPrimaryPackingStrategy(): TieredRadialLodPackingStrategy {
-  return new TieredRadialLodPackingStrategy({
+function createPrimaryPackingStrategy(): DistanceAwareRadialLodPackingStrategy {
+  return new DistanceAwareRadialLodPackingStrategy({
     center: new Vector3(0, 0, 0),
-    budgetShares: [0.6, 0.2, 0.2],
+    levelDistance: readLodLevelDistance(),
   });
+}
+
+function readLodLevelDistance(): number {
+  const raw = new URLSearchParams(location.search).get("lodDistance");
+  if (raw === null) return 2;
+  const distance = Number(raw);
+  if (!(distance > 0) || !Number.isFinite(distance)) {
+    throw new RangeError("lodDistance must be finite and positive");
+  }
+  return distance;
 }
