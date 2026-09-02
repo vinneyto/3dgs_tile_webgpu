@@ -62,7 +62,7 @@ export class GaussianSandbox {
   private helperPass: ReturnType<typeof scenePass> | null = null;
   private readonly octreeHelpers: OctreeHelper[] = [];
   private octreeHelpersVisible = false;
-  private lodColoringEnabled = true;
+  private lodColoringEnabled = false;
   private primaryCloud: GaussianCloud | null = null;
   private primaryPackingStrategy: StreamingLodPackingStrategy<TieredRadialLodPackingStrategy> | null =
     null;
