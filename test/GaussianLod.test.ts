@@ -239,7 +239,7 @@ describe("GaussianLod", () => {
     );
   });
 
-  it("packs radial detail tiers and keeps full finest detail when it fits", () => {
+  it("defaults to 90% finest and 10% coarsest radial tiers", () => {
     const points: number[][] = [];
     for (let octant = 0; octant < 8; octant++) {
       const signs = [
@@ -256,13 +256,14 @@ describe("GaussianLod", () => {
       { levels: [{ retention: 0.25 }, { retention: 0.5 }, { retention: 1 }] },
     );
     const strategy = new TieredRadialLodPackingStrategy();
+    expect(strategy.budgetShares).toEqual([0.9, 0, 0.1]);
     const clipped = strategy.pack({ lod, maxGaussians: 12 });
 
     expect(clipped.gaussianCount).toBeLessThanOrEqual(12);
     expect(Array.from(clipped.lodLevels)).toEqual(
       [...clipped.lodLevels].sort((left, right) => right - left),
     );
-    expect(new Set(clipped.lodLevels)).toEqual(new Set([0, 1, 2]));
+    expect(new Set(clipped.lodLevels)).toEqual(new Set([0, 2]));
 
     const full = strategy.pack({ lod, maxGaussians: points.length });
     expect(full.gaussianCount).toBe(points.length);
