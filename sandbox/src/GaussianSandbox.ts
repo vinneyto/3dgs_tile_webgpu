@@ -494,7 +494,6 @@ function webGpuDeviceLimits(renderer: WebGPURenderer): GPUSupportedLimits {
 function createPrimaryPackingStrategy(): StreamingLodPackingStrategy<TieredRadialLodPackingStrategy> {
   const targetStrategy = new TieredRadialLodPackingStrategy({
     center: new Vector3(0, 0, 0),
-    budgetShares: [0.6, 0.2, 0.2],
   });
   return new StreamingLodPackingStrategy(targetStrategy, {
     maxUploadBytesPerPack: readPositiveQuery("lodUploadKiB", 1024) * 1024,
