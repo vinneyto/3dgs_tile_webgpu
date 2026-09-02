@@ -38,7 +38,7 @@ src/
 │   ├── GaussianLodPackingStrategy.ts shared strategy contract
 │   ├── MaximumLodPackingStrategy.ts  strict full-detail packing
 │   ├── RadialLodPackingStrategy.ts   fixed-LOD center-out clipping
-│   ├── TieredRadialLodPackingStrategy.ts 60/20/20 radial LOD tiers
+│   ├── TieredRadialLodPackingStrategy.ts 90/0/10 radial LOD tiers
 │   ├── DistanceAwareRadialLodPackingStrategy.ts distance-based radial tiers
 │   ├── RadialLodWorkerPlanner.ts latest-only radial worker target planner
 │   └── StreamingLodPackingStrategy.ts bounded latest-target transitions
@@ -203,10 +203,11 @@ without duplicating every descendant Gaussian index.
 The radial strategy walks leaf cells continuously from the focus outwards and packs one
 requested LOD for every selected cell. It stops before the first whole cell that
 would exceed the allocation; that cell and all farther cells are clipped.
-`"finest"` resolves to the last configured LOD level. The tiered strategy first
-uses 60% for finest cells, 20% for middle-detail cells, and 20% for coarsest
-cells; if the complete finest representation fits, it keeps the whole object at
-finest detail.
+`"finest"` resolves to the last configured LOD level. By default, the tiered
+strategy uses 90% for finest cells, skips the middle-detail tier, and reserves
+10% for coarsest cells. A zero share skips that tier instead of consuming
+rounding slack. If the complete finest representation fits, it keeps the whole
+object at finest detail.
 
 `DistanceAwareRadialLodPackingStrategy` selects the desired LOD from the
 distance between each leaf and a local-space focus such as the camera. Its
@@ -622,9 +623,9 @@ http://localhost:5173/?ply=/my-cloud.ply&sort=packed16&dpr=1
 Open **Octree / LOD visualization** in the sandbox HUD to toggle the local
 octree grid or color the rendered splats by their current packed LOD. The
 sandbox uses the packed-attribute helper instead of LOD volume boxes.
-Its fixed-budget tiered radial packing focus follows the camera and repacks
-after meaningful camera movement. Zooming away does not independently lower
-detail: LOD selection only keeps the packed data inside its GPU allocation.
+Its fixed-budget 90/10 tiered radial packing focus follows the camera and
+repacks after meaningful camera movement. Zooming away does not independently
+lower detail: LOD selection only keeps the packed data inside its GPU allocation.
 Later target selection runs in a module worker; bounded Store buffer updates
 remain on the main thread. Camera-driven transitions default to 1 MiB and 16
 changed leaves per frame; use `?lodUploadKiB=1024&lodCells=16` to tune those
