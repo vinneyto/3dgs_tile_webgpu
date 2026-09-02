@@ -126,6 +126,24 @@ describe("GaussianStore", () => {
     expect(store.getPackedData().count).toBe(2);
   });
 
+  it("rejects custom packing strategies that select internal octree nodes", () => {
+    const lod = singleLevelLod([0, 1, 2, 3]);
+    const store = new GaussianStore({
+      defaultPackingStrategy: {
+        pack: () => ({
+          nodeIds: Uint32Array.of(lod.octree.rootNode),
+          lodLevels: Uint8Array.of(0),
+          gaussianCount: lod.octree.data.count,
+        }),
+      },
+    });
+    store.addLod(lod);
+
+    expect(() =>
+      store.pack({ limits: limitsForGaussianCapacity(4, 0) }),
+    ).toThrow(/leaf nodes/);
+  });
+
   it("does not allocate the optional packed LOD level attribute by default", () => {
     const store = new GaussianStore();
     store.addLod(singleLevelLod([0, 1, 2, 3]));
