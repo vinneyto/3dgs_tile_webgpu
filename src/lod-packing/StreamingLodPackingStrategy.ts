@@ -14,6 +14,34 @@ export interface StreamingLodPackingOptions {
   maxUploadBytesPerPack?: number;
   /** Maximum whole leaf transitions applied by each batch. Defaults to 16. */
   maxChangedCellsPerPack?: number;
+  /** Optional asynchronous producer for later target packings. */
+  targetPlanner?: StreamingLodTargetPlanner;
+}
+
+export interface StreamingLodPlannedTarget {
+  readonly packing: GaussianLodPacking;
+  readonly maxGaussians: number;
+  readonly planningMs: number;
+  readonly roundTripMs: number;
+  release(): void;
+}
+
+export interface StreamingLodTargetPlanner {
+  readonly pending: boolean;
+  readonly hasResult: boolean;
+  readonly discardedResults: number;
+  initialize(lod: GaussianLod): void;
+  request(context: GaussianLodPackingContext): void;
+  cancel(): void;
+  takeLatest(): StreamingLodPlannedTarget | null;
+  dispose(): void;
+}
+
+export interface StreamingLodTargetStats {
+  readonly planningMs: number;
+  readonly roundTripMs: number;
+  readonly discardedResults: number;
+  readonly pending: boolean;
 }
 
 export interface StreamingLodCellTransition {
@@ -43,6 +71,7 @@ export class StreamingLodPackingStrategy<
   T extends GaussianLodPackingStrategy = GaussianLodPackingStrategy,
 > implements GaussianLodPackingStrategy {
   readonly targetStrategy: T;
+  readonly targetPlanner: StreamingLodTargetPlanner | null;
   readonly maxUploadBytesPerPack: number;
   readonly maxChangedCellsPerPack: number;
 
@@ -52,15 +81,18 @@ export class StreamingLodPackingStrategy<
   private appliedIndices = new Int32Array();
   private appliedCellCount = 0;
   private appliedGaussianCount = 0;
-  private targetPacking: GaussianLodPacking | null = null;
+  private targetAvailable = false;
   private targetBudget = -1;
   private targetDirty = true;
   private changes: CellChange[] = [];
   private changeCursor = 0;
   private initialized = false;
+  private latestTargetPlanningMs = 0;
+  private latestTargetRoundTripMs = 0;
 
   constructor(targetStrategy: T, options: StreamingLodPackingOptions = {}) {
     this.targetStrategy = targetStrategy;
+    this.targetPlanner = options.targetPlanner ?? null;
     this.maxUploadBytesPerPack =
       options.maxUploadBytesPerPack ?? DEFAULT_MAX_UPLOAD_BYTES;
     this.maxChangedCellsPerPack =
@@ -86,12 +118,34 @@ export class StreamingLodPackingStrategy<
   /** Discard an unfinished target after changing the wrapped strategy. */
   invalidateTarget(): this {
     this.targetDirty = true;
+    if (this.targetPlanner !== null) {
+      this.changes = [];
+      this.changeCursor = 0;
+    }
     return this;
   }
 
   /** Whether another target plan or bounded batch is needed. */
   get needsPack(): boolean {
-    return this.targetDirty || this.changeCursor < this.changes.length;
+    return (
+      this.targetDirty ||
+      this.targetPlanner?.pending === true ||
+      this.targetPlanner?.hasResult === true ||
+      this.changeCursor < this.changes.length
+    );
+  }
+
+  get targetStats(): StreamingLodTargetStats {
+    return {
+      planningMs: this.latestTargetPlanningMs,
+      roundTripMs: this.latestTargetRoundTripMs,
+      discardedResults: this.targetPlanner?.discardedResults ?? 0,
+      pending: this.targetPlanner?.pending ?? false,
+    };
+  }
+
+  dispose(): void {
+    this.targetPlanner?.dispose();
   }
 
   /**
@@ -108,6 +162,17 @@ export class StreamingLodPackingStrategy<
       this.changes = [];
       this.changeCursor = 0;
       return target;
+    }
+    if (
+      this.targetPlanner !== null &&
+      (this.targetDirty ||
+        !this.targetAvailable ||
+        this.targetBudget !== context.maxGaussians)
+    ) {
+      this.targetPlanner.cancel();
+      const target = this.buildTarget(context);
+      this.changes = this.planChanges(context.lod, target);
+      this.changeCursor = 0;
     }
     return this.takeNextBatch(context)?.packing ?? this.currentPacking();
   }
@@ -126,15 +191,7 @@ export class StreamingLodPackingStrategy<
         "StreamingLodPackingStrategy must be initialized by store.pack() before incremental batches",
       );
     }
-    if (
-      this.targetDirty ||
-      this.targetPacking === null ||
-      this.targetBudget !== context.maxGaussians
-    ) {
-      const target = this.buildTarget(context);
-      this.changes = this.planChanges(context.lod, target);
-      this.changeCursor = 0;
-    }
+    this.refreshTarget(context);
     if (this.changeCursor >= this.changes.length) return null;
 
     const transitions: StreamingLodCellTransition[] = [];
@@ -173,6 +230,7 @@ export class StreamingLodPackingStrategy<
       this.appliedLodLevels = new Uint8Array(lod.nodes.length);
       this.appliedIndices = new Int32Array(lod.nodes.length);
       this.appliedIndices.fill(-1);
+      this.targetPlanner?.initialize(lod);
       return;
     }
     if (this.lod !== lod) {
@@ -185,10 +243,47 @@ export class StreamingLodPackingStrategy<
   private buildTarget(context: GaussianLodPackingContext): GaussianLodPacking {
     const target = this.targetStrategy.pack(context);
     validatePacking(context.lod, target, context.maxGaussians);
-    this.targetPacking = target;
+    this.targetAvailable = true;
     this.targetBudget = context.maxGaussians;
     this.targetDirty = false;
     return target;
+  }
+
+  private refreshTarget(context: GaussianLodPackingContext): void {
+    if (this.targetPlanner === null) {
+      if (
+        this.targetDirty ||
+        !this.targetAvailable ||
+        this.targetBudget !== context.maxGaussians
+      ) {
+        const target = this.buildTarget(context);
+        this.changes = this.planChanges(context.lod, target);
+        this.changeCursor = 0;
+      }
+      return;
+    }
+
+    if (this.targetDirty || this.targetBudget !== context.maxGaussians) {
+      this.targetPlanner.request(context);
+      this.targetBudget = context.maxGaussians;
+      this.targetDirty = false;
+      this.targetAvailable = false;
+      this.changes = [];
+      this.changeCursor = 0;
+    }
+    const result = this.targetPlanner.takeLatest();
+    if (result === null) return;
+    try {
+      validatePacking(context.lod, result.packing, result.maxGaussians);
+      this.targetAvailable = true;
+      this.targetBudget = result.maxGaussians;
+      this.changes = this.planChanges(context.lod, result.packing);
+      this.changeCursor = 0;
+      this.latestTargetPlanningMs = result.planningMs;
+      this.latestTargetRoundTripMs = result.roundTripMs;
+    } finally {
+      result.release();
+    }
   }
 
   private initializeApplied(packing: GaussianLodPacking): void {

@@ -40,6 +40,7 @@ src/
 │   ├── RadialLodPackingStrategy.ts   fixed-LOD center-out clipping
 │   ├── TieredRadialLodPackingStrategy.ts 60/20/20 radial LOD tiers
 │   ├── DistanceAwareRadialLodPackingStrategy.ts distance-based radial tiers
+│   ├── DistanceAwareLodWorkerPlanner.ts latest-only worker target planner
 │   └── StreamingLodPackingStrategy.ts bounded latest-target transitions
 ├── store-budgeting/                 global Store budget assignment
 │   ├── GaussianStoreBudgetStrategy.ts shared strategy contract
@@ -233,9 +234,11 @@ one. A streaming instance is stateful and must belong to one cloud.
 
 ```ts
 const distancePacking = new DistanceAwareRadialLodPackingStrategy();
+const workerPlanner = new DistanceAwareLodWorkerPlanner(distancePacking);
 const streamingPacking = new StreamingLodPackingStrategy(distancePacking, {
   maxUploadBytesPerPack: 1024 * 1024,
   maxChangedCellsPerPack: 16,
+  targetPlanner: workerPlanner,
 });
 
 distancePacking.setCenter(cameraPositionInCloudLocalSpace);
@@ -243,6 +246,11 @@ streamingPacking.invalidateTarget();
 
 if (streamingPacking.needsPack) {
   store.packLodBatch(cloud);
+}
+
+// During application teardown:
+function dispose() {
+  streamingPacking.dispose();
 }
 ```
 
@@ -253,6 +261,14 @@ larger than the configured byte limit cannot stall the transition. The wrapped
 strategy and its full transition plan run only when the target changes.
 Subsequent batches update only their listed leaves and bypass global Store
 budget planning and unchanged-cell scans.
+
+The optional distance-aware worker receives compact leaf centers and level
+counts once. It keeps one request in flight and one replaceable latest request,
+so fast camera motion cannot build an unbounded queue. Results use a pool of two
+fixed-size transferable buffer pairs. The main thread consumes a result,
+constructs the transition from the packing actually applied at that moment, and
+transfers the buffers back to the worker for reuse. No `SharedArrayBuffer` or
+cross-origin isolation headers are required.
 
 Packing remains an individual cloud characteristic when needed:
 
@@ -607,7 +623,8 @@ Open **Octree / LOD visualization** in the sandbox HUD to toggle the local
 octree grid or color the rendered splats by their current packed LOD. The
 sandbox uses the packed-attribute helper instead of LOD volume boxes.
 Its radial packing focus follows the camera and repacks after meaningful camera
-movement; CPU planning and buffer updates remain synchronous for now.
+movement. Later target selection runs in a module worker; bounded Store buffer
+updates remain on the main thread.
 Use `?lodDistance=2` to change the number of octree-root half-diagonals per LOD
 step. Camera-driven transitions default to 1 MiB and 16 changed leaves per
 frame; use `?lodUploadKiB=1024&lodCells=16` to tune those limits.

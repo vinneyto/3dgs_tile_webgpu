@@ -5,6 +5,7 @@ import type {
   GaussianStorePackStats,
   GaussianStoreSlotRange,
   GaussianTileCapStats,
+  StreamingLodTargetStats,
 } from "../../src/index";
 import type { KernelTimingInspector } from "./KernelTimingInspector";
 
@@ -30,6 +31,7 @@ export class DebugPanel {
   private packCount = 0;
   private packingFocusDistance = 0;
   private packingPending = false;
+  private targetStats: StreamingLodTargetStats | null = null;
   private kernelScrollActiveUntil = -Infinity;
 
   constructor(
@@ -63,19 +65,23 @@ export class DebugPanel {
     this.packCount = 0;
     this.packingFocusDistance = 0;
     this.packingPending = false;
+    this.targetStats = null;
   }
 
-  recordPack(
-    stats: GaussianStorePackStats,
-    durationMs: number,
-    focusDistance: number,
-    pending: boolean,
-  ): void {
+  recordPack(stats: GaussianStorePackStats, durationMs: number): void {
     this.packStats = stats;
     this.packDurationMs = durationMs;
+    this.packCount++;
+  }
+
+  recordLodState(
+    focusDistance: number,
+    pending: boolean,
+    targetStats: StreamingLodTargetStats,
+  ): void {
     this.packingFocusDistance = focusDistance;
     this.packingPending = pending;
-    this.packCount++;
+    this.targetStats = targetStats;
   }
 
   update(time: number, cpuEncodeMs: number): void {
@@ -238,10 +244,26 @@ export class DebugPanel {
 
   private packStatsLines(): string[] {
     const stats = this.packStats;
-    if (stats === null) return ["LOD repack     waiting for camera movement"];
+    const target = this.targetStats;
+    const targetLines =
+      target === null
+        ? []
+        : [
+            `LOD worker     plan ${formatMs(target.planningMs)}  round trip ${formatMs(target.roundTripMs)}`,
+            `worker queue   ${target.pending ? "busy" : "idle"}  discarded ${formatInteger(target.discardedResults)}`,
+          ];
+    if (stats === null) {
+      return target === null
+        ? ["LOD repack     waiting for camera movement"]
+        : [
+            `LOD stream     ${this.packingPending ? "pending" : "settled"}  camera distance ${this.packingFocusDistance.toFixed(2)} m`,
+            ...targetLines,
+          ];
+    }
     return [
       `LOD repack     #${this.packCount}  CPU ${formatMs(this.packDurationMs)}  camera distance ${this.packingFocusDistance.toFixed(2)} m`,
       `LOD stream     ${this.packingPending ? "pending" : "settled"}`,
+      ...targetLines,
       `pack phases    plan ${formatMs(stats.planningMs)}  slots ${formatMs(stats.slotUpdateMs)}`,
       `slots          active ${formatInteger(stats.activeGaussians)} / ${formatInteger(stats.slotCapacity)}`,
       `slot delta     reused ${formatInteger(stats.reusedSlots)}  written ${formatInteger(stats.writtenSlots)}  cleared ${formatInteger(stats.clearedSlots)}`,

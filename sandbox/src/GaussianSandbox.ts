@@ -17,6 +17,7 @@ import {
   OctreeHelper,
   GaussianOctree,
   GaussianStore,
+  DistanceAwareLodWorkerPlanner,
   DistanceAwareRadialLodPackingStrategy,
   SourceFractionBudgetStrategy,
   StreamingLodPackingStrategy,
@@ -181,6 +182,7 @@ export class GaussianSandbox {
       store.pack({ limits });
       this.show(store, url, primaryCloud, primaryPackingStrategy);
     } catch (error) {
+      primaryPackingStrategy.dispose();
       store.dispose();
       this.setError(error);
     }
@@ -207,6 +209,7 @@ export class GaussianSandbox {
       store.pack({ limits });
       this.show(store, file.name, primaryCloud, primaryPackingStrategy);
     } catch (error) {
+      primaryPackingStrategy.dispose();
       store.dispose();
       this.setError(error);
     }
@@ -224,6 +227,7 @@ export class GaussianSandbox {
     this.helperPass?.dispose();
     this.pipeline?.dispose();
     this.disposeSpatialHelpers();
+    this.primaryPackingStrategy?.dispose();
     this.store?.dispose();
     this.primaryCloud = null;
     this.primaryPackingStrategy = null;
@@ -322,17 +326,17 @@ export class GaussianSandbox {
 
     const started = performance.now();
     const result = store.packLodBatch(cloud);
+    this.debugPanel.recordLodState(
+      this.packingCenter.distanceTo(this.packingBoundsCenter),
+      strategy.needsPack,
+      strategy.targetStats,
+    );
     if (!result.applied) return;
     this.lodColorHelper?.update();
     const duration = performance.now() - started;
     const stats = store.lastPackStats;
     if (stats !== null) {
-      this.debugPanel.recordPack(
-        stats,
-        duration,
-        this.packingCenter.distanceTo(this.packingBoundsCenter),
-        result.pending,
-      );
+      this.debugPanel.recordPack(stats, duration);
     }
   }
 
@@ -487,16 +491,15 @@ function webGpuDeviceLimits(renderer: WebGPURenderer): GPUSupportedLimits {
 }
 
 function createPrimaryPackingStrategy(): StreamingLodPackingStrategy<DistanceAwareRadialLodPackingStrategy> {
-  return new StreamingLodPackingStrategy(
-    new DistanceAwareRadialLodPackingStrategy({
-      center: new Vector3(0, 0, 0),
-      levelDistance: readLodLevelDistance(),
-    }),
-    {
-      maxUploadBytesPerPack: readPositiveQuery("lodUploadKiB", 1024) * 1024,
-      maxChangedCellsPerPack: readPositiveIntegerQuery("lodCells", 16),
-    },
-  );
+  const targetStrategy = new DistanceAwareRadialLodPackingStrategy({
+    center: new Vector3(0, 0, 0),
+    levelDistance: readLodLevelDistance(),
+  });
+  return new StreamingLodPackingStrategy(targetStrategy, {
+    maxUploadBytesPerPack: readPositiveQuery("lodUploadKiB", 1024) * 1024,
+    maxChangedCellsPerPack: readPositiveIntegerQuery("lodCells", 16),
+    targetPlanner: new DistanceAwareLodWorkerPlanner(targetStrategy),
+  });
 }
 
 function readLodLevelDistance(): number {

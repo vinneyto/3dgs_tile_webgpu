@@ -15,9 +15,13 @@ export {
   DistanceAwareRadialLodPackingStrategy,
   type DistanceAwareRadialLodPackingOptions,
 } from "./DistanceAwareRadialLodPackingStrategy";
+export { DistanceAwareLodWorkerPlanner } from "./DistanceAwareLodWorkerPlanner";
 export {
   StreamingLodPackingStrategy,
   type StreamingLodCellTransition,
+  type StreamingLodPlannedTarget,
   type StreamingLodPackingBatch,
   type StreamingLodPackingOptions,
+  type StreamingLodTargetPlanner,
+  type StreamingLodTargetStats,
 } from "./StreamingLodPackingStrategy";

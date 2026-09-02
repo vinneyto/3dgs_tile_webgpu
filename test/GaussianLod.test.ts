@@ -10,6 +10,11 @@ import {
   StreamingLodPackingStrategy,
   TieredRadialLodPackingStrategy,
 } from "../src/lod-packing";
+import {
+  createDistanceAwareLodPlanData,
+  createDistanceAwareLodPlanWorkspace,
+  planDistanceAwareLod,
+} from "../src/lod-packing/DistanceAwareLodPlan";
 import { GaussianOctree } from "../src/GaussianOctree";
 
 describe("GaussianOctree", () => {
@@ -319,6 +324,99 @@ describe("GaussianLod", () => {
     ).toThrow(/levelDistance/);
   });
 
+  it("plans distance-aware LOD targets into reusable typed arrays", () => {
+    const data = {
+      leafNodeIds: Uint32Array.of(10, 20),
+      leafCenters: Float64Array.of(0, 0, 0, 10, 0, 0),
+      levelCounts: Uint32Array.of(1, 2, 1, 2),
+      levelCount: 2,
+      halfDiagonal: 1,
+    };
+    const nodeIds = new Uint32Array(2);
+    const lodLevels = new Uint8Array(2);
+    const workspace = createDistanceAwareLodPlanWorkspace(2);
+
+    const first = planDistanceAwareLod(
+      data,
+      {
+        centerX: 0,
+        centerY: 0,
+        centerZ: 0,
+        levelDistance: 5,
+        maxGaussians: 4,
+      },
+      nodeIds,
+      lodLevels,
+      workspace,
+    );
+    expect(first).toEqual({ length: 2, gaussianCount: 3 });
+    expect(Array.from(nodeIds)).toEqual([10, 20]);
+    expect(Array.from(lodLevels)).toEqual([1, 0]);
+
+    const second = planDistanceAwareLod(
+      data,
+      {
+        centerX: 10,
+        centerY: 0,
+        centerZ: 0,
+        levelDistance: 5,
+        maxGaussians: 2,
+      },
+      nodeIds,
+      lodLevels,
+      workspace,
+    );
+    expect(second).toEqual({ length: 2, gaussianCount: 2 });
+    expect(Array.from(nodeIds)).toEqual([20, 10]);
+    expect(Array.from(lodLevels)).toEqual([0, 0]);
+  });
+
+  it("matches the synchronous distance-aware strategy in the worker planner", () => {
+    const lod = GaussianLod.build(
+      GaussianOctree.build(
+        gaussianData([
+          [-1, -1, -1],
+          [-0.9, -0.9, -0.9],
+          [1, 1, 1],
+          [0.9, 0.9, 0.9],
+        ]),
+        { leafCapacity: 2 },
+      ),
+      { levels: [{ retention: 0.5 }, { retention: 1 }] },
+    );
+    const center = new Vector3(0.5, 0.25, -0.25);
+    const levelDistance = 0.75;
+    const maxGaussians = 3;
+    const expected = new DistanceAwareRadialLodPackingStrategy({
+      center,
+      levelDistance,
+    }).pack({ lod, maxGaussians });
+    const data = createDistanceAwareLodPlanData(lod);
+    const nodeIds = new Uint32Array(data.leafNodeIds.length);
+    const lodLevels = new Uint8Array(data.leafNodeIds.length);
+    const result = planDistanceAwareLod(
+      data,
+      {
+        centerX: center.x,
+        centerY: center.y,
+        centerZ: center.z,
+        levelDistance,
+        maxGaussians,
+      },
+      nodeIds,
+      lodLevels,
+      createDistanceAwareLodPlanWorkspace(data.leafNodeIds.length),
+    );
+
+    expect(result.gaussianCount).toBe(expected.gaussianCount);
+    expect(Array.from(nodeIds.subarray(0, result.length))).toEqual(
+      Array.from(expected.nodeIds),
+    );
+    expect(Array.from(lodLevels.subarray(0, result.length))).toEqual(
+      Array.from(expected.lodLevels),
+    );
+  });
+
   it("streams whole-cell transitions and replaces an unfinished target", () => {
     const lod = GaussianLod.build(
       GaussianOctree.build(
@@ -361,6 +459,85 @@ describe("GaussianLod", () => {
     );
     expect(streaming.needsPack).toBe(false);
     expect(targetStrategy.pack).toHaveBeenCalledTimes(3);
+  });
+
+  it("waits for an asynchronous target and releases it after building the transition", () => {
+    const lod = GaussianLod.build(
+      GaussianOctree.build(
+        gaussianData([
+          [-1, -1, -1],
+          [-0.9, -0.9, -0.9],
+          [1, 1, 1],
+          [0.9, 0.9, 0.9],
+        ]),
+        { leafCapacity: 2 },
+      ),
+      { levels: [{ retention: 0.5 }, { retention: 1 }] },
+    );
+    let pending = false;
+    let result: {
+      packing: ReturnType<typeof packingAtLevel>;
+      maxGaussians: number;
+      planningMs: number;
+      roundTripMs: number;
+      release: ReturnType<typeof vi.fn>;
+    } | null = null;
+    const planner = {
+      get pending() {
+        return pending;
+      },
+      get hasResult() {
+        return result !== null;
+      },
+      discardedResults: 0,
+      initialize: vi.fn(),
+      request: vi.fn(() => {
+        pending = true;
+      }),
+      cancel: vi.fn(),
+      takeLatest: vi.fn(() => {
+        const latest = result;
+        result = null;
+        return latest;
+      }),
+      dispose: vi.fn(),
+    };
+    const initial = packingAtLevel(lod, 0);
+    const streaming = new StreamingLodPackingStrategy(
+      { pack: () => initial },
+      {
+        maxChangedCellsPerPack: 1,
+        maxUploadBytesPerPack: 1,
+        targetPlanner: planner,
+      },
+    );
+    const context = { lod, maxGaussians: 4 };
+    streaming.pack(context);
+
+    streaming.invalidateTarget();
+    const waiting = streaming.takeNextBatch(context);
+    expect(waiting).toBeNull();
+    expect(planner.request).toHaveBeenCalledOnce();
+    expect(streaming.needsPack).toBe(true);
+
+    pending = false;
+    const release = vi.fn();
+    result = {
+      packing: packingAtLevel(lod, 1),
+      maxGaussians: 4,
+      planningMs: 1.5,
+      roundTripMs: 2.5,
+      release,
+    };
+    const partial = streaming.takeNextBatch(context)!.packing;
+    expect(
+      Array.from(partial.lodLevels).filter((level) => level === 1),
+    ).toHaveLength(1);
+    expect(release).toHaveBeenCalledOnce();
+    expect(streaming.targetStats).toMatchObject({
+      planningMs: 1.5,
+      roundTripMs: 2.5,
+    });
   });
 
   it("validates streaming batch limits", () => {
