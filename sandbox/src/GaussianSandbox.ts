@@ -260,6 +260,7 @@ export class GaussianSandbox {
       background: [0.018, 0.022, 0.032, 1],
       profileKernels:
         new URLSearchParams(location.search).get("profile") === "kernels",
+      maxRasterizedSplatsPerTile: readTileCap(),
       radixBackend: readRadixBackend(),
     });
     this.lodColorHelper = new GaussianLodColorHelper(this.pass, {
@@ -487,6 +488,16 @@ function readRadixBackend(): RadixBackend {
     return requested;
   }
   return "auto";
+}
+
+function readTileCap(): number | undefined {
+  const raw = new URLSearchParams(location.search).get("tileCap");
+  if (raw === null || raw === "0") return undefined;
+  const cap = Number(raw);
+  if (!Number.isSafeInteger(cap) || cap <= 0) {
+    throw new RangeError("tileCap must be a positive integer or 0");
+  }
+  return cap;
 }
 
 function webGpuDeviceLimits(renderer: WebGPURenderer): GPUSupportedLimits {

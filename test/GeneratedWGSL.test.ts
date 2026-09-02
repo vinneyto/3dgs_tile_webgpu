@@ -66,6 +66,7 @@ describe("generated Gaussian WGSL", () => {
       new StorageTexture(16, 16),
       null,
       frame,
+      2_048,
       nodes,
     );
 
@@ -81,6 +82,8 @@ describe("generated Gaussian WGSL", () => {
     );
     expect(projectionSource).toContain("count_contributing_tiles");
     expect(rasterSource).toContain("compact_morton_bits_16");
+    expect(rasterSource).toContain("rasterTileEnd");
+    expect(rasterSource).toContain("2048u");
     expect(rasterSource).toContain("workgroupBarrier");
     expect(projectionSource).not.toMatch(/return;\s*return;/);
     expect(rasterSource).not.toMatch(/continue;\s*continue;/);
@@ -140,6 +143,7 @@ describe("generated Gaussian WGSL", () => {
       projection.projectedMean,
       projection.projectedConic,
       frame,
+      null,
     );
 
     const source = buildCompute(
@@ -204,6 +208,7 @@ function buildPipeline(
     new StorageTexture(16, 16),
     null,
     frame,
+    null,
     nodes,
   );
 

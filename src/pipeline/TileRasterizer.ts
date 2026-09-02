@@ -79,6 +79,7 @@ export class TileRasterizer {
     private readonly colorTexture: StorageTexture,
     private readonly depthTexture: StorageTexture | null,
     private readonly frame: FrameUniforms,
+    private readonly maxSplatsPerTile: number | null,
     nodes: GaussianRasterNodeSlots,
   ) {
     this.rebuild(nodes);
@@ -164,7 +165,13 @@ export class TileRasterizer {
         .toVar("rasterActivePixel");
       const tile = workgroupId.y.mul(frame.tilesX).add(workgroupId.x);
       const begin = tileOffsets.element(tile);
-      const end = tileOffsets.element(tile.add(1));
+      const end = uint(tileOffsets.element(tile.add(1))).toVar("rasterTileEnd");
+      if (this.maxSplatsPerTile !== null) {
+        const cap = uint(this.maxSplatsPerTile);
+        If(end.sub(begin).greaterThan(cap), () => {
+          end.assign(begin.add(cap));
+        });
+      }
       const pixelCenter = vec2(pixel).add(0.5);
       const accumulated = vec3(0).toVar("accumulated");
       const transmittance = float(1).toVar("transmittance");

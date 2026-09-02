@@ -57,6 +57,7 @@ export class GaussianPass extends PassNode {
   readonly outputDepth: boolean;
   readonly colorSpace: ColorSpace;
   readonly profileKernels: boolean;
+  readonly maxRasterizedSplatsPerTile: number | null;
   readonly radixBackend: ResolvedRadixBackend;
   readonly colorTexture: StorageTexture;
   readonly depthTexture: StorageTexture | null;
@@ -110,6 +111,17 @@ export class GaussianPass extends PassNode {
         "Gaussian count exceeds the one-dimensional projection dispatch limit",
       );
     }
+    const maxRasterizedSplatsPerTile =
+      options.maxRasterizedSplatsPerTile ?? null;
+    if (
+      maxRasterizedSplatsPerTile !== null &&
+      (!Number.isInteger(maxRasterizedSplatsPerTile) ||
+        maxRasterizedSplatsPerTile <= 0)
+    ) {
+      throw new RangeError(
+        "maxRasterizedSplatsPerTile must be a positive integer",
+      );
+    }
 
     this.name = "GaussianPass";
     this.ownerRenderer = renderer;
@@ -121,6 +133,7 @@ export class GaussianPass extends PassNode {
     this.outputDepth = options.outputDepth ?? false;
     this.colorSpace = options.colorSpace ?? SRGBColorSpace;
     this.profileKernels = options.profileKernels ?? false;
+    this.maxRasterizedSplatsPerTile = maxRasterizedSplatsPerTile;
     this.radixBackend = radixBackend;
 
     this.renderTarget.texture.dispose();
@@ -333,6 +346,7 @@ export class GaussianPass extends PassNode {
         this.intersectionCapacity,
         this.background,
         this.profileKernels,
+        this.maxRasterizedSplatsPerTile,
         this.radixBackend,
         this.nodeSlots,
       );
@@ -390,6 +404,7 @@ export class GaussianPass extends PassNode {
         tileRadixPasses: 0,
         radixBackend: this.radixBackend,
         profileKernels: this.profileKernels,
+        maxRasterizedSplatsPerTile: this.maxRasterizedSplatsPerTile,
       }
     );
   }
@@ -451,6 +466,7 @@ export type {
   GaussianPassResources,
   GaussianPassStats,
   GaussianTileLoadStats,
+  GaussianTileCapStats,
   RadixBackend,
   ResolvedRadixBackend,
 } from "./pipeline/types";

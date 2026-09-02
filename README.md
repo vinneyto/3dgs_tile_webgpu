@@ -586,6 +586,15 @@ contains no pixel center. Profiling adds a compute pass, timestamp overhead and
 two diagnostic readbacks, so its FPS is not the final production-performance
 number.
 
+The tile profile also reports total and worst-tile raster batches (256 splats
+per batch), plus counterfactual dropped-intersection, affected-tile and batch
+counts for caps of 2048, 4096 and 8192. To run the corresponding raster-only
+experiment, append `&tileCap=2048` (or another positive integer). The cap is
+applied only when the raster kernel reads each sorted tile range: intersection
+emission and radix sorting remain unchanged, so the GPU timing difference
+isolates the long-tail raster cost. The nearest depth-sorted splats are retained.
+Omit `tileCap` or use `tileCap=0` for the unchanged renderer.
+
 The memory delta is captured after a 30-frame warm-up, making accidental per-frame resource growth visible.
 Diagnostic intersection readback runs asynchronously every 1.5 seconds;
 `?stats=0` disables that readback outside profiling mode. Append `?debug=0` to

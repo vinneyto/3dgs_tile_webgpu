@@ -4,6 +4,7 @@ import type {
   GaussianPassStats,
   GaussianStorePackStats,
   GaussianStoreSlotRange,
+  GaussianTileCapStats,
 } from "../../src/index";
 import type { KernelTimingInspector } from "./KernelTimingInspector";
 
@@ -209,7 +210,14 @@ export class DebugPanel {
       `percentiles    p95 ${formatInteger(loads.p95)}  p99 ${formatInteger(loads.p99)}`,
       `heavy tiles    >256 ${formatInteger(loads.tilesOver256)}  >512 ${formatInteger(loads.tilesOver512)}`,
       `               >1024 ${formatInteger(loads.tilesOver1024)}  >2048 ${formatInteger(loads.tilesOver2048)}`,
+      `raster batches total ${formatInteger(loads.totalBatches)}  max/tile ${formatInteger(loads.maxBatches)}`,
       `subpixel       zero-pixel ${formatInteger(profile.zeroPixelSubpixelSplats)}`,
+      ...profile.tileCapEstimates.flatMap((estimate) =>
+        formatTileCap("cap estimate", estimate),
+      ),
+      ...(profile.appliedTileCap === null
+        ? ["raster cap     off · ?tileCap=2048 enables it"]
+        : formatTileCap("raster cap", profile.appliedTileCap)),
     ];
   }
 
@@ -263,6 +271,13 @@ export class DebugPanel {
       ].join("\n"),
     );
   }
+}
+
+function formatTileCap(label: string, stats: GaussianTileCapStats): string[] {
+  return [
+    `${label.padEnd(14)} ${formatInteger(stats.cap)}  drop ${formatInteger(stats.droppedIntersections)} (${(stats.droppedFraction * 100).toFixed(1)}%)  tiles ${formatInteger(stats.affectedTiles)}`,
+    `               raster ${formatInteger(stats.rasterizedIntersections)}  batches ${formatInteger(stats.totalBatches)}  max/tile ${formatInteger(stats.maxBatches)}`,
+  ];
 }
 
 function setTextPreservingScroll(element: HTMLElement, text: string): void {

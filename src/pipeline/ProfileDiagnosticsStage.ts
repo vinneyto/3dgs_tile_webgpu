@@ -9,7 +9,11 @@ import {
   PROFILE_DIAGNOSTIC_WORKGROUP_SIZE,
   profileSubpixelCoverageWGSL,
 } from "../kernels/profileDiagnostics";
-import { summarizeTileLoads } from "../utils/profileStats";
+import {
+  estimateTileCap,
+  PROFILE_TILE_CAPS,
+  summarizeTileLoads,
+} from "../utils/profileStats";
 import { AttributePool } from "./AttributePool";
 import type { FrameUniforms } from "./FrameUniforms";
 import type { GaussianPassProfileStats } from "./types";
@@ -25,6 +29,7 @@ export class ProfileDiagnosticsStage {
     projectedMeanAttribute: StorageBufferAttribute,
     projectedConicAttribute: StorageBufferAttribute,
     frame: FrameUniforms,
+    private readonly maxRasterizedSplatsPerTile: number | null,
   ) {
     this.zeroPixelFlags = this.attributes.createUint(
       "3dgs.profile-zero-pixel-subpixel-flags",
@@ -65,8 +70,16 @@ export class ProfileDiagnosticsStage {
     const flags = new Uint32Array(flagBuffer);
     let zeroPixelSubpixelSplats = 0;
     for (const flag of flags) zeroPixelSubpixelSplats += flag;
+    const offsets = new Uint32Array(offsetBuffer);
     return {
-      tileLoads: summarizeTileLoads(new Uint32Array(offsetBuffer)),
+      tileLoads: summarizeTileLoads(offsets),
+      appliedTileCap:
+        this.maxRasterizedSplatsPerTile === null
+          ? null
+          : estimateTileCap(offsets, this.maxRasterizedSplatsPerTile),
+      tileCapEstimates: PROFILE_TILE_CAPS.map((cap) =>
+        estimateTileCap(offsets, cap),
+      ),
       zeroPixelSubpixelSplats,
     };
   }

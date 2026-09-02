@@ -68,6 +68,7 @@ export {
   type GaussianPassResources,
   type GaussianPassStats,
   type GaussianTileLoadStats,
+  type GaussianTileCapStats,
   type RadixBackend,
   type ResolvedRadixBackend,
 } from "./GaussianPass";

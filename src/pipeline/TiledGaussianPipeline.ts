@@ -62,6 +62,7 @@ export class TiledGaussianPipeline {
     private readonly capacity: number,
     background: readonly [number, number, number, number],
     private readonly profileKernels: boolean,
+    private readonly maxRasterizedSplatsPerTile: number | null,
     private readonly radixBackend: ResolvedRadixBackend,
     private readonly nodes: GaussianNodeSlots,
   ) {
@@ -81,6 +82,7 @@ export class TiledGaussianPipeline {
           this.projection.projectedMean,
           this.projection.projectedConic,
           this.frame,
+          maxRasterizedSplatsPerTile,
         )
       : null;
     this.visibleScan = new ExclusiveScanStage(
@@ -211,6 +213,7 @@ export class TiledGaussianPipeline {
       tileRadixPasses: this.sorter.passCount,
       radixBackend: this.radixBackend,
       profileKernels: this.profileKernels,
+      maxRasterizedSplatsPerTile: this.maxRasterizedSplatsPerTile,
     };
   }
 
@@ -289,6 +292,7 @@ export class TiledGaussianPipeline {
       colorTexture,
       depthTexture,
       this.frame,
+      this.maxRasterizedSplatsPerTile,
       this.nodes,
     );
     this.width = width;

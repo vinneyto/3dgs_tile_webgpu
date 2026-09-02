@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { profileSubpixelCoverageWGSL } from "../src/kernels/profileDiagnostics";
-import { summarizeTileLoads } from "../src/utils/profileStats";
+import { estimateTileCap, summarizeTileLoads } from "../src/utils/profileStats";
 
 describe("profile diagnostics", () => {
   it("summarizes emitted intersections per tile", () => {
@@ -18,6 +18,8 @@ describe("profile diagnostics", () => {
       tilesOver512: 3,
       tilesOver1024: 2,
       tilesOver2048: 1,
+      totalBatches: 19,
+      maxBatches: 9,
     });
   });
 
@@ -32,6 +34,22 @@ describe("profile diagnostics", () => {
       tilesOver512: 0,
       tilesOver1024: 0,
       tilesOver2048: 0,
+      totalBatches: 0,
+      maxBatches: 0,
+    });
+  });
+
+  it("estimates raster-only tile caps", () => {
+    expect(
+      estimateTileCap(new Uint32Array([0, 100, 2_100, 7_100]), 2_048),
+    ).toEqual({
+      cap: 2_048,
+      rasterizedIntersections: 4_148,
+      droppedIntersections: 2_952,
+      droppedFraction: 2_952 / 7_100,
+      affectedTiles: 1,
+      totalBatches: 17,
+      maxBatches: 8,
     });
   });
 
