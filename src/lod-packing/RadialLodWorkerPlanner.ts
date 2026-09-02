@@ -3,13 +3,14 @@ import { Vector3 } from "three/webgpu";
 import type { GaussianLod, GaussianLodPacking } from "../GaussianLod";
 import type { GaussianLodPackingContext } from "./GaussianLodPackingStrategy";
 import type { DistanceAwareRadialLodPackingStrategy } from "./DistanceAwareRadialLodPackingStrategy";
-import { createDistanceAwareLodPlanData } from "./DistanceAwareLodPlan";
+import type { TieredRadialLodPackingStrategy } from "./TieredRadialLodPackingStrategy";
+import { createRadialLodPlanData } from "./RadialLodPlan";
 import type {
-  DistanceAwareLodWorkerBufferSet,
-  DistanceAwareLodWorkerInitMessage,
-  DistanceAwareLodWorkerRequestMessage,
-  DistanceAwareLodWorkerResultMessage,
-} from "./DistanceAwareLodWorkerProtocol";
+  RadialLodWorkerBufferSet,
+  RadialLodWorkerInitMessage,
+  RadialLodWorkerRequestMessage,
+  RadialLodWorkerResultMessage,
+} from "./RadialLodWorkerProtocol";
 import type {
   StreamingLodPlannedTarget,
   StreamingLodTargetPlanner,
@@ -18,21 +19,22 @@ import type {
 const OUTPUT_POOL_SIZE = 2;
 
 interface QueuedRequest {
-  readonly message: DistanceAwareLodWorkerRequestMessage;
+  readonly message: RadialLodWorkerRequestMessage;
   readonly maxGaussians: number;
 }
 
 interface LatestResult {
-  readonly message: DistanceAwareLodWorkerResultMessage;
+  readonly message: RadialLodWorkerResultMessage;
   readonly maxGaussians: number;
   readonly roundTripMs: number;
 }
 
 /**
- * Computes camera-distance target packings in one module worker. At most one
- * request is in flight and one replaceable latest request is retained.
+ * Computes distance-aware or fixed-budget radial target packings in one module
+ * worker. At most one request is in flight and one replaceable latest request
+ * is retained.
  */
-export class DistanceAwareLodWorkerPlanner implements StreamingLodTargetPlanner {
+export class RadialLodWorkerPlanner implements StreamingLodTargetPlanner {
   private readonly worker: Worker;
   private readonly boundsCenter = new Vector3();
   private lod: GaussianLod | null = null;
@@ -47,11 +49,14 @@ export class DistanceAwareLodWorkerPlanner implements StreamingLodTargetPlanner 
   private disposed = false;
   private discarded = 0;
 
-  constructor(readonly targetStrategy: DistanceAwareRadialLodPackingStrategy) {
-    this.worker = new Worker(
-      new URL("./DistanceAwareLodWorker.ts", import.meta.url),
-      { type: "module", name: "3dgs-distance-lod" },
-    );
+  constructor(
+    readonly targetStrategy:
+      DistanceAwareRadialLodPackingStrategy | TieredRadialLodPackingStrategy,
+  ) {
+    this.worker = new Worker(new URL("./RadialLodWorker.ts", import.meta.url), {
+      type: "module",
+      name: "3dgs-radial-lod",
+    });
     this.worker.addEventListener("message", this.handleMessage);
     this.worker.addEventListener("error", this.handleError);
   }
@@ -73,15 +78,15 @@ export class DistanceAwareLodWorkerPlanner implements StreamingLodTargetPlanner 
     if (this.lod === lod) return;
     if (this.lod !== null) {
       throw new Error(
-        "DistanceAwareLodWorkerPlanner instances cannot be shared between GaussianLod objects",
+        "RadialLodWorkerPlanner instances cannot be shared between GaussianLod objects",
       );
     }
     this.lod = lod;
-    const data = createDistanceAwareLodPlanData(lod);
+    const data = createRadialLodPlanData(lod);
     const buffers = Array.from({ length: OUTPUT_POOL_SIZE }, () =>
       createOutputBufferSet(data.leafNodeIds.length),
     );
-    const message: DistanceAwareLodWorkerInitMessage = {
+    const message: RadialLodWorkerInitMessage = {
       type: "init",
       data,
       buffers,
@@ -104,16 +109,28 @@ export class DistanceAwareLodWorkerPlanner implements StreamingLodTargetPlanner 
         : context.lod.octree.bounds.getCenter(this.boundsCenter);
     const revision = ++this.revision;
     this.latestRequestedRevision = revision;
+    const baseRequest = {
+      type: "request" as const,
+      revision,
+      centerX: focus.x,
+      centerY: focus.y,
+      centerZ: focus.z,
+      maxGaussians: context.maxGaussians,
+    };
+    const message: RadialLodWorkerRequestMessage =
+      "budgetShares" in this.targetStrategy
+        ? {
+            ...baseRequest,
+            strategy: "tiered",
+            budgetShares: this.targetStrategy.budgetShares,
+          }
+        : {
+            ...baseRequest,
+            strategy: "distance",
+            levelDistance: this.targetStrategy.levelDistance,
+          };
     const request: QueuedRequest = {
-      message: {
-        type: "request",
-        revision,
-        centerX: focus.x,
-        centerY: focus.y,
-        centerZ: focus.z,
-        levelDistance: this.targetStrategy.levelDistance,
-        maxGaussians: context.maxGaussians,
-      },
+      message,
       maxGaussians: context.maxGaussians,
     };
     if (this.busy) {
@@ -170,7 +187,7 @@ export class DistanceAwareLodWorkerPlanner implements StreamingLodTargetPlanner 
   }
 
   private readonly handleMessage = (
-    event: MessageEvent<DistanceAwareLodWorkerResultMessage>,
+    event: MessageEvent<RadialLodWorkerResultMessage>,
   ): void => {
     if (this.disposed) return;
     const message = event.data;
@@ -193,9 +210,7 @@ export class DistanceAwareLodWorkerPlanner implements StreamingLodTargetPlanner 
     if (this.disposed) return;
     this.busy = false;
     this.queuedRequest = null;
-    this.latestError = new Error(
-      event.message || "Distance-aware LOD worker failed",
-    );
+    this.latestError = new Error(event.message || "Radial LOD worker failed");
   };
 
   private dispatch(request: QueuedRequest): void {
@@ -213,7 +228,7 @@ export class DistanceAwareLodWorkerPlanner implements StreamingLodTargetPlanner 
     this.recycle(result.message.buffer);
   }
 
-  private recycle(buffer: DistanceAwareLodWorkerBufferSet): void {
+  private recycle(buffer: RadialLodWorkerBufferSet): void {
     if (this.disposed) return;
     this.worker.postMessage({ type: "recycle", buffer }, [
       buffer.nodeIds,
@@ -223,14 +238,12 @@ export class DistanceAwareLodWorkerPlanner implements StreamingLodTargetPlanner 
 
   private assertUsable(): void {
     if (this.disposed) {
-      throw new Error("DistanceAwareLodWorkerPlanner has been disposed");
+      throw new Error("RadialLodWorkerPlanner has been disposed");
     }
   }
 }
 
-function createOutputBufferSet(
-  leafCount: number,
-): DistanceAwareLodWorkerBufferSet {
+function createOutputBufferSet(leafCount: number): RadialLodWorkerBufferSet {
   return {
     nodeIds: new ArrayBuffer(leafCount * Uint32Array.BYTES_PER_ELEMENT),
     lodLevels: new ArrayBuffer(leafCount * Uint8Array.BYTES_PER_ELEMENT),
@@ -238,7 +251,7 @@ function createOutputBufferSet(
 }
 
 function packingFromResult(
-  result: DistanceAwareLodWorkerResultMessage,
+  result: RadialLodWorkerResultMessage,
 ): GaussianLodPacking {
   return {
     nodeIds: new Uint32Array(result.buffer.nodeIds, 0, result.length),

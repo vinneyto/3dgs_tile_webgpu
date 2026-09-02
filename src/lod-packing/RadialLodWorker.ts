@@ -1,32 +1,29 @@
 import {
-  createDistanceAwareLodPlanWorkspace,
-  planDistanceAwareLod,
-  type DistanceAwareLodPlanData,
-  type DistanceAwareLodPlanWorkspace,
-} from "./DistanceAwareLodPlan";
+  createRadialLodPlanWorkspace,
+  planRadialLod,
+  type RadialLodPlanData,
+  type RadialLodPlanWorkspace,
+} from "./RadialLodPlan";
 import type {
-  DistanceAwareLodWorkerBufferSet,
-  DistanceAwareLodWorkerMessage,
-  DistanceAwareLodWorkerResultMessage,
-} from "./DistanceAwareLodWorkerProtocol";
+  RadialLodWorkerBufferSet,
+  RadialLodWorkerMessage,
+  RadialLodWorkerResultMessage,
+} from "./RadialLodWorkerProtocol";
 
 interface WorkerScope {
-  onmessage:
-    ((event: MessageEvent<DistanceAwareLodWorkerMessage>) => void) | null;
+  onmessage: ((event: MessageEvent<RadialLodWorkerMessage>) => void) | null;
   postMessage(message: unknown, transfer: Transferable[]): void;
 }
 
 const scope = globalThis as unknown as WorkerScope;
-let data: DistanceAwareLodPlanData | null = null;
-let workspace: DistanceAwareLodPlanWorkspace | null = null;
-const buffers: DistanceAwareLodWorkerBufferSet[] = [];
+let data: RadialLodPlanData | null = null;
+let workspace: RadialLodPlanWorkspace | null = null;
+const buffers: RadialLodWorkerBufferSet[] = [];
 
 scope.onmessage = ({ data: message }) => {
   if (message.type === "init") {
     data = message.data;
-    workspace = createDistanceAwareLodPlanWorkspace(
-      message.data.leafNodeIds.length,
-    );
+    workspace = createRadialLodPlanWorkspace(message.data.leafNodeIds.length);
     buffers.push(...message.buffers);
     return;
   }
@@ -35,23 +32,23 @@ scope.onmessage = ({ data: message }) => {
     return;
   }
   if (data === null || workspace === null) {
-    throw new Error("Distance-aware LOD worker was not initialized");
+    throw new Error("Radial LOD worker was not initialized");
   }
   const buffer = buffers.pop();
   if (buffer === undefined) {
-    throw new Error("Distance-aware LOD worker exhausted its output pool");
+    throw new Error("Radial LOD worker exhausted its output pool");
   }
   const outputNodeIds = new Uint32Array(buffer.nodeIds);
   const outputLodLevels = new Uint8Array(buffer.lodLevels);
   const started = performance.now();
-  const result = planDistanceAwareLod(
+  const result = planRadialLod(
     data,
     message,
     outputNodeIds,
     outputLodLevels,
     workspace,
   );
-  const response: DistanceAwareLodWorkerResultMessage = {
+  const response: RadialLodWorkerResultMessage = {
     type: "result",
     revision: message.revision,
     length: result.length,

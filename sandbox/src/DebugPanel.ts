@@ -237,7 +237,7 @@ export class DebugPanel {
         formatTileCap("cap estimate", estimate),
       ),
       ...(profile.appliedTileCap === null
-        ? ["raster cap     off · ?tileCap=2048 enables it"]
+        ? ["raster cap     OFF · ?tileCap=8192 enables it"]
         : formatTileCap("raster cap", profile.appliedTileCap)),
     ];
   }

@@ -4,19 +4,20 @@ import { StorageBufferAttribute, Vector3 } from "three/webgpu";
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLod } from "../src/GaussianLod";
 import {
-  DistanceAwareLodWorkerPlanner,
   DistanceAwareRadialLodPackingStrategy,
+  RadialLodWorkerPlanner,
+  TieredRadialLodPackingStrategy,
 } from "../src/lod-packing";
 import type {
-  DistanceAwareLodWorkerBufferSet,
-  DistanceAwareLodWorkerInitMessage,
-  DistanceAwareLodWorkerMessage,
-  DistanceAwareLodWorkerRequestMessage,
-  DistanceAwareLodWorkerResultMessage,
-} from "../src/lod-packing/DistanceAwareLodWorkerProtocol";
+  RadialLodWorkerBufferSet,
+  RadialLodWorkerInitMessage,
+  RadialLodWorkerMessage,
+  RadialLodWorkerRequestMessage,
+  RadialLodWorkerResultMessage,
+} from "../src/lod-packing/RadialLodWorkerProtocol";
 import { GaussianOctree } from "../src/GaussianOctree";
 
-describe("DistanceAwareLodWorkerPlanner", () => {
+describe("RadialLodWorkerPlanner", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     FakeWorker.instances.length = 0;
@@ -28,7 +29,7 @@ describe("DistanceAwareLodWorkerPlanner", () => {
     const targetStrategy = new DistanceAwareRadialLodPackingStrategy({
       center: new Vector3(),
     });
-    const planner = new DistanceAwareLodWorkerPlanner(targetStrategy);
+    const planner = new RadialLodWorkerPlanner(targetStrategy);
     planner.initialize(lod);
     const worker = FakeWorker.instances[0]!;
     const context = { lod, maxGaussians: 4 };
@@ -78,18 +79,39 @@ describe("DistanceAwareLodWorkerPlanner", () => {
     planner.dispose();
     expect(worker.terminated).toBe(true);
   });
+
+  it("sends tiered budget shares to the shared radial worker", () => {
+    vi.stubGlobal("Worker", FakeWorker);
+    const lod = twoLeafLod();
+    const targetStrategy = new TieredRadialLodPackingStrategy({
+      center: new Vector3(1, 2, 3),
+      budgetShares: [0.6, 0.2, 0.2],
+    });
+    const planner = new RadialLodWorkerPlanner(targetStrategy);
+
+    planner.request({ lod, maxGaussians: 3 });
+
+    expect(FakeWorker.instances[0]!.requests[0]).toMatchObject({
+      strategy: "tiered",
+      centerX: 1,
+      centerY: 2,
+      centerZ: 3,
+      maxGaussians: 3,
+      budgetShares: [0.6, 0.2, 0.2],
+    });
+    planner.dispose();
+  });
 });
 
 class FakeWorker {
   static readonly instances: FakeWorker[] = [];
 
-  init: DistanceAwareLodWorkerInitMessage | null = null;
-  readonly requests: DistanceAwareLodWorkerRequestMessage[] = [];
-  readonly recycled: DistanceAwareLodWorkerBufferSet[] = [];
+  init: RadialLodWorkerInitMessage | null = null;
+  readonly requests: RadialLodWorkerRequestMessage[] = [];
+  readonly recycled: RadialLodWorkerBufferSet[] = [];
   terminated = false;
   private messageListener:
-    | ((event: MessageEvent<DistanceAwareLodWorkerResultMessage>) => void)
-    | null = null;
+    ((event: MessageEvent<RadialLodWorkerResultMessage>) => void) | null = null;
 
   constructor() {
     FakeWorker.instances.push(this);
@@ -97,22 +119,20 @@ class FakeWorker {
 
   addEventListener(
     type: string,
-    listener: (
-      event: MessageEvent<DistanceAwareLodWorkerResultMessage>,
-    ) => void,
+    listener: (event: MessageEvent<RadialLodWorkerResultMessage>) => void,
   ): void {
     if (type === "message") this.messageListener = listener;
   }
 
   removeEventListener(): void {}
 
-  postMessage(message: DistanceAwareLodWorkerMessage): void {
+  postMessage(message: RadialLodWorkerMessage): void {
     if (message.type === "init") this.init = message;
     else if (message.type === "request") this.requests.push(message);
     else this.recycled.push(message.buffer);
   }
 
-  emitResult(message: DistanceAwareLodWorkerResultMessage): void {
+  emitResult(message: RadialLodWorkerResultMessage): void {
     this.messageListener?.({ data: message } as MessageEvent);
   }
 

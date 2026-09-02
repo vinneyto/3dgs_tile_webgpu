@@ -17,10 +17,10 @@ import {
   OctreeHelper,
   GaussianOctree,
   GaussianStore,
-  DistanceAwareLodWorkerPlanner,
-  DistanceAwareRadialLodPackingStrategy,
+  RadialLodWorkerPlanner,
   SourceFractionBudgetStrategy,
   StreamingLodPackingStrategy,
+  TieredRadialLodPackingStrategy,
   type GaussianPass,
   type RadixBackend,
 } from "../../src/index";
@@ -64,7 +64,7 @@ export class GaussianSandbox {
   private octreeHelpersVisible = false;
   private lodColoringEnabled = true;
   private primaryCloud: GaussianCloud | null = null;
-  private primaryPackingStrategy: StreamingLodPackingStrategy<DistanceAwareRadialLodPackingStrategy> | null =
+  private primaryPackingStrategy: StreamingLodPackingStrategy<TieredRadialLodPackingStrategy> | null =
     null;
   private lodColorHelper: GaussianLodColorHelper | null = null;
   private readonly packingCenter = new Vector3();
@@ -219,7 +219,7 @@ export class GaussianSandbox {
     store: GaussianStore,
     source: string,
     primaryCloud: GaussianCloud,
-    primaryPackingStrategy: StreamingLodPackingStrategy<DistanceAwareRadialLodPackingStrategy>,
+    primaryPackingStrategy: StreamingLodPackingStrategy<TieredRadialLodPackingStrategy>,
   ): void {
     this.lodColorHelper?.dispose();
     this.lodColorHelper = null;
@@ -475,9 +475,10 @@ function readRadixBackend(): RadixBackend {
   return "auto";
 }
 
-function readTileCap(): number | undefined {
+function readTileCap(): number | null | undefined {
   const raw = new URLSearchParams(location.search).get("tileCap");
-  if (raw === null || raw === "0") return undefined;
+  if (raw === null) return undefined;
+  if (raw === "0") return null;
   const cap = Number(raw);
   if (!Number.isSafeInteger(cap) || cap <= 0) {
     throw new RangeError("tileCap must be a positive integer or 0");
@@ -490,26 +491,16 @@ function webGpuDeviceLimits(renderer: WebGPURenderer): GPUSupportedLimits {
   return backend.device.limits;
 }
 
-function createPrimaryPackingStrategy(): StreamingLodPackingStrategy<DistanceAwareRadialLodPackingStrategy> {
-  const targetStrategy = new DistanceAwareRadialLodPackingStrategy({
+function createPrimaryPackingStrategy(): StreamingLodPackingStrategy<TieredRadialLodPackingStrategy> {
+  const targetStrategy = new TieredRadialLodPackingStrategy({
     center: new Vector3(0, 0, 0),
-    levelDistance: readLodLevelDistance(),
+    budgetShares: [0.6, 0.2, 0.2],
   });
   return new StreamingLodPackingStrategy(targetStrategy, {
     maxUploadBytesPerPack: readPositiveQuery("lodUploadKiB", 1024) * 1024,
     maxChangedCellsPerPack: readPositiveIntegerQuery("lodCells", 16),
-    targetPlanner: new DistanceAwareLodWorkerPlanner(targetStrategy),
+    targetPlanner: new RadialLodWorkerPlanner(targetStrategy),
   });
-}
-
-function readLodLevelDistance(): number {
-  const raw = new URLSearchParams(location.search).get("lodDistance");
-  if (raw === null) return 2;
-  const distance = Number(raw);
-  if (!(distance > 0) || !Number.isFinite(distance)) {
-    throw new RangeError("lodDistance must be finite and positive");
-  }
-  return distance;
 }
 
 function readPositiveQuery(name: string, fallback: number): number {

@@ -27,7 +27,7 @@ export {
 } from "./GaussianLodColorHelper";
 export {
   MaximumLodPackingStrategy,
-  DistanceAwareLodWorkerPlanner,
+  RadialLodWorkerPlanner,
   DistanceAwareRadialLodPackingStrategy,
   RadialLodPackingStrategy,
   StreamingLodPackingStrategy,

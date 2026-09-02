@@ -30,6 +30,10 @@ describe("GaussianPass node slots", () => {
     expect(pass.gaussianPositionWorldNode).toBe(gaussianPositionWorld);
     expect(pass.gaussianColorNode).toBe(gaussianColor);
     expect(pass.rasterColorNode).toBe(rasterGaussianColor);
+    expect(pass.maxRasterizedSplatsPerTile).toBe(8_192);
+
+    const uncapped = createPass({ maxRasterizedSplatsPerTile: null }).pass;
+    expect(uncapped.maxRasterizedSplatsPerTile).toBeNull();
   });
 
   it("rebuilds only the stage whose root node changed", () => {
@@ -58,7 +62,9 @@ describe("GaussianPass node slots", () => {
   });
 });
 
-function createPass(): {
+function createPass(
+  options: { maxRasterizedSplatsPerTile?: number | null } = {},
+): {
   pass: GaussianPass;
   renderer: WebGPURenderer;
   store: GaussianStore;
@@ -72,7 +78,12 @@ function createPass(): {
       target.set(32, 32),
     initRenderTarget: vi.fn(),
   } as unknown as WebGPURenderer;
-  const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
+  const pass = new GaussianPass(
+    renderer,
+    new PerspectiveCamera(),
+    store,
+    options,
+  );
   return { pass, renderer, store };
 }
 

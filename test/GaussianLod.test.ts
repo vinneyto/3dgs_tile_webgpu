@@ -11,10 +11,11 @@ import {
   TieredRadialLodPackingStrategy,
 } from "../src/lod-packing";
 import {
-  createDistanceAwareLodPlanData,
-  createDistanceAwareLodPlanWorkspace,
+  createRadialLodPlanData,
+  createRadialLodPlanWorkspace,
   planDistanceAwareLod,
-} from "../src/lod-packing/DistanceAwareLodPlan";
+  planTieredRadialLod,
+} from "../src/lod-packing/RadialLodPlan";
 import { GaussianOctree } from "../src/GaussianOctree";
 
 describe("GaussianOctree", () => {
@@ -334,11 +335,12 @@ describe("GaussianLod", () => {
     };
     const nodeIds = new Uint32Array(2);
     const lodLevels = new Uint8Array(2);
-    const workspace = createDistanceAwareLodPlanWorkspace(2);
+    const workspace = createRadialLodPlanWorkspace(2);
 
     const first = planDistanceAwareLod(
       data,
       {
+        strategy: "distance",
         centerX: 0,
         centerY: 0,
         centerZ: 0,
@@ -356,6 +358,7 @@ describe("GaussianLod", () => {
     const second = planDistanceAwareLod(
       data,
       {
+        strategy: "distance",
         centerX: 10,
         centerY: 0,
         centerZ: 0,
@@ -391,12 +394,13 @@ describe("GaussianLod", () => {
       center,
       levelDistance,
     }).pack({ lod, maxGaussians });
-    const data = createDistanceAwareLodPlanData(lod);
+    const data = createRadialLodPlanData(lod);
     const nodeIds = new Uint32Array(data.leafNodeIds.length);
     const lodLevels = new Uint8Array(data.leafNodeIds.length);
     const result = planDistanceAwareLod(
       data,
       {
+        strategy: "distance",
         centerX: center.x,
         centerY: center.y,
         centerZ: center.z,
@@ -405,7 +409,57 @@ describe("GaussianLod", () => {
       },
       nodeIds,
       lodLevels,
-      createDistanceAwareLodPlanWorkspace(data.leafNodeIds.length),
+      createRadialLodPlanWorkspace(data.leafNodeIds.length),
+    );
+
+    expect(result.gaussianCount).toBe(expected.gaussianCount);
+    expect(Array.from(nodeIds.subarray(0, result.length))).toEqual(
+      Array.from(expected.nodeIds),
+    );
+    expect(Array.from(lodLevels.subarray(0, result.length))).toEqual(
+      Array.from(expected.lodLevels),
+    );
+  });
+
+  it("matches the synchronous tiered radial strategy in the worker planner", () => {
+    const points: number[][] = [];
+    for (let octant = 0; octant < 8; octant++) {
+      const signs = [
+        octant & 1 ? 1 : -1,
+        octant & 2 ? 1 : -1,
+        octant & 4 ? 1 : -1,
+      ];
+      for (const distance of [0.08, 0.1, 0.12, 0.14, 0.82, 0.86, 0.9, 0.94]) {
+        points.push(signs.map((sign) => sign * distance));
+      }
+    }
+    const lod = GaussianLod.build(
+      GaussianOctree.build(gaussianData(points), { leafCapacity: 4 }),
+      { levels: [{ retention: 0.25 }, { retention: 0.5 }, { retention: 1 }] },
+    );
+    const center = new Vector3(0.25, -0.1, 0.2);
+    const budgetShares = [0.6, 0.2, 0.2] as const;
+    const maxGaussians = 24;
+    const expected = new TieredRadialLodPackingStrategy({
+      center,
+      budgetShares,
+    }).pack({ lod, maxGaussians });
+    const data = createRadialLodPlanData(lod);
+    const nodeIds = new Uint32Array(data.leafNodeIds.length);
+    const lodLevels = new Uint8Array(data.leafNodeIds.length);
+    const result = planTieredRadialLod(
+      data,
+      {
+        strategy: "tiered",
+        centerX: center.x,
+        centerY: center.y,
+        centerZ: center.z,
+        budgetShares,
+        maxGaussians,
+      },
+      nodeIds,
+      lodLevels,
+      createRadialLodPlanWorkspace(data.leafNodeIds.length),
     );
 
     expect(result.gaussianCount).toBe(expected.gaussianCount);

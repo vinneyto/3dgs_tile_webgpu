@@ -40,7 +40,7 @@ src/
 │   ├── RadialLodPackingStrategy.ts   fixed-LOD center-out clipping
 │   ├── TieredRadialLodPackingStrategy.ts 60/20/20 radial LOD tiers
 │   ├── DistanceAwareRadialLodPackingStrategy.ts distance-based radial tiers
-│   ├── DistanceAwareLodWorkerPlanner.ts latest-only worker target planner
+│   ├── RadialLodWorkerPlanner.ts latest-only radial worker target planner
 │   └── StreamingLodPackingStrategy.ts bounded latest-target transitions
 ├── store-budgeting/                 global Store budget assignment
 │   ├── GaussianStoreBudgetStrategy.ts shared strategy contract
@@ -233,15 +233,15 @@ unfinished target and diffs the actually applied packing against the newest
 one. A streaming instance is stateful and must belong to one cloud.
 
 ```ts
-const distancePacking = new DistanceAwareRadialLodPackingStrategy();
-const workerPlanner = new DistanceAwareLodWorkerPlanner(distancePacking);
-const streamingPacking = new StreamingLodPackingStrategy(distancePacking, {
+const radialPacking = new TieredRadialLodPackingStrategy();
+const workerPlanner = new RadialLodWorkerPlanner(radialPacking);
+const streamingPacking = new StreamingLodPackingStrategy(radialPacking, {
   maxUploadBytesPerPack: 1024 * 1024,
   maxChangedCellsPerPack: 16,
   targetPlanner: workerPlanner,
 });
 
-distancePacking.setCenter(cameraPositionInCloudLocalSpace);
+radialPacking.setCenter(cameraPositionInCloudLocalSpace);
 streamingPacking.invalidateTarget();
 
 if (streamingPacking.needsPack) {
@@ -622,12 +622,13 @@ http://localhost:5173/?ply=/my-cloud.ply&sort=packed16&dpr=1
 Open **Octree / LOD visualization** in the sandbox HUD to toggle the local
 octree grid or color the rendered splats by their current packed LOD. The
 sandbox uses the packed-attribute helper instead of LOD volume boxes.
-Its radial packing focus follows the camera and repacks after meaningful camera
-movement. Later target selection runs in a module worker; bounded Store buffer
-updates remain on the main thread.
-Use `?lodDistance=2` to change the number of octree-root half-diagonals per LOD
-step. Camera-driven transitions default to 1 MiB and 16 changed leaves per
-frame; use `?lodUploadKiB=1024&lodCells=16` to tune those limits.
+Its fixed-budget tiered radial packing focus follows the camera and repacks
+after meaningful camera movement. Zooming away does not independently lower
+detail: LOD selection only keeps the packed data inside its GPU allocation.
+Later target selection runs in a module worker; bounded Store buffer updates
+remain on the main thread. Camera-driven transitions default to 1 MiB and 16
+changed leaves per frame; use `?lodUploadKiB=1024&lodCells=16` to tune those
+limits.
 
 Files addressed by URL belong in `sandbox/public/`; the file picker and drag-and-drop do not require copying
 the file into the repository. The loader accepts ASCII, binary little-endian, and binary big-endian scalar PLY
@@ -662,12 +663,12 @@ diagnostic readbacks, so its FPS is not the final production-performance number.
 
 The tile profile also reports total and worst-tile raster batches (256 splats
 per batch), plus counterfactual dropped-intersection, affected-tile and batch
-counts for caps of 2048, 4096 and 8192. To run the corresponding raster-only
-experiment, append `&tileCap=2048` (or another positive integer). The cap is
-applied only when the raster kernel reads each sorted tile range: intersection
-emission and radix sorting remain unchanged, so the GPU timing difference
-isolates the long-tail raster cost. The nearest depth-sorted splats are retained.
-Omit `tileCap` or use `tileCap=0` for the unchanged renderer.
+counts for caps of 2048, 4096 and 8192. Rasterization is capped at 8192 splats
+per tile by default. Append `&tileCap=2048` (or another positive integer) to
+change it, or use `tileCap=0` to disable it. The cap is applied only when the
+raster kernel reads each sorted tile range: intersection emission and radix
+sorting remain unchanged. The stable tile sort preserves front-to-back depth
+order, so the nearest splats are retained and only the far tail is skipped.
 
 Subpixel sample culling is enabled by default. During projection, Gaussians
 whose alpha-support AABB is at most one pixel in both dimensions are tested
