@@ -18,6 +18,10 @@ fn profile_subpixel_coverage(
   (*zero_pixel_flags)[index] = 0u;
 
   let mean = (*projected_mean)[index];
+  if (mean.w < 0.0) {
+    (*zero_pixel_flags)[index] = 1u;
+    return 0u;
+  }
   if (mean.w <= 0.0) { return 0u; }
   let conic = (*projected_conic)[index].xyz;
   let conic_determinant = conic.x * conic.z - conic.y * conic.y;

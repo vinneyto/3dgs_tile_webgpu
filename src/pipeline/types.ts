@@ -26,8 +26,8 @@ export interface GaussianPassOptions {
   profileKernels?: boolean;
   /** Diagnostic raster-only cap. Intersections are still emitted and sorted so its timing isolates raster tail cost. */
   maxRasterizedSplatsPerTile?: number;
-  /** Reject pixel/Gaussian pairs outside the projected support AABB before evaluating the conic. Defaults to true. */
-  pixelAabbReject?: boolean;
+  /** Cull subpixel Gaussians whose alpha support contains no pixel center. Defaults to true. */
+  subpixelSampleCulling?: boolean;
   /** Select subgroup-accelerated or portable workgroup radix. Defaults to feature-based auto detection. */
   radixBackend?: RadixBackend;
 }
@@ -91,7 +91,7 @@ export interface GaussianPassDebugInfo {
   radixBackend: ResolvedRadixBackend;
   profileKernels: boolean;
   maxRasterizedSplatsPerTile: number | null;
-  pixelAabbReject: boolean;
+  subpixelSampleCulling: boolean;
 }
 
 /** Three.js-owned intermediate attributes reusable by other node code or wgslFn kernels. */

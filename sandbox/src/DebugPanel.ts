@@ -166,12 +166,15 @@ export class DebugPanel {
       debug === null
         ? "stages         —"
         : `stages         rebuilds ${debug.tileStageRebuilds}  radix ${debug.radixBackend} depth ${debug.depthRadixPasses} + tile ${debug.tileRadixPasses}`;
-    const pixelAabbLine =
+    const subpixelCullLine =
       debug === null
-        ? "pixel AABB     —"
-        : `pixel AABB     ${debug.pixelAabbReject ? "on" : "OFF"} · ?pixelAabb=0 disables it`;
+        ? "subpixel cull  —"
+        : `subpixel cull  ${debug.subpixelSampleCulling ? "on" : "OFF"} · ?subpixelCull=0 disables it`;
     const packingLines = this.packStatsLines();
-    const profileLines = this.profileStatsLines(profileKernels);
+    const profileLines = this.profileStatsLines(
+      profileKernels,
+      debug?.subpixelSampleCulling ?? false,
+    );
 
     this.element.textContent = [
       `FPS ${fps.toFixed(1).padStart(5)}  frame ${formatMs(this.averageFrameMs)}`,
@@ -183,7 +186,7 @@ export class DebugPanel {
       requestedLine,
       pipelineLine,
       stagesLine,
-      pixelAabbLine,
+      subpixelCullLine,
       ...profileLines,
       "",
       ...packingLines,
@@ -201,7 +204,10 @@ export class DebugPanel {
     this.renderKernelTimings(profileKernels);
   }
 
-  private profileStatsLines(profileKernels: boolean): string[] {
+  private profileStatsLines(
+    profileKernels: boolean,
+    subpixelSampleCulling: boolean,
+  ): string[] {
     if (!profileKernels) {
       return ["tile profile   ?profile=kernels enables distribution stats"];
     }
@@ -216,7 +222,7 @@ export class DebugPanel {
       `heavy tiles    >256 ${formatInteger(loads.tilesOver256)}  >512 ${formatInteger(loads.tilesOver512)}`,
       `               >1024 ${formatInteger(loads.tilesOver1024)}  >2048 ${formatInteger(loads.tilesOver2048)}`,
       `raster batches total ${formatInteger(loads.totalBatches)}  max/tile ${formatInteger(loads.maxBatches)}`,
-      `subpixel       zero-pixel ${formatInteger(profile.zeroPixelSubpixelSplats)}`,
+      `subpixel       zero-pixel ${subpixelSampleCulling ? "culled" : "candidates"} ${formatInteger(profile.zeroPixelSubpixelSplats)}`,
       ...profile.tileCapEstimates.flatMap((estimate) =>
         formatTileCap("cap estimate", estimate),
       ),

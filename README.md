@@ -580,11 +580,12 @@ passes because their direct and indirect dispatch dimensions differ.
 
 The same flag adds an asynchronous readback of emitted splats per tile: max,
 mean, median, p95, p99, and counts above 256, 512, 1024 and 2048. It also runs a
-profiling-only projection kernel that counts zero-pixel subpixel splats: visible
-Gaussians whose alpha-support AABB is at most one pixel in both dimensions but
-contains no pixel center. Profiling adds a compute pass, timestamp overhead and
-two diagnostic readbacks, so its FPS is not the final production-performance
-number.
+profiling-only projection kernel that counts zero-pixel subpixel splats whose
+alpha-support AABB is at most one pixel in both dimensions but contains no
+pixel center. With subpixel culling enabled this is the number removed during
+projection; with culling disabled it is the number of candidates that continue
+through the pipeline. Profiling adds a compute pass, timestamp overhead and two
+diagnostic readbacks, so its FPS is not the final production-performance number.
 
 The tile profile also reports total and worst-tile raster batches (256 splats
 per batch), plus counterfactual dropped-intersection, affected-tile and batch
@@ -595,10 +596,12 @@ emission and radix sorting remain unchanged, so the GPU timing difference
 isolates the long-tail raster cost. The nearest depth-sorted splats are retained.
 Omit `tileCap` or use `tileCap=0` for the unchanged renderer.
 
-The rasterizer rejects pixel/Gaussian pairs outside each projected support
-AABB before evaluating the conic and material nodes. This fast path is enabled
-by default and adds only one 256-float workgroup array; set `?pixelAabb=0` in
-the sandbox or pass `{ pixelAabbReject: false }` to disable it for A/B timing.
+Subpixel sample culling is enabled by default. During projection, Gaussians
+whose alpha-support AABB is at most one pixel in both dimensions are tested
+against actual pixel centers. A Gaussian with no sample at or above the
+`1/255` alpha cutoff is removed before visible compaction, both radix sorts,
+intersection emission and rasterization. Set `?subpixelCull=0` in the sandbox
+or pass `{ subpixelSampleCulling: false }` to disable it for A/B timing.
 
 The memory delta is captured after a 30-frame warm-up, making accidental per-frame resource growth visible.
 Diagnostic intersection readback runs asynchronously every 1.5 seconds;

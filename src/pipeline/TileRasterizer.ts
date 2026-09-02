@@ -80,7 +80,6 @@ export class TileRasterizer {
     private readonly depthTexture: StorageTexture | null,
     private readonly frame: FrameUniforms,
     private readonly maxSplatsPerTile: number | null,
-    private readonly pixelAabbReject: boolean,
     nodes: GaussianRasterNodeSlots,
   ) {
     this.rebuild(nodes);
@@ -147,9 +146,6 @@ export class TileRasterizer {
     const sharedColor: any = workgroupArray("vec4", WORKGROUP_SIZE);
     const sharedGaussianId: any = workgroupArray("uint", WORKGROUP_SIZE);
     const sharedActive: any = workgroupArray("uint", WORKGROUP_SIZE);
-    const sharedRadiusX: any = this.pixelAabbReject
-      ? workgroupArray("float", WORKGROUP_SIZE)
-      : null;
     const colorOutput = storageTexture(this.colorTexture);
     const compactMorton = wgslFn<any>(compactMortonBitsWGSL);
     const uniformLoad = wgslFn<any>(workgroupUniformLoadWGSL);
@@ -204,9 +200,6 @@ export class TileRasterizer {
               .element(localIndex)
               .assign(projectedColor.element(gaussianId));
             sharedGaussianId.element(localIndex).assign(gaussianId);
-            if (sharedRadiusX !== null) {
-              sharedRadiusX.element(localIndex).assign(conic.w);
-            }
           });
           If(localIndex.equal(0), () => {
             sharedActive
@@ -243,20 +236,6 @@ export class TileRasterizer {
               ({ i: batchIndex }) => {
                 const mean = sharedMean.element(batchIndex);
                 const delta = pixelCenter.sub(mean.xy);
-                if (sharedRadiusX !== null) {
-                  const radiusX = sharedRadiusX.element(batchIndex);
-                  const radiusY = sharedColor.element(batchIndex).w;
-                  If(
-                    delta.x
-                      .lessThan(radiusX.negate())
-                      .or(delta.x.greaterThan(radiusX))
-                      .or(delta.y.lessThan(radiusY.negate()))
-                      .or(delta.y.greaterThan(radiusY)),
-                    () => {
-                      Continue();
-                    },
-                  );
-                }
                 const conicAndThreshold = sharedConic.element(batchIndex);
                 const conic = conicAndThreshold.xyz;
                 const power = conic.x

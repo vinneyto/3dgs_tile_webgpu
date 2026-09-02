@@ -261,8 +261,8 @@ export class GaussianSandbox {
       profileKernels:
         new URLSearchParams(location.search).get("profile") === "kernels",
       maxRasterizedSplatsPerTile: readTileCap(),
-      pixelAabbReject:
-        new URLSearchParams(location.search).get("pixelAabb") !== "0",
+      subpixelSampleCulling:
+        new URLSearchParams(location.search).get("subpixelCull") !== "0",
       radixBackend: readRadixBackend(),
     });
     this.lodColorHelper = new GaussianLodColorHelper(this.pass, {

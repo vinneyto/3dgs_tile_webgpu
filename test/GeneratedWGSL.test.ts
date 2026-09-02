@@ -67,7 +67,6 @@ describe("generated Gaussian WGSL", () => {
       null,
       frame,
       2_048,
-      true,
       nodes,
     );
 
@@ -82,10 +81,10 @@ describe("generated Gaussian WGSL", () => {
       "project_gaussian_covariance_compensated",
     );
     expect(projectionSource).toContain("count_contributing_tiles");
+    expect(projectionSource).toContain("subpixel_has_sample");
     expect(rasterSource).toContain("compact_morton_bits_16");
     expect(rasterSource).toContain("rasterTileEnd");
     expect(rasterSource).toContain("2048u");
-    expect(rasterSource).toMatch(/var<workgroup> .*array< f32, 256 >/);
     expect(rasterSource).toContain("workgroupBarrier");
     expect(projectionSource).not.toMatch(/return;\s*return;/);
     expect(rasterSource).not.toMatch(/continue;\s*continue;/);
@@ -123,13 +122,13 @@ describe("generated Gaussian WGSL", () => {
     expect(rasterSource).toContain("vec3<f32>");
   });
 
-  it("omits the pixel-AABB fast path when disabled", () => {
+  it("omits subpixel sample culling when disabled", () => {
     const nodes = createDefaultGaussianNodeSlots();
-    const enabled = buildPipeline(nodes, true).rasterSource;
-    const disabled = buildPipeline(nodes, false).rasterSource;
+    const enabled = buildPipeline(nodes, true).projectionSource;
+    const disabled = buildPipeline(nodes, false).projectionSource;
 
-    expect(enabled).toMatch(/var<workgroup> .*array< f32, 256 >/);
-    expect(disabled).not.toMatch(/var<workgroup> .*array< f32, 256 >/);
+    expect(enabled).toContain("subpixel_has_sample");
+    expect(disabled).not.toContain("subpixel_has_sample");
   });
 
   it("builds the profiling-only subpixel coverage kernel", () => {
@@ -189,7 +188,7 @@ describe("generated Gaussian WGSL", () => {
 
 function buildPipeline(
   nodes: ReturnType<typeof createDefaultGaussianNodeSlots>,
-  pixelAabbReject = true,
+  subpixelSampleCulling = true,
 ) {
   const data = oneGaussian();
   const store = new GaussianStore();
@@ -205,6 +204,7 @@ function buildPipeline(
     objects,
     "compensated",
     nodes,
+    subpixelSampleCulling,
   );
   const rasterizer = new TileRasterizer(
     {} as never,
@@ -221,7 +221,6 @@ function buildPipeline(
     null,
     frame,
     null,
-    pixelAabbReject,
     nodes,
   );
 

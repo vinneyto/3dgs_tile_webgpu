@@ -21,6 +21,7 @@ import {
   sqrt,
   storage,
   uint,
+  uvec2,
   vec2,
   vec4,
   wgslFn,
@@ -30,6 +31,7 @@ import {
   countContributingTilesWGSL,
   evaluateShWGSL,
   projectionCovarianceWGSL,
+  subpixelHasSampleWGSL,
 } from "../kernels/projectionHelpers";
 import {
   gaussianColor,
@@ -100,6 +102,7 @@ export class ProjectionStage {
     objects: ObjectFrameState,
     private readonly antialiasMode: AntialiasMode,
     nodes: GaussianProjectionNodeSlots,
+    private readonly subpixelSampleCulling = true,
   ) {
     this.projectedMean = objects.attribute;
     this.projectedConic = this.attributes.createFloat(
@@ -201,6 +204,7 @@ export class ProjectionStage {
     );
     const evaluateSh = wgslFn<any>(evaluateShWGSL);
     const countTiles = wgslFn<any>(countContributingTilesWGSL());
+    const subpixelHasSample = wgslFn<any>(subpixelHasSampleWGSL);
 
     const kernel = Fn(() => {
       const gid = uint(instanceIndex);
@@ -318,12 +322,14 @@ export class ProjectionStage {
         Return();
       });
       const powerThreshold = log(opacity.mul(255));
-      const radiusX = ceil(
-        sqrt(powerThreshold.mul(2).mul(clamp(covariance.x, 1e-12, 1e4))),
+      const extentX = sqrt(
+        powerThreshold.mul(2).mul(clamp(covariance.x, 1e-12, 1e4)),
       );
-      const radiusY = ceil(
-        sqrt(powerThreshold.mul(2).mul(clamp(covariance.z, 1e-12, 1e4))),
+      const extentY = sqrt(
+        powerThreshold.mul(2).mul(clamp(covariance.z, 1e-12, 1e4)),
       );
+      const radiusX = ceil(extentX);
+      const radiusY = ceil(extentY);
       If(radiusX.lessThanEqual(0).or(radiusY.lessThanEqual(0)), () => {
         Return();
       });
@@ -340,6 +346,21 @@ export class ProjectionStage {
           Return();
         },
       );
+      if (this.subpixelSampleCulling) {
+        const hasSample = subpixelHasSample({
+          center,
+          conic,
+          power_threshold: powerThreshold,
+          extent: vec2(extentX, extentY),
+          viewport: uvec2(frame.viewport.xy),
+        }) as any;
+        If(hasSample.not(), () => {
+          // Negative opacity is an invisible marker read only by the optional
+          // profiling pass; visibility compaction accepts strictly positive w.
+          projectedMean.element(gid).assign(vec4(center, depth, -1));
+          Return();
+        });
+      }
       const maxTile = ivec2(int(frame.tilesX), int(frame.tilesY)).sub(1);
       const tileMin = ivec2(
         clamp(floor(boundsMin.div(float(TILE_SIZE))), vec2(0), vec2(maxTile)),

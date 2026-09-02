@@ -61,5 +61,6 @@ describe("profile diagnostics", () => {
     expect(profileSubpixelCoverageWGSL).toContain(
       "(*zero_pixel_flags)[index] = select(1u, 0u, has_sample)",
     );
+    expect(profileSubpixelCoverageWGSL).toContain("mean.w < 0.0");
   });
 });
