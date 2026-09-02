@@ -5,6 +5,7 @@ import type {
   GaussianStorePackStats,
   GaussianStoreSlotRange,
   GaussianTileCapStats,
+  StreamingLodTargetStats,
 } from "../../src/index";
 import type { KernelTimingInspector } from "./KernelTimingInspector";
 
@@ -28,7 +29,9 @@ export class DebugPanel {
   private packStats: GaussianStorePackStats | null = null;
   private packDurationMs = 0;
   private packCount = 0;
-  private packingCenterX = 0;
+  private packingFocusDistance = 0;
+  private packingPending = false;
+  private targetStats: StreamingLodTargetStats | null = null;
   private kernelScrollActiveUntil = -Infinity;
 
   constructor(
@@ -60,18 +63,25 @@ export class DebugPanel {
     this.packStats = null;
     this.packDurationMs = 0;
     this.packCount = 0;
-    this.packingCenterX = 0;
+    this.packingFocusDistance = 0;
+    this.packingPending = false;
+    this.targetStats = null;
   }
 
-  recordPack(
-    stats: GaussianStorePackStats,
-    durationMs: number,
-    centerX: number,
-  ): void {
+  recordPack(stats: GaussianStorePackStats, durationMs: number): void {
     this.packStats = stats;
     this.packDurationMs = durationMs;
-    this.packingCenterX = centerX;
     this.packCount++;
+  }
+
+  recordLodState(
+    focusDistance: number,
+    pending: boolean,
+    targetStats: StreamingLodTargetStats,
+  ): void {
+    this.packingFocusDistance = focusDistance;
+    this.packingPending = pending;
+    this.targetStats = targetStats;
   }
 
   update(time: number, cpuEncodeMs: number): void {
@@ -227,16 +237,33 @@ export class DebugPanel {
         formatTileCap("cap estimate", estimate),
       ),
       ...(profile.appliedTileCap === null
-        ? ["raster cap     off · ?tileCap=2048 enables it"]
+        ? ["raster cap     OFF · ?tileCap=8192 enables it"]
         : formatTileCap("raster cap", profile.appliedTileCap)),
     ];
   }
 
   private packStatsLines(): string[] {
     const stats = this.packStats;
-    if (stats === null) return ["LOD repack     waiting for moving center"];
+    const target = this.targetStats;
+    const targetLines =
+      target === null
+        ? []
+        : [
+            `LOD worker     plan ${formatMs(target.planningMs)}  round trip ${formatMs(target.roundTripMs)}`,
+            `worker queue   ${target.pending ? "busy" : "idle"}  discarded ${formatInteger(target.discardedResults)}`,
+          ];
+    if (stats === null) {
+      return target === null
+        ? ["LOD repack     waiting for camera movement"]
+        : [
+            `LOD stream     ${this.packingPending ? "pending" : "settled"}  camera distance ${this.packingFocusDistance.toFixed(2)} m`,
+            ...targetLines,
+          ];
+    }
     return [
-      `LOD repack     #${this.packCount}  CPU ${formatMs(this.packDurationMs)}  center.x ${this.packingCenterX.toFixed(2)} m`,
+      `LOD repack     #${this.packCount}  CPU ${formatMs(this.packDurationMs)}  camera distance ${this.packingFocusDistance.toFixed(2)} m`,
+      `LOD stream     ${this.packingPending ? "pending" : "settled"}`,
+      ...targetLines,
       `pack phases    plan ${formatMs(stats.planningMs)}  slots ${formatMs(stats.slotUpdateMs)}`,
       `slots          active ${formatInteger(stats.activeGaussians)} / ${formatInteger(stats.slotCapacity)}`,
       `slot delta     reused ${formatInteger(stats.reusedSlots)}  written ${formatInteger(stats.writtenSlots)}  cleared ${formatInteger(stats.clearedSlots)}`,

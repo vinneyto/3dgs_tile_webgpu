@@ -10,6 +10,7 @@ import {
 } from "./GaussianLod";
 import {
   RadialLodPackingStrategy,
+  StreamingLodPackingStrategy,
   type GaussianLodPackingStrategy,
 } from "./lod-packing";
 import {
@@ -75,6 +76,11 @@ export interface GaussianStorePackStats {
   readonly clearedSlotRanges: readonly GaussianStoreSlotRange[];
   readonly planningMs: number;
   readonly slotUpdateMs: number;
+}
+
+export interface GaussianStoreLodBatchResult {
+  readonly applied: boolean;
+  readonly pending: boolean;
 }
 
 export type GaussianStoreSlotRange = SlotRange;
@@ -402,6 +408,194 @@ export class GaussianStore {
       this.layoutVersion++;
       oldData?.dispose();
     }
+  }
+
+  /**
+   * Apply one bounded batch from a StreamingLodPackingStrategy without global
+   * budget planning or scanning unchanged clouds/cells.
+   */
+  packLodBatch(cloud: GaussianCloud): GaussianStoreLodBatchResult {
+    this.assertUsable();
+    if (this.packingInvalid || this.packedData === null) {
+      throw new Error(
+        "GaussianStore layout is invalidated; call store.pack({ limits: device.limits }) before streaming LOD batches",
+      );
+    }
+    const entry = this.entries.find((candidate) => candidate.cloud === cloud);
+    if (entry === undefined) {
+      throw new Error("GaussianCloud does not belong to this GaussianStore");
+    }
+    if (
+      entry.lod === null ||
+      entry.packing === null ||
+      entry.allocatedBudget === null
+    ) {
+      throw new Error("GaussianCloud is not an initialized LOD entry");
+    }
+    const strategy = entry.packingStrategy ?? this.defaultPackingStrategy;
+    if (!(strategy instanceof StreamingLodPackingStrategy)) {
+      throw new Error(
+        "GaussianCloud must use StreamingLodPackingStrategy for incremental LOD batches",
+      );
+    }
+
+    const planningStarted = performance.now();
+    const batch = strategy.takeNextBatch({
+      lod: entry.lod,
+      maxGaussians: entry.allocatedBudget,
+    });
+    const planningMs = performance.now() - planningStarted;
+    if (batch === null) {
+      return { applied: false, pending: strategy.needsPack };
+    }
+
+    const data = this.packedData;
+    const previousCells = this.cellSlotsByEntry.get(entry);
+    if (previousCells === undefined) {
+      throw new Error("GaussianStore is missing the packed LOD cell layout");
+    }
+    const slotUpdateStarted = performance.now();
+    const nextCells = previousCells;
+    const freeSlots = this.freeSlots;
+    const releasedSlots = this.scratchReleasedSlots;
+    releasedSlots.length = 0;
+    const retainedByNode = new Map<
+      number,
+      { previousCell: PackedCellState | undefined; retainedCount: number }
+    >();
+
+    // Release every shrinking tail first so upgrades in the same batch can
+    // immediately reuse those slots without exceeding the fixed Store layout.
+    for (const transition of batch.transitions) {
+      const previousCell = previousCells.get(transition.nodeId);
+      const targetCount =
+        transition.lodLevel === null
+          ? 0
+          : entry.lod.nodes[transition.nodeId]!.levelCounts[
+              transition.lodLevel
+            ]!;
+      const retainedCount = Math.min(
+        previousCell?.slots.length ?? 0,
+        targetCount,
+      );
+      retainedByNode.set(transition.nodeId, {
+        previousCell,
+        retainedCount,
+      });
+      if (previousCell === undefined) continue;
+      for (
+        let local = retainedCount;
+        local < previousCell.slots.length;
+        local++
+      ) {
+        const slot = previousCell.slots[local]!;
+        freeSlots.push(slot);
+        releasedSlots.push(slot);
+      }
+    }
+
+    const writtenSlots = this.scratchWrittenSlots;
+    writtenSlots.length = 0;
+    for (const transition of batch.transitions) {
+      const retained = retainedByNode.get(transition.nodeId)!;
+      const { previousCell, retainedCount } = retained;
+      if (transition.lodLevel === null) {
+        nextCells.delete(transition.nodeId);
+        continue;
+      }
+      const count =
+        entry.lod.nodes[transition.nodeId]!.levelCounts[transition.lodLevel]!;
+      const previousSlots = previousCell?.slots;
+      const nextSlots =
+        previousSlots !== undefined && previousSlots.length === count
+          ? previousSlots
+          : new Uint32Array(count);
+      if (
+        nextSlots !== previousSlots &&
+        previousSlots !== undefined &&
+        retainedCount > 0
+      ) {
+        nextSlots.set(previousSlots.subarray(0, retainedCount));
+      }
+      for (let local = retainedCount; local < count; local++) {
+        const slot = freeSlots.pop();
+        if (slot === undefined) {
+          throw new Error("GaussianStore slot allocator exhausted capacity");
+        }
+        this.copySourceToSlot(
+          entry,
+          this.cellSourceIndex(entry, transition.nodeId, local),
+          slot,
+          data.means.array as Float32Array,
+          data.scalesOpacity.array as Float32Array,
+          data.rotations.array as Float32Array,
+          data.shCoefficients.array as Float32Array,
+          data.shCoefficientCount,
+        );
+        nextSlots[local] = slot;
+        writtenSlots.push(slot);
+      }
+      const nextCell: PackedCellState = {
+        lodLevel: transition.lodLevel,
+        slots: nextSlots,
+      };
+      for (const packer of this.attributePackers) {
+        packer.updateCell({ previousCell, cell: nextCell, retainedCount });
+      }
+      nextCells.set(transition.nodeId, nextCell);
+    }
+
+    const slotMarkGeneration = this.nextSlotMarkGeneration(data.count);
+    for (const slot of writtenSlots) this.slotMarks[slot] = slotMarkGeneration;
+    const clearedSlots = this.scratchClearedSlots;
+    clearedSlots.length = 0;
+    for (const slot of releasedSlots) {
+      if (this.slotMarks[slot] !== slotMarkGeneration) clearedSlots.push(slot);
+    }
+    const scalesOpacity = data.scalesOpacity.array as Float32Array;
+    for (const slot of clearedSlots) scalesOpacity[slot * 4 + 3] = 0;
+
+    const writtenSlotRanges = mergeSlotRanges(writtenSlots, 4, 0.15);
+    const clearedSlotRanges = mergeSlotRanges(clearedSlots, 16, 0.25);
+    markSlotRangesUpdated(data.means, writtenSlotRanges, 4);
+    markSlotRangesUpdated(data.scalesOpacity, writtenSlotRanges, 4);
+    markSlotRangesUpdated(data.scalesOpacity, clearedSlotRanges, 4);
+    markSlotRangesUpdated(data.rotations, writtenSlotRanges, 4);
+    markSlotRangesUpdated(
+      data.shCoefficients,
+      writtenSlotRanges,
+      data.shCoefficientCount * 4,
+    );
+    const attributeUploadStats = this.commitAttributePackers();
+    const activeGaussians =
+      this.count - entry.count + batch.packing.gaussianCount;
+    const uploadedWrittenSlots = rangeSlotCount(writtenSlotRanges);
+    const uploadedClearedSlots = rangeSlotCount(clearedSlotRanges);
+    const slotUpdateMs = performance.now() - slotUpdateStarted;
+
+    entry.count = batch.packing.gaussianCount;
+    entry.packing = batch.packing;
+    entry.packingDirty = false;
+    entry.cloud.updatePacking(entry.count, entry.packing);
+    this.cellSlotsByEntry.set(entry, nextCells);
+    this.freeSlots = freeSlots;
+    this.latestPackStats = {
+      fullRebuild: false,
+      slotCapacity: data.count,
+      activeGaussians,
+      reusedSlots: activeGaussians - writtenSlots.length,
+      writtenSlots: writtenSlots.length,
+      clearedSlots: clearedSlots.length,
+      estimatedUploadBytes:
+        uploadedWrittenSlots * (3 * 16 + data.shCoefficientCount * 16) +
+        uploadedClearedSlots * 16 +
+        attributeUploadStats.estimatedUploadBytes,
+      writtenSlotRanges,
+      clearedSlotRanges,
+      planningMs,
+      slotUpdateMs,
+    };
+    return { applied: true, pending: batch.pending };
   }
 
   private planPackings(capacity: number): PlannedEntry[] {

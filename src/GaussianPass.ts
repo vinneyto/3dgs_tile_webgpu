@@ -37,7 +37,6 @@ import type {
 } from "./pipeline/types";
 
 const drawingBufferSize = new Vector2();
-
 const enum DirtyStage {
   None = 0,
   Projection = 1 << 0,

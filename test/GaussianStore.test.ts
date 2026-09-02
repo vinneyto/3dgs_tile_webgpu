@@ -5,6 +5,7 @@ import { GaussianData } from "../src/GaussianData";
 import { GaussianLod } from "../src/GaussianLod";
 import {
   RadialLodPackingStrategy,
+  StreamingLodPackingStrategy,
   TieredRadialLodPackingStrategy,
 } from "../src/lod-packing";
 import { GaussianOctree } from "../src/GaussianOctree";
@@ -403,6 +404,61 @@ describe("GaussianStore", () => {
     ]);
     expect(lodLevels.bufferAttribute.updateRanges.length).toBeGreaterThan(0);
   });
+
+  it("applies streamed LOD batches without globally invalidating or replanning the Store", () => {
+    const source = data(4, 0, 0, [1]);
+    const means = source.means.array as Float32Array;
+    [
+      [-1, -1, -1],
+      [-0.9, -0.9, -0.9],
+      [1, 1, 1],
+      [0.9, 0.9, 0.9],
+    ].forEach((point, index) => {
+      means.set(point, index * 4);
+    });
+    const lod = GaussianLod.build(
+      GaussianOctree.build(source, { leafCapacity: 2 }),
+      { levels: [{ retention: 0.5 }, { retention: 1 }] },
+    );
+    expect(lod.octree.leafNodeIds).toHaveLength(2);
+
+    let level = 0;
+    const targetStrategy = {
+      pack: vi.fn(() => packingForLevel(lod, level)),
+    };
+    const streaming = new StreamingLodPackingStrategy(targetStrategy, {
+      maxChangedCellsPerPack: 1,
+      maxUploadBytesPerPack: 1,
+    });
+    const store = new GaussianStore({ defaultPackingStrategy: streaming });
+    const cloud = store.addLod(lod);
+    store.pack({ limits: limitsForGaussianCapacity(4, 0) });
+    expect(cloud.gaussianCount).toBe(2);
+    expect(targetStrategy.pack).toHaveBeenCalledOnce();
+
+    level = 1;
+    streaming.invalidateTarget();
+    const first = store.packLodBatch(cloud);
+    expect(first).toEqual({ applied: true, pending: true });
+    expect(store.needsPack).toBe(false);
+    expect(cloud.gaussianCount).toBe(3);
+    expect(store.lastPackStats).toMatchObject({
+      fullRebuild: false,
+      activeGaussians: 3,
+      reusedSlots: 2,
+      writtenSlots: 1,
+    });
+    expect(targetStrategy.pack).toHaveBeenCalledTimes(2);
+
+    const second = store.packLodBatch(cloud);
+    expect(second).toEqual({ applied: true, pending: false });
+    expect(cloud.gaussianCount).toBe(4);
+    expect(targetStrategy.pack).toHaveBeenCalledTimes(2);
+    expect(store.packLodBatch(cloud)).toEqual({
+      applied: false,
+      pending: false,
+    });
+  });
 });
 
 function activeAttributeValues(
@@ -441,6 +497,19 @@ function singleLevelLod(
   return GaussianLod.build(GaussianOctree.build(source, { leafCapacity: 1 }), {
     levels: [{ retention: 1 }],
   });
+}
+
+function packingForLevel(lod: GaussianLod, level: number) {
+  const nodeIds = lod.octree.leafNodeIds.slice();
+  const lodLevels = new Uint8Array(nodeIds.length).fill(level);
+  return {
+    nodeIds,
+    lodLevels,
+    gaussianCount: Array.from(nodeIds).reduce(
+      (count, nodeId) => count + lod.nodes[nodeId]!.levelCounts[level]!,
+      0,
+    ),
+  };
 }
 
 function data(

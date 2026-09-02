@@ -15,6 +15,7 @@ import {
   clamp,
   exp,
   float,
+  floor,
   invocationLocalIndex,
   ivec2,
   max,
@@ -165,12 +166,12 @@ export class TileRasterizer {
         .toVar("rasterActivePixel");
       const tile = workgroupId.y.mul(frame.tilesX).add(workgroupId.x);
       const begin = tileOffsets.element(tile);
-      const end = uint(tileOffsets.element(tile.add(1))).toVar("rasterTileEnd");
+      const sourceEnd = tileOffsets.element(tile.add(1));
+      const sourceCount = uint(sourceEnd.sub(begin));
+      const rasterCount = sourceCount.toVar("rasterTileSampleCount");
       if (this.maxSplatsPerTile !== null) {
         const cap = uint(this.maxSplatsPerTile);
-        If(end.sub(begin).greaterThan(cap), () => {
-          end.assign(begin.add(cap));
-        });
+        rasterCount.assign(select(sourceCount.lessThan(cap), sourceCount, cap));
       }
       const pixelCenter = vec2(pixel).add(0.5);
       const accumulated = vec3(0).toVar("accumulated");
@@ -180,15 +181,34 @@ export class TileRasterizer {
       const done = bool(false).toVar("done");
       Loop(
         {
-          start: uint(begin),
-          end,
+          start: uint(0),
+          end: rasterCount,
           type: "uint",
           condition: "<",
           update: `+= ${WORKGROUP_SIZE}`,
         },
         ({ i: batchStart }) => {
-          const loadIndex = batchStart.add(localIndex);
-          If(loadIndex.lessThan(end), () => {
+          const sampleIndex = batchStart.add(localIndex);
+          If(sampleIndex.lessThan(rasterCount), () => {
+            let sourceIndex: any = sampleIndex;
+            if (this.maxSplatsPerTile !== null) {
+              // A contiguous nearest-depth prefix leaves tile-shaped holes when
+              // those records do not cover every pixel. Sample the complete
+              // depth-ordered range at evenly spaced bin centers instead. The
+              // raster budget stays bounded while overflowing tiles retain
+              // representative near, middle and far coverage.
+              sourceIndex = uint(
+                floor(
+                  float(sampleIndex)
+                    .add(0.5)
+                    .mul(float(sourceCount))
+                    .div(float(rasterCount)),
+                ),
+              );
+            }
+            const loadIndex = begin
+              .add(sourceIndex)
+              .toVar("rasterSourceRecordIndex");
             const gaussianId = records.element(loadIndex).y;
             const mean = projectedMean.element(gaussianId);
             const conic = projectedConic.element(gaussianId);
@@ -206,7 +226,7 @@ export class TileRasterizer {
               .element(uint(0))
               .assign(
                 select(
-                  batchStart.add(uint(WORKGROUP_SIZE)).lessThan(end),
+                  batchStart.add(uint(WORKGROUP_SIZE)).lessThan(rasterCount),
                   uint(1),
                   uint(0),
                 ),
@@ -219,7 +239,7 @@ export class TileRasterizer {
           const hasNextBatch = (
             uniformLoad({ values: sharedActive }) as any
           ).toVar("hasNextBatch");
-          const remaining = uint(end.sub(batchStart) as any);
+          const remaining = uint(rasterCount.sub(batchStart) as any);
           const batchCount = select(
             remaining.lessThan(uint(WORKGROUP_SIZE)),
             remaining,

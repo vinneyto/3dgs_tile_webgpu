@@ -83,7 +83,8 @@ describe("generated Gaussian WGSL", () => {
     expect(projectionSource).toContain("count_contributing_tiles");
     expect(projectionSource).toContain("subpixel_has_sample");
     expect(rasterSource).toContain("compact_morton_bits_16");
-    expect(rasterSource).toContain("rasterTileEnd");
+    expect(rasterSource).toContain("rasterTileSampleCount");
+    expect(rasterSource).toContain("floor");
     expect(rasterSource).toContain("2048u");
     expect(rasterSource).toContain("workgroupBarrier");
     expect(projectionSource).not.toMatch(/return;\s*return;/);
@@ -91,12 +92,17 @@ describe("generated Gaussian WGSL", () => {
     expect(rasterSource).not.toMatch(/break;\s*break;/);
 
     const batchSync = rasterSource.indexOf("hasNextBatch = load_shared_active");
-    const batchRead = rasterSource.indexOf("for ( var i : u32 = 0u;");
+    const batchRead = rasterSource.indexOf(
+      "for ( var i : u32 = 0u;",
+      batchSync,
+    );
     expect(batchSync).toBeGreaterThan(-1);
     expect(batchRead).toBeGreaterThan(batchSync);
 
     const pixelSetup = rasterSource.indexOf("rasterActivePixel =");
-    const outerLoop = rasterSource.indexOf("for ( var i : u32 = NodeBuffer_");
+    const outerLoop = rasterSource.indexOf(
+      "for ( var i : u32 = 0u; i < rasterTileSampleCount;",
+    );
     const outputStore = rasterSource.lastIndexOf("textureStore(");
     expect(pixelSetup).toBeGreaterThan(-1);
     expect(outerLoop).toBeGreaterThan(pixelSetup);

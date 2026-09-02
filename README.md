@@ -38,7 +38,10 @@ src/
 │   ├── GaussianLodPackingStrategy.ts shared strategy contract
 │   ├── MaximumLodPackingStrategy.ts  strict full-detail packing
 │   ├── RadialLodPackingStrategy.ts   fixed-LOD center-out clipping
-│   └── TieredRadialLodPackingStrategy.ts 60/20/20 radial LOD tiers
+│   ├── TieredRadialLodPackingStrategy.ts 80/10/10 radial LOD tiers
+│   ├── DistanceAwareRadialLodPackingStrategy.ts distance-based radial tiers
+│   ├── RadialLodWorkerPlanner.ts latest-only radial worker target planner
+│   └── StreamingLodPackingStrategy.ts bounded latest-target transitions
 ├── store-budgeting/                 global Store budget assignment
 │   ├── GaussianStoreBudgetStrategy.ts shared strategy contract
 │   ├── RemainingCapacityBudgetStrategy.ts default remaining-budget policy
@@ -188,9 +191,11 @@ store.pack({ limits: device.limits });
 ```
 
 `GaussianLodPackingStrategy` is an interface with a `pack()` method.
-`MaximumLodPackingStrategy`, `RadialLodPackingStrategy`, and
-`TieredRadialLodPackingStrategy` are its built-in implementations. Built-in and
-custom strategies must reference leaf cells in their returned
+`MaximumLodPackingStrategy`, `RadialLodPackingStrategy`,
+`TieredRadialLodPackingStrategy`, and
+`DistanceAwareRadialLodPackingStrategy` are its stateless built-in
+implementations. `StreamingLodPackingStrategy` wraps one of them with bounded
+stateful transitions. Built-in and custom strategies must reference leaf cells in their returned
 `GaussianLodPacking`. `GaussianLod` stores importance-sorted nested prefixes
 only for leaves; internal octree nodes retain their bounds, children and counts
 without duplicating every descendant Gaussian index.
@@ -198,10 +203,73 @@ without duplicating every descendant Gaussian index.
 The radial strategy walks leaf cells continuously from the focus outwards and packs one
 requested LOD for every selected cell. It stops before the first whole cell that
 would exceed the allocation; that cell and all farther cells are clipped.
-`"finest"` resolves to the last configured LOD level. The tiered strategy first
-uses 60% for finest cells, 20% for middle-detail cells, and 20% for coarsest
-cells; if the complete finest representation fits, it keeps the whole object at
-finest detail.
+`"finest"` resolves to the last configured LOD level. By default, the tiered
+strategy uses 80% for finest cells, 10% for middle-detail cells, and 10% for
+coarsest cells. A zero share skips that tier instead of consuming rounding
+slack. If the complete finest representation fits, it keeps the whole object
+at finest detail.
+
+`DistanceAwareRadialLodPackingStrategy` selects the desired LOD from the
+distance between each leaf and a local-space focus such as the camera. Its
+`levelDistance` is measured in octree-root half-diagonals: each interval lowers
+the desired LOD by one level. Distance reduction applies even when the complete
+finest representation fits in memory. If the desired selection exceeds its
+allocation, the strategy degrades the farthest cells first and finally clips
+the farthest coarsest cells, keeping `maxGaussians` as a strict upper bound.
+
+```ts
+const cameraPacking = new DistanceAwareRadialLodPackingStrategy({
+  levelDistance: 2,
+});
+
+cameraPacking.setCenter(cameraPositionInCloudLocalSpace);
+cloud.invalidatePacking();
+store.pack({ limits: device.limits });
+```
+
+Large camera-driven changes can be spread over frames with a latest-target-wins
+wrapper. Its initial packing is immediate. Later calls transition whole leaf
+cells within both limits; calling `invalidateTarget()` again discards the
+unfinished target and diffs the actually applied packing against the newest
+one. A streaming instance is stateful and must belong to one cloud.
+
+```ts
+const radialPacking = new TieredRadialLodPackingStrategy();
+const workerPlanner = new RadialLodWorkerPlanner(radialPacking);
+const streamingPacking = new StreamingLodPackingStrategy(radialPacking, {
+  maxUploadBytesPerPack: 1024 * 1024,
+  maxChangedCellsPerPack: 16,
+  targetPlanner: workerPlanner,
+});
+
+radialPacking.setCenter(cameraPositionInCloudLocalSpace);
+streamingPacking.invalidateTarget();
+
+if (streamingPacking.needsPack) {
+  store.packLodBatch(cloud);
+}
+
+// During application teardown:
+function dispose() {
+  streamingPacking.dispose();
+}
+```
+
+Downgrades and removals are applied before uploads; upgrades follow the wrapped
+strategy's target order. The byte limit is a conservative estimate that
+includes update-range merging. At least one whole leaf is processed so a leaf
+larger than the configured byte limit cannot stall the transition. The wrapped
+strategy and its full transition plan run only when the target changes.
+Subsequent batches update only their listed leaves and bypass global Store
+budget planning and unchanged-cell scans.
+
+The optional distance-aware worker receives compact leaf centers and level
+counts once. It keeps one request in flight and one replaceable latest request,
+so fast camera motion cannot build an unbounded queue. Results use a pool of two
+fixed-size transferable buffer pairs. The main thread consumes a result,
+constructs the transition from the packing actually applied at that moment, and
+transfers the buffers back to the worker for reuse. No `SharedArrayBuffer` or
+cross-origin isolation headers are required.
 
 Packing remains an individual cloud characteristic when needed:
 
@@ -555,6 +623,16 @@ http://localhost:5173/?ply=/my-cloud.ply&sort=packed16&dpr=1
 Open **Octree / LOD visualization** in the sandbox HUD to toggle the local
 octree grid or color the rendered splats by their current packed LOD. The
 sandbox uses the packed-attribute helper instead of LOD volume boxes.
+Its fixed-budget 80/10/10 tiered radial packing focus follows the camera and
+repacks after meaningful camera movement. The sandbox uses the Store's default
+remaining-capacity budgeting, so the allocation comes directly from the
+WebGPU storage-buffer limits rather than an artificial source-count fraction.
+Zooming away does not independently lower detail: LOD selection only keeps the
+packed data inside its GPU allocation.
+Later target selection runs in a module worker; bounded Store buffer updates
+remain on the main thread. Camera-driven transitions default to 1 MiB and 16
+changed leaves per frame; use `?lodUploadKiB=1024&lodCells=16` to tune those
+limits.
 
 Files addressed by URL belong in `sandbox/public/`; the file picker and drag-and-drop do not require copying
 the file into the repository. The loader accepts ASCII, binary little-endian, and binary big-endian scalar PLY
@@ -589,12 +667,13 @@ diagnostic readbacks, so its FPS is not the final production-performance number.
 
 The tile profile also reports total and worst-tile raster batches (256 splats
 per batch), plus counterfactual dropped-intersection, affected-tile and batch
-counts for caps of 2048, 4096 and 8192. To run the corresponding raster-only
-experiment, append `&tileCap=2048` (or another positive integer). The cap is
-applied only when the raster kernel reads each sorted tile range: intersection
-emission and radix sorting remain unchanged, so the GPU timing difference
-isolates the long-tail raster cost. The nearest depth-sorted splats are retained.
-Omit `tileCap` or use `tileCap=0` for the unchanged renderer.
+counts for caps of 2048, 4096 and 8192. The raster sample cap is disabled by
+default because capped sampling can reveal a moving tile pattern. Append
+`&tileCap=8192` (or another positive integer) to enable the experiment;
+`tileCap=0` explicitly disables it. Overflowing tiles are sampled at evenly
+spaced bin centers across their complete depth-ordered ranges instead of
+rendering a contiguous prefix. Intersection emission and radix sorting remain
+unchanged.
 
 Subpixel sample culling is enabled by default. During projection, Gaussians
 whose alpha-support AABB is at most one pixel in both dimensions are tested

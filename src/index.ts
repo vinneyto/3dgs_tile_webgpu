@@ -27,11 +27,21 @@ export {
 } from "./GaussianLodColorHelper";
 export {
   MaximumLodPackingStrategy,
+  RadialLodWorkerPlanner,
+  DistanceAwareRadialLodPackingStrategy,
   RadialLodPackingStrategy,
+  StreamingLodPackingStrategy,
   TieredRadialLodPackingStrategy,
+  type DistanceAwareRadialLodPackingOptions,
   type GaussianLodPackingContext,
   type GaussianLodPackingStrategy,
   type RadialLodPackingOptions,
+  type StreamingLodCellTransition,
+  type StreamingLodPlannedTarget,
+  type StreamingLodPackingBatch,
+  type StreamingLodPackingOptions,
+  type StreamingLodTargetPlanner,
+  type StreamingLodTargetStats,
   type TieredRadialLodPackingOptions,
 } from "./lod-packing";
 export {
@@ -47,6 +57,7 @@ export {
   type GaussianStoreAddLodOptions,
   type GaussianStoreAddOptions,
   type GaussianStoreLoadOptions,
+  type GaussianStoreLodBatchResult,
   type GaussianStoreOptions,
   type GaussianStorePackLimits,
   type GaussianStorePackOptions,
