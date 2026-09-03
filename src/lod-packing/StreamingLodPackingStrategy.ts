@@ -1,8 +1,12 @@
+import type { Vector3 } from "three/webgpu";
+
 import type { GaussianLod, GaussianLodPacking } from "../GaussianLod";
 import { RGB8E8_SH_BYTES_PER_COEFFICIENT } from "../GaussianSh";
 import {
+  type CameraDrivenGaussianLodPackingStrategy,
   type GaussianLodPackingContext,
   type GaussianLodPackingStrategy,
+  isCameraDrivenGaussianLodPackingStrategy,
   validateGaussianLodBudget,
 } from "./GaussianLodPackingStrategy";
 
@@ -76,6 +80,7 @@ export class StreamingLodPackingStrategy<
   readonly maxUploadBytesPerPack: number;
   readonly maxChangedCellsPerPack: number;
 
+  private readonly cameraTarget: CameraDrivenGaussianLodPackingStrategy | null;
   private lod: GaussianLod | null = null;
   private appliedNodeIds = new Uint32Array();
   private appliedLodLevels = new Uint8Array();
@@ -93,6 +98,9 @@ export class StreamingLodPackingStrategy<
 
   constructor(targetStrategy: T, options: StreamingLodPackingOptions = {}) {
     this.targetStrategy = targetStrategy;
+    this.cameraTarget = isCameraDrivenGaussianLodPackingStrategy(targetStrategy)
+      ? targetStrategy
+      : null;
     this.targetPlanner = options.targetPlanner ?? null;
     this.maxUploadBytesPerPack =
       options.maxUploadBytesPerPack ?? DEFAULT_MAX_UPLOAD_BYTES;
@@ -114,6 +122,19 @@ export class StreamingLodPackingStrategy<
         "Streaming LOD maxChangedCellsPerPack must be a positive integer",
       );
     }
+  }
+
+  /** Whether this wrapper's target explicitly follows the render camera. */
+  get tracksCamera(): boolean {
+    return this.cameraTarget !== null;
+  }
+
+  /** Update a camera-driven target and invalidate its pending packing. */
+  setCenter(center: Vector3): boolean {
+    if (this.cameraTarget === null) return false;
+    this.cameraTarget.setCenter(center);
+    this.invalidateTarget();
+    return true;
   }
 
   /** Discard an unfinished target after changing the wrapped strategy. */
@@ -367,6 +388,13 @@ export class StreamingLodPackingStrategy<
       gaussianCount: this.appliedGaussianCount,
     };
   }
+}
+
+/** Preserve the default generic instead of narrowing an instanceof to `any`. */
+export function isStreamingLodPackingStrategy(
+  strategy: GaussianLodPackingStrategy,
+): strategy is StreamingLodPackingStrategy {
+  return strategy instanceof StreamingLodPackingStrategy;
 }
 
 function cellChange(

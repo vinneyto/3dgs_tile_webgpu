@@ -313,7 +313,10 @@ Large camera-driven changes can be spread over frames with a latest-target-wins
 wrapper. Its initial packing is immediate. Later calls transition whole leaf
 cells within both limits; calling `invalidateTarget()` again discards the
 unfinished target and diffs the actually applied packing against the newest
-one. A streaming instance is stateful and must belong to one cloud.
+one. A streaming instance is stateful and must belong to one cloud. The radial
+built-ins implement `CameraDrivenGaussianLodPackingStrategy`, so their wrapper
+can be updated directly with `streamingPacking.setCenter()`. Custom strategies
+can opt into the same camera-following contract with `cameraDriven: true`.
 
 ```ts
 const radialPacking = new TieredRadialLodPackingStrategy();
@@ -324,8 +327,7 @@ const streamingPacking = new StreamingLodPackingStrategy(radialPacking, {
   targetPlanner: workerPlanner,
 });
 
-radialPacking.setCenter(cameraPositionInCloudLocalSpace);
-streamingPacking.invalidateTarget();
+streamingPacking.setCenter(cameraPositionInCloudLocalSpace);
 
 if (streamingPacking.needsPack) {
   store.packLodBatch(cloud);

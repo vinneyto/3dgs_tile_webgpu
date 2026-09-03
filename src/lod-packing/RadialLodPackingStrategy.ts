@@ -2,8 +2,8 @@ import { Vector3 } from "three/webgpu";
 
 import type { GaussianLodPacking } from "../GaussianLod";
 import {
+  type CameraDrivenGaussianLodPackingStrategy,
   type GaussianLodPackingContext,
-  type GaussianLodPackingStrategy,
   validateGaussianLodBudget,
 } from "./GaussianLodPackingStrategy";
 import { type GaussianLodPackingCenter, radialLodCells } from "./radialCells";
@@ -19,7 +19,8 @@ export interface RadialLodPackingOptions {
  * Packs one fixed LOD as a continuous radial cut from the focus outwards.
  * Selection stops when the next whole leaf cell exceeds the capacity.
  */
-export class RadialLodPackingStrategy implements GaussianLodPackingStrategy {
+export class RadialLodPackingStrategy implements CameraDrivenGaussianLodPackingStrategy {
+  readonly cameraDriven = true as const;
   center: GaussianLodPackingCenter;
   readonly lodLevel: number | "finest";
 

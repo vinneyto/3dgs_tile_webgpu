@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, expectTypeOf, it, vi } from "vitest";
 import { Ray, StorageBufferAttribute, Vector3 } from "three/webgpu";
 
 import { GaussianData } from "../src/GaussianData";
@@ -9,6 +9,8 @@ import {
   RadialLodPackingStrategy,
   StreamingLodPackingStrategy,
   TieredRadialLodPackingStrategy,
+  isStreamingLodPackingStrategy,
+  type GaussianLodPackingStrategy,
 } from "../src/lod-packing";
 import {
   createRadialLodPlanData,
@@ -514,6 +516,36 @@ describe("GaussianLod", () => {
     );
     expect(streaming.needsPack).toBe(false);
     expect(targetStrategy.pack).toHaveBeenCalledTimes(3);
+  });
+
+  it("preserves the wrapped strategy type and explicit camera capability", () => {
+    const target = new TieredRadialLodPackingStrategy();
+    const streaming = new StreamingLodPackingStrategy(target);
+    const erased: GaussianLodPackingStrategy = streaming;
+
+    expectTypeOf(
+      streaming.targetStrategy,
+    ).toEqualTypeOf<TieredRadialLodPackingStrategy>();
+    expect(isStreamingLodPackingStrategy(erased)).toBe(true);
+    if (!isStreamingLodPackingStrategy(erased)) {
+      throw new Error("Expected a streaming strategy");
+    }
+    expectTypeOf(
+      erased.targetStrategy,
+    ).toEqualTypeOf<GaussianLodPackingStrategy>();
+    expect(erased.tracksCamera).toBe(true);
+    expect(erased.setCenter(new Vector3(1, 2, 3))).toBe(true);
+    expect(target.center).toEqual(new Vector3(1, 2, 3));
+
+    const fixed = new StreamingLodPackingStrategy({
+      pack: vi.fn(() => ({
+        nodeIds: new Uint32Array(),
+        lodLevels: new Uint8Array(),
+        gaussianCount: 0,
+      })),
+    });
+    expect(fixed.tracksCamera).toBe(false);
+    expect(fixed.setCenter(new Vector3())).toBe(false);
   });
 
   it("waits for an asynchronous target and releases it after building the transition", () => {

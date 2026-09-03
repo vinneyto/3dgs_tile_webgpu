@@ -1,6 +1,8 @@
 export {
+  type CameraDrivenGaussianLodPackingStrategy,
   type GaussianLodPackingContext,
   type GaussianLodPackingStrategy,
+  isCameraDrivenGaussianLodPackingStrategy,
 } from "./GaussianLodPackingStrategy";
 export { MaximumLodPackingStrategy } from "./MaximumLodPackingStrategy";
 export {
@@ -18,6 +20,7 @@ export {
 export { RadialLodWorkerPlanner } from "./RadialLodWorkerPlanner";
 export {
   StreamingLodPackingStrategy,
+  isStreamingLodPackingStrategy,
   type StreamingLodCellTransition,
   type StreamingLodPlannedTarget,
   type StreamingLodPackingBatch,

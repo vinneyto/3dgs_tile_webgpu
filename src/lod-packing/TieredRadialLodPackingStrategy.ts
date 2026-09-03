@@ -2,8 +2,8 @@ import { Vector3 } from "three/webgpu";
 
 import type { GaussianLodPacking } from "../GaussianLod";
 import {
+  type CameraDrivenGaussianLodPackingStrategy,
   type GaussianLodPackingContext,
-  type GaussianLodPackingStrategy,
   validateGaussianLodBudget,
 } from "./GaussianLodPackingStrategy";
 import { type GaussianLodPackingCenter, radialLodCells } from "./radialCells";
@@ -19,7 +19,8 @@ export interface TieredRadialLodPackingOptions {
  * Packs concentric finest, middle and coarsest LOD tiers. If the complete
  * finest representation fits, it is returned without degrading outer cells.
  */
-export class TieredRadialLodPackingStrategy implements GaussianLodPackingStrategy {
+export class TieredRadialLodPackingStrategy implements CameraDrivenGaussianLodPackingStrategy {
+  readonly cameraDriven = true as const;
   center: GaussianLodPackingCenter;
   readonly budgetShares: readonly [number, number, number];
 

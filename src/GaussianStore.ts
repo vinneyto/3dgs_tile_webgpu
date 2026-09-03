@@ -13,6 +13,7 @@ import {
   RadialLodWorkerPlanner,
   StreamingLodPackingStrategy,
   TieredRadialLodPackingStrategy,
+  isStreamingLodPackingStrategy,
   type GaussianLodPackingStrategy,
   type StreamingLodPackingOptions,
   type StreamingLodTargetStats,
@@ -485,7 +486,7 @@ export class GaussianStore {
       throw new Error("GaussianCloud is not an initialized LOD entry");
     }
     const strategy = entry.packingStrategy!;
-    if (!(strategy instanceof StreamingLodPackingStrategy)) {
+    if (!isStreamingLodPackingStrategy(strategy)) {
       throw new Error(
         "GaussianCloud must use StreamingLodPackingStrategy for incremental LOD batches",
       );
@@ -765,9 +766,9 @@ export class GaussianStore {
       const strategy = entry.packingStrategy;
       if (
         entry.lod === null ||
-        !(strategy instanceof StreamingLodPackingStrategy) ||
-        !("setCenter" in strategy.targetStrategy) ||
-        typeof strategy.targetStrategy.setCenter !== "function"
+        strategy === null ||
+        !isStreamingLodPackingStrategy(strategy) ||
+        !strategy.tracksCamera
       ) {
         continue;
       }
@@ -782,8 +783,7 @@ export class GaussianStore {
         focus.distanceToSquared(entry.lastLodFocus) >=
           updateDistance * updateDistance
       ) {
-        strategy.targetStrategy.setCenter(focus);
-        strategy.invalidateTarget();
+        strategy.setCenter(focus);
         entry.lastLodFocus.copy(focus);
       }
       let applied = false;

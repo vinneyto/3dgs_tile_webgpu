@@ -2,8 +2,8 @@ import { Vector3 } from "three/webgpu";
 
 import type { GaussianLodPacking } from "../GaussianLod";
 import {
+  type CameraDrivenGaussianLodPackingStrategy,
   type GaussianLodPackingContext,
-  type GaussianLodPackingStrategy,
   validateGaussianLodBudget,
 } from "./GaussianLodPackingStrategy";
 import { type GaussianLodPackingCenter, radialLodCells } from "./radialCells";
@@ -24,7 +24,8 @@ export interface DistanceAwareRadialLodPackingOptions {
  * does not fit; if the coarsest representation still exceeds the budget, its
  * farthest cells are clipped.
  */
-export class DistanceAwareRadialLodPackingStrategy implements GaussianLodPackingStrategy {
+export class DistanceAwareRadialLodPackingStrategy implements CameraDrivenGaussianLodPackingStrategy {
+  readonly cameraDriven = true as const;
   center: GaussianLodPackingCenter;
   readonly levelDistance: number;
 
