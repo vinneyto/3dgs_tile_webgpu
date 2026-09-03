@@ -278,7 +278,7 @@ export class GaussianSandbox {
       this.helperPass,
     );
     this.setStatus(
-      `${source}: ${primaryData.count.toLocaleString()}→${primaryCloud.gaussianCount.toLocaleString()} Gaussians · packed SH degree ${store.shDegree}`,
+      `${source}: ${primaryData.count.toLocaleString()}→${primaryCloud.gaussianCount.toLocaleString()} Gaussians · packed ${store.packedShFormat.toUpperCase()} SH degree ${store.shDegree}`,
     );
   }
 

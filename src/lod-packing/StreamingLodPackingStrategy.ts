@@ -1,4 +1,5 @@
 import type { GaussianLod, GaussianLodPacking } from "../GaussianLod";
+import { RGB8E8_SH_BYTES_PER_COEFFICIENT } from "../GaussianSh";
 import {
   type GaussianLodPackingContext,
   type GaussianLodPackingStrategy,
@@ -384,7 +385,9 @@ function cellChange(
       ? Math.min(fromCount, toCount)
       : 0;
   const fullGaussianBytes =
-    3 * 16 + lod.octree.data.shCoefficientCount * 16 + 4;
+    3 * 16 +
+    lod.octree.data.shCoefficientCount * RGB8E8_SH_BYTES_PER_COEFFICIENT +
+    4;
   return {
     nodeId,
     lodLevel: toLevel,

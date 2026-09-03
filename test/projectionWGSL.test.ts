@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { projectionCovarianceWGSL } from "../src/kernels/projectionHelpers";
+import {
+  evaluateShWGSL,
+  projectionCovarianceWGSL,
+} from "../src/kernels/projectionHelpers";
 
 describe("projectionWGSL antialias specialization", () => {
   it("preserves subpixel energy in compensated mode", () => {
@@ -21,5 +24,22 @@ describe("projectionWGSL antialias specialization", () => {
     expect(source).toContain("let covariance_view");
     expect(source).toContain("let conic = vec3<f32>");
     expect(source).toContain("return mat4x4<f32>(");
+  });
+});
+
+describe("projectionWGSL SH specialization", () => {
+  it("decodes packed RGB8E8 coefficients in the projection kernel", () => {
+    const source = evaluateShWGSL("rgb8e8");
+
+    expect(source).toContain("array<u32>");
+    expect(source).toContain("unpack4x8snorm");
+    expect(source).toContain("exp2(f32(exponent))");
+  });
+
+  it("retains the float32 path for unpacked GaussianData", () => {
+    const source = evaluateShWGSL("float32");
+
+    expect(source).toContain("array<vec4<f32>>");
+    expect(source).not.toContain("unpack4x8snorm");
   });
 });
