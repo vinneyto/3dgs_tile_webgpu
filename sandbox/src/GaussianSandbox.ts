@@ -10,11 +10,8 @@ import {
   CanonicalGaussianPlyLoader,
   gaussianPass,
   type GaussianCloud,
-  GaussianLodColorHelper,
-  OctreeHelper,
   type GaussianPass,
   GaussianStore,
-  type GaussianStorePackStats,
 } from "../../src/index";
 import {
   addDataWithSandboxLod,
@@ -22,31 +19,29 @@ import {
   SANDBOX_LOD_LEVELS,
   type CloudBounds,
 } from "./cloudData";
+import { CloudStatus } from "./CloudStatus";
 import { compositePremultipliedOver } from "./compositePremultipliedOver";
 import { DebugPanel } from "./DebugPanel";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 import { readSandboxOptions, type SandboxOptions } from "./SandboxOptions";
+import { SpatialDebugHelpers } from "./SpatialDebugHelpers";
 
 export class GaussianSandbox {
   private readonly loader = new CanonicalGaussianPlyLoader();
   private readonly scene = new Scene();
   private readonly controls: OrbitControls;
   private readonly debugPanel: DebugPanel;
+  private readonly spatialDebug = new SpatialDebugHelpers();
+  private readonly cloudStatus: CloudStatus;
   private pipeline: RenderPipeline | null = null;
   private pass: GaussianPass | null = null;
   private store: GaussianStore | null = null;
   private helperPass: ReturnType<typeof scenePass> | null = null;
-  private readonly octreeHelpers: OctreeHelper[] = [];
-  private octreeHelpersVisible = false;
-  private lodColoringEnabled = false;
-  private lodColorHelper: GaussianLodColorHelper | null = null;
-  private unsubscribeDebug: (() => void) | null = null;
-  private lastPackStats: GaussianStorePackStats | null = null;
 
   private constructor(
     private readonly renderer: WebGPURenderer,
     private readonly camera: PerspectiveCamera,
-    private readonly status: HTMLElement,
+    status: HTMLElement,
     metrics: HTMLElement,
     kernelTimings: HTMLElement,
     timingInspector: KernelTimingInspector | null,
@@ -54,6 +49,7 @@ export class GaussianSandbox {
   ) {
     this.controls = new OrbitControls(camera, renderer.domElement);
     this.controls.enableDamping = true;
+    this.cloudStatus = new CloudStatus(status);
     this.debugPanel = new DebugPanel(
       renderer,
       metrics,
@@ -110,17 +106,15 @@ export class GaussianSandbox {
   }
 
   setOctreeHelperVisible(visible: boolean): void {
-    this.octreeHelpersVisible = visible;
-    for (const helper of this.octreeHelpers) helper.visible = visible;
+    this.spatialDebug.setOctreeVisible(visible);
   }
 
   setLodColoringEnabled(enabled: boolean): void {
-    this.lodColoringEnabled = enabled;
-    if (this.lodColorHelper !== null) this.lodColorHelper.enabled = enabled;
+    this.spatialDebug.setLodColoringEnabled(enabled);
   }
 
   async loadUrl(url: string): Promise<void> {
-    this.setStatus(`Loading ${url}…`);
+    this.cloudStatus.loading(url);
     const store = this.createStore();
     try {
       const cloud = await store.load(url, {
@@ -130,12 +124,12 @@ export class GaussianSandbox {
       this.show(store, url, cloud);
     } catch (error) {
       store.dispose();
-      this.setError(error);
+      this.cloudStatus.error(error);
     }
   }
 
   async loadFile(file: File): Promise<void> {
-    this.setStatus(`Parsing ${file.name}…`);
+    this.cloudStatus.parsing(file.name);
     const store = this.createStore();
     try {
       const data = this.loader.parse(await file.arrayBuffer());
@@ -147,7 +141,7 @@ export class GaussianSandbox {
       this.show(store, file.name, cloud);
     } catch (error) {
       store.dispose();
-      this.setError(error);
+      this.cloudStatus.error(error);
     }
   }
 
@@ -168,7 +162,6 @@ export class GaussianSandbox {
     const bounds = measureCloud(data);
     this.store = store;
     this.scene.add(cloud);
-    this.addSpatialHelpers(cloud);
     this.frameCloud(bounds);
 
     this.pass = gaussianPass(
@@ -177,61 +170,26 @@ export class GaussianSandbox {
       store,
       this.options.pass,
     );
-    this.lodColorHelper = new GaussianLodColorHelper(this.pass, {
-      enabled: this.lodColoringEnabled,
+    this.spatialDebug.attach(cloud, this.pass);
+    this.debugPanel.setPass(this.pass, {
+      cloud,
+      onPack: () => this.cloudStatus.packed(source, data.count, cloud, store),
     });
-    this.debugPanel.setPass(this.pass);
-    this.subscribeToPassDebug(source, data.count, cloud);
     this.pipeline = new RenderPipeline(this.renderer);
     this.helperPass = scenePass(this.scene, this.camera);
     this.pipeline.outputNode = compositePremultipliedOver(
       this.pass,
       this.helperPass,
     );
-    this.setStatus(
-      `${source}: ${data.count.toLocaleString()} Gaussians · preparing GPU resources…`,
-    );
-  }
-
-  private subscribeToPassDebug(
-    source: string,
-    sourceCount: number,
-    primaryCloud: GaussianCloud,
-  ): void {
-    const pass = this.pass!;
-    const store = this.store!;
-    this.unsubscribeDebug = pass.subscribeDebug(({ storePack, lod }) => {
-      const cloudLod = lod.clouds.find(({ cloud }) => cloud === primaryCloud);
-      if (cloudLod !== undefined) {
-        this.debugPanel.recordLodState(
-          cloudLod.focusDistance,
-          cloudLod.pending,
-          cloudLod.targetStats,
-        );
-      }
-      if (storePack !== null && storePack !== this.lastPackStats) {
-        this.lastPackStats = storePack;
-        this.debugPanel.recordPack(
-          storePack,
-          storePack.planningMs + storePack.slotUpdateMs,
-        );
-        this.setStatus(
-          `${source}: ${sourceCount.toLocaleString()}→${primaryCloud.gaussianCount.toLocaleString()} Gaussians · packed ${store.packedShFormat.toUpperCase()} SH degree ${store.shDegree}`,
-        );
-      }
-    });
+    this.cloudStatus.preparing(source, data.count);
   }
 
   private clearCloud(): void {
-    this.unsubscribeDebug?.();
-    this.unsubscribeDebug = null;
-    this.lastPackStats = null;
-    this.lodColorHelper?.dispose();
-    this.lodColorHelper = null;
+    this.debugPanel.setPass(null);
+    this.spatialDebug.clear();
     this.pass?.dispose();
     this.helperPass?.dispose();
     this.pipeline?.dispose();
-    this.disposeSpatialHelpers();
     this.store?.dispose();
     this.pass = null;
     this.helperPass = null;
@@ -253,36 +211,11 @@ export class GaussianSandbox {
     this.controls.update();
   }
 
-  private addSpatialHelpers(cloud: GaussianCloud): void {
-    if (cloud.lod === null) return;
-    const helper = new OctreeHelper(cloud.lod.octree, { opacity: 0.42 });
-    helper.visible = this.octreeHelpersVisible;
-    cloud.add(helper);
-    this.octreeHelpers.push(helper);
-  }
-
-  private disposeSpatialHelpers(): void {
-    for (const helper of this.octreeHelpers) helper.dispose();
-    this.octreeHelpers.length = 0;
-  }
-
   private resize(): void {
     const width = Math.max(1, innerWidth);
     const height = Math.max(1, innerHeight);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
-  }
-
-  private setStatus(message: string): void {
-    this.status.textContent = message;
-    delete this.status.dataset.error;
-  }
-
-  private setError(error: unknown): void {
-    this.status.textContent =
-      error instanceof Error ? error.message : String(error);
-    this.status.dataset.error = "true";
-    console.error(error);
   }
 }

@@ -1,6 +1,8 @@
 import type { WebGPURenderer } from "three/webgpu";
 import type {
+  GaussianCloud,
   GaussianPass,
+  GaussianPassDebugSnapshot,
   GaussianPassStats,
   GaussianStorePackStats,
   GaussianStoreSlotRange,
@@ -13,6 +15,11 @@ const STATS_INTERVAL_MS = 1_500;
 const DISPLAY_INTERVAL_MS = 250;
 const MEMORY_WARMUP_FRAMES = 30;
 const KERNEL_SCROLL_IDLE_MS = 500;
+
+export interface DebugPanelPassOptions {
+  readonly cloud: GaussianCloud;
+  readonly onPack?: (stats: GaussianStorePackStats) => void;
+}
 
 export class DebugPanel {
   private pass: GaussianPass | null = null;
@@ -33,6 +40,7 @@ export class DebugPanel {
   private packingPending = false;
   private targetStats: StreamingLodTargetStats | null = null;
   private kernelScrollActiveUntil = -Infinity;
+  private unsubscribePassDebug: (() => void) | null = null;
 
   constructor(
     private readonly renderer: WebGPURenderer,
@@ -54,7 +62,11 @@ export class DebugPanel {
     );
   }
 
-  setPass(pass: GaussianPass | null): void {
+  setPass(pass: null): void;
+  setPass(pass: GaussianPass, options: DebugPanelPassOptions): void;
+  setPass(pass: GaussianPass | null, options?: DebugPanelPassOptions): void {
+    this.unsubscribePassDebug?.();
+    this.unsubscribePassDebug = null;
     this.pass = pass;
     this.stats = null;
     this.frameCount = 0;
@@ -66,15 +78,41 @@ export class DebugPanel {
     this.packingFocusDistance = 0;
     this.packingPending = false;
     this.targetStats = null;
+    if (pass !== null) {
+      if (options === undefined) {
+        throw new Error("DebugPanel requires the primary GaussianCloud");
+      }
+      this.unsubscribePassDebug = pass.subscribeDebug((snapshot) =>
+        this.handlePassDebug(snapshot, options),
+      );
+    }
   }
 
-  recordPack(stats: GaussianStorePackStats, durationMs: number): void {
+  private handlePassDebug(
+    { storePack, lod }: GaussianPassDebugSnapshot,
+    options: DebugPanelPassOptions,
+  ): void {
+    const cloudLod = lod.clouds.find(({ cloud }) => cloud === options.cloud);
+    if (cloudLod !== undefined) {
+      this.recordLodState(
+        cloudLod.focusDistance,
+        cloudLod.pending,
+        cloudLod.targetStats,
+      );
+    }
+    if (storePack !== null && storePack !== this.packStats) {
+      this.recordPack(storePack, storePack.planningMs + storePack.slotUpdateMs);
+      options.onPack?.(storePack);
+    }
+  }
+
+  private recordPack(stats: GaussianStorePackStats, durationMs: number): void {
     this.packStats = stats;
     this.packDurationMs = durationMs;
     this.packCount++;
   }
 
-  recordLodState(
+  private recordLodState(
     focusDistance: number,
     pending: boolean,
     targetStats: StreamingLodTargetStats,
