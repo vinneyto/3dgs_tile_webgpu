@@ -26,6 +26,12 @@ export interface GaussianPassOptions {
   profileKernels?: boolean;
   /** Optional per-tile raster sample budget. Disabled by default. Intersections are still emitted and sorted. */
   maxRasterizedSplatsPerTile?: number | null;
+  /**
+   * Maximum samples evaluated by one raster workgroup. Heavier tiles are split
+   * into exact depth-ordered chunks and composited in a second pass. Defaults
+   * to 8192; pass null to retain the single-workgroup path for every tile.
+   */
+  rasterChunkSize?: number | null;
   /** Cull subpixel Gaussians whose alpha support contains no pixel center. Defaults to true. */
   subpixelSampleCulling?: boolean;
   /** Select subgroup-accelerated or portable workgroup radix. Defaults to feature-based auto detection. */
@@ -91,6 +97,7 @@ export interface GaussianPassDebugInfo {
   radixBackend: ResolvedRadixBackend;
   profileKernels: boolean;
   maxRasterizedSplatsPerTile: number | null;
+  rasterChunkSize: number | null;
   subpixelSampleCulling: boolean;
 }
 

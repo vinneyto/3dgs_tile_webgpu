@@ -1,5 +1,6 @@
 export const TILE_SIZE = 16;
 export const WORKGROUP_SIZE = 256;
+export const DEFAULT_RASTER_CHUNK_SIZE = 8_192;
 export const SCAN_BLOCK_ITEMS = 512;
 export const RADIX_BITS = 4;
 export const RADIX_SIZE = 1 << RADIX_BITS;
