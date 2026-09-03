@@ -41,14 +41,23 @@ interface ResolvedInspectorFrame {
 
 interface TimestampBackend {
   trackTimestamp: boolean;
+  timestampQueryPool?: {
+    compute?: TimestampPool;
+    render?: TimestampPool;
+  };
   hasTimestampQuery(uid: string): boolean;
   getTimestamp(uid: string): number;
+}
+
+interface TimestampPool {
+  trackTimestamp: boolean;
 }
 
 /** Uses Three.js' inspector/timestamp integration without accessing GPUDevice. */
 export class KernelTimingInspector extends RendererInspector {
   latest: FrameKernelTimings | null = null;
   private timestampResolution: Promise<void> | null = null;
+  private timestampReadback: Promise<unknown> | null = null;
   private sampledFramePending = false;
   private timestampErrorReported = false;
 
@@ -95,24 +104,38 @@ export class KernelTimingInspector extends RendererInspector {
 
   /** Disable Three.js' continuous query allocation and sample on demand. */
   enableControlledSampling(renderer: WebGPURenderer): void {
-    timestampBackend(renderer).trackTimestamp = false;
+    setTimestampTracking(renderer, false);
   }
 
   /** Enable timestamp allocation for one frame when no readback is pending. */
   beginFrameSample(renderer: WebGPURenderer): boolean {
-    const backend = timestampBackend(renderer);
-    if (this.timestampResolution !== null || this.sampledFramePending) {
-      backend.trackTimestamp = false;
+    if (
+      this.timestampResolution !== null ||
+      this.timestampReadback !== null ||
+      this.sampledFramePending
+    ) {
+      setTimestampTracking(renderer, false);
       return false;
     }
     this.sampledFramePending = true;
-    backend.trackTimestamp = true;
+    setTimestampTracking(renderer, true);
     return true;
   }
 
-  /** Stop allocating queries immediately after the sampled frame is encoded. */
+  /** Stop allocation and drain both pools as soon as frame encoding completes. */
   endFrameSample(renderer: WebGPURenderer): void {
-    timestampBackend(renderer).trackTimestamp = false;
+    if (!this.sampledFramePending || this.timestampReadback !== null) {
+      setTimestampTracking(renderer, false);
+      return;
+    }
+    // The renderer is already initialized, so both calls synchronously enter
+    // Three.js' pools and reset their cursors before waiting for mapAsync().
+    setTimestampTracking(renderer, true);
+    this.timestampReadback = Promise.all([
+      renderer.resolveTimestampsAsync(TimestampQuery.COMPUTE),
+      renderer.resolveTimestampsAsync(TimestampQuery.RENDER),
+    ]);
+    setTimestampTracking(renderer, false);
   }
 
   /**
@@ -133,17 +156,13 @@ export class KernelTimingInspector extends RendererInspector {
     const frame = frames.at(-1);
     if (frame === undefined) return Promise.resolve();
 
-    // Both calls enter the query pools synchronously and reset their allocation
-    // cursors before their returned promises wait for GPU buffer mapping.
-    backend.trackTimestamp = true;
-    const compute = renderer.resolveTimestampsAsync(TimestampQuery.COMPUTE);
-    const render = renderer.resolveTimestampsAsync(TimestampQuery.RENDER);
-    backend.trackTimestamp = false;
-    this.timestampResolution = Promise.all([compute, render])
+    const readback = this.timestampReadback ?? Promise.resolve();
+    this.timestampResolution = readback
       .then(() => this.resolveSampledFrame(frame, backend))
       .catch((error: unknown) => this.reportTimestampError(error))
       .finally(() => {
-        backend.trackTimestamp = false;
+        setTimestampTracking(renderer, false);
+        this.timestampReadback = null;
         this.timestampResolution = null;
       });
     return this.timestampResolution;
@@ -196,6 +215,20 @@ export class KernelTimingInspector extends RendererInspector {
 
 function timestampBackend(renderer: WebGPURenderer): TimestampBackend {
   return renderer.backend as unknown as TimestampBackend;
+}
+
+function setTimestampTracking(
+  renderer: WebGPURenderer,
+  enabled: boolean,
+): void {
+  const backend = timestampBackend(renderer);
+  backend.trackTimestamp = enabled;
+  if (backend.timestampQueryPool?.compute !== undefined) {
+    backend.timestampQueryPool.compute.trackTimestamp = enabled;
+  }
+  if (backend.timestampQueryPool?.render !== undefined) {
+    backend.timestampQueryPool.render.trackTimestamp = enabled;
+  }
 }
 
 function computeGroupName(group: ComputeNode | ComputeNode[]): string {

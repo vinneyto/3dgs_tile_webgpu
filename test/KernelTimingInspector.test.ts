@@ -11,6 +11,10 @@ describe("KernelTimingInspector", () => {
     });
     const backend = {
       trackTimestamp: true,
+      timestampQueryPool: {
+        compute: { trackTimestamp: true, timestamps: new Map() },
+        render: { trackTimestamp: true, timestamps: new Map() },
+      },
       hasTimestampQuery: vi.fn(() => true),
       getTimestamp: vi.fn(() => 1.25),
     };
@@ -21,10 +25,13 @@ describe("KernelTimingInspector", () => {
     inspector.setRenderer(renderer);
     inspector.enableControlledSampling(renderer);
     expect(backend.trackTimestamp).toBe(false);
+    expect(backend.timestampQueryPool.compute.trackTimestamp).toBe(false);
     expect(inspector.beginFrameSample(renderer)).toBe(true);
     expect(backend.trackTimestamp).toBe(true);
+    expect(backend.timestampQueryPool.compute.trackTimestamp).toBe(true);
     inspector.endFrameSample(renderer);
     expect(backend.trackTimestamp).toBe(false);
+    expect(backend.timestampQueryPool.compute.trackTimestamp).toBe(false);
     Object.assign(inspector, {
       frames: [
         {
