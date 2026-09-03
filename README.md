@@ -730,9 +730,10 @@ Append `?profile=kernels` to enable the heavier profiling mode. It requests GPU
 timestamp queries, opens **Kernel timings**, and splits the normally batched
 prepare/emit group into separate compute passes. Timestamp rows are available
 only when the browser and adapter expose `timestamp-query`; the HUD reports
-that limitation explicitly otherwise. The sandbox resolves both Three.js
-timestamp pools after each sampled frame and pauses new timestamp allocation
-while the GPU readback is pending, without pausing rendering.
+that limitation explicitly otherwise. Timestamp allocation is enabled only
+around a sampled render frame. The sandbox then resolves both Three.js pools
+and waits for the GPU readback before sampling another frame, without pausing
+normal rendering.
 
 The same flag adds an asynchronous readback of emitted splats per tile: max,
 mean, median, p95, p99, and counts above 256, 512, 1024 and 2048. It also runs a

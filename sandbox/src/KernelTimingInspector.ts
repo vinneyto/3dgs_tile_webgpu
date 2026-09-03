@@ -49,6 +49,7 @@ interface TimestampBackend {
 export class KernelTimingInspector extends RendererInspector {
   latest: FrameKernelTimings | null = null;
   private timestampResolution: Promise<void> | null = null;
+  private sampledFramePending = false;
   private timestampErrorReported = false;
 
   constructor() {
@@ -92,6 +93,28 @@ export class KernelTimingInspector extends RendererInspector {
     };
   }
 
+  /** Disable Three.js' continuous query allocation and sample on demand. */
+  enableControlledSampling(renderer: WebGPURenderer): void {
+    timestampBackend(renderer).trackTimestamp = false;
+  }
+
+  /** Enable timestamp allocation for one frame when no readback is pending. */
+  beginFrameSample(renderer: WebGPURenderer): boolean {
+    const backend = timestampBackend(renderer);
+    if (this.timestampResolution !== null || this.sampledFramePending) {
+      backend.trackTimestamp = false;
+      return false;
+    }
+    this.sampledFramePending = true;
+    backend.trackTimestamp = true;
+    return true;
+  }
+
+  /** Stop allocating queries immediately after the sampled frame is encoded. */
+  endFrameSample(renderer: WebGPURenderer): void {
+    timestampBackend(renderer).trackTimestamp = false;
+  }
+
   /**
    * RendererInspector calls this from finish(), after all queries for the
    * sampled frame have been registered. Pause new query allocation until the
@@ -100,10 +123,11 @@ export class KernelTimingInspector extends RendererInspector {
    */
   resolveTimestamp(): Promise<void> {
     if (this.timestampResolution !== null) return this.timestampResolution;
+    if (!this.sampledFramePending) return Promise.resolve();
+    this.sampledFramePending = false;
     const renderer = this.getRenderer() as WebGPURenderer | null;
     if (renderer === null) return Promise.resolve();
-    const backend = renderer.backend as unknown as TimestampBackend;
-    if (!backend.trackTimestamp) return Promise.resolve();
+    const backend = timestampBackend(renderer);
     const frames = (this as unknown as { frames: ResolvedInspectorFrame[] })
       .frames;
     const frame = frames.at(-1);
@@ -111,6 +135,7 @@ export class KernelTimingInspector extends RendererInspector {
 
     // Both calls enter the query pools synchronously and reset their allocation
     // cursors before their returned promises wait for GPU buffer mapping.
+    backend.trackTimestamp = true;
     const compute = renderer.resolveTimestampsAsync(TimestampQuery.COMPUTE);
     const render = renderer.resolveTimestampsAsync(TimestampQuery.RENDER);
     backend.trackTimestamp = false;
@@ -118,7 +143,7 @@ export class KernelTimingInspector extends RendererInspector {
       .then(() => this.resolveSampledFrame(frame, backend))
       .catch((error: unknown) => this.reportTimestampError(error))
       .finally(() => {
-        backend.trackTimestamp = true;
+        backend.trackTimestamp = false;
         this.timestampResolution = null;
       });
     return this.timestampResolution;
@@ -167,6 +192,10 @@ export class KernelTimingInspector extends RendererInspector {
       pools.render?.timestamps.delete(stats.uid);
     }
   }
+}
+
+function timestampBackend(renderer: WebGPURenderer): TimestampBackend {
+  return renderer.backend as unknown as TimestampBackend;
 }
 
 function computeGroupName(group: ComputeNode | ComputeNode[]): string {

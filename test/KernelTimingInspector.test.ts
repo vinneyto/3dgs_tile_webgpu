@@ -17,7 +17,14 @@ describe("KernelTimingInspector", () => {
     const resolveTimestampsAsync = vi.fn((type: string) =>
       type === TimestampQuery.COMPUTE ? computePending : Promise.resolve(),
     );
-    inspector.setRenderer({ backend, resolveTimestampsAsync } as never);
+    const renderer = { backend, resolveTimestampsAsync } as never;
+    inspector.setRenderer(renderer);
+    inspector.enableControlledSampling(renderer);
+    expect(backend.trackTimestamp).toBe(false);
+    expect(inspector.beginFrameSample(renderer)).toBe(true);
+    expect(backend.trackTimestamp).toBe(true);
+    inspector.endFrameSample(renderer);
+    expect(backend.trackTimestamp).toBe(false);
     Object.assign(inspector, {
       frames: [
         {
@@ -44,11 +51,15 @@ describe("KernelTimingInspector", () => {
     expect(backend.trackTimestamp).toBe(false);
     expect(inspector.resolveTimestamp()).toBe(pending);
     expect(resolveTimestampsAsync).toHaveBeenCalledTimes(2);
+    expect(inspector.beginFrameSample(renderer)).toBe(false);
+    expect(backend.trackTimestamp).toBe(false);
 
     finishCompute();
     await pending;
 
-    expect(backend.trackTimestamp).toBe(true);
+    expect(backend.trackTimestamp).toBe(false);
+    expect(inspector.beginFrameSample(renderer)).toBe(true);
+    inspector.endFrameSample(renderer);
     expect(inspector.latest).toMatchObject({
       frameId: 1,
       computeMs: 1.25,

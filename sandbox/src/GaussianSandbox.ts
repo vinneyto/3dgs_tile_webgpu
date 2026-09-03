@@ -62,7 +62,16 @@ export class GaussianSandbox {
     renderer.setAnimationLoop((time) => {
       const encodeStart = performance.now();
       this.controls.update();
-      this.pipeline?.render();
+      if (this.pipeline !== null && timingInspector !== null) {
+        timingInspector.beginFrameSample(renderer);
+        try {
+          this.pipeline.render();
+        } finally {
+          timingInspector.endFrameSample(renderer);
+        }
+      } else {
+        this.pipeline?.render();
+      }
       this.debugPanel.update(time, performance.now() - encodeStart);
     });
     addEventListener("resize", () => this.resize());
@@ -87,7 +96,10 @@ export class GaussianSandbox {
       options.profileEnabled && renderer.hasFeature("timestamp-query")
         ? new KernelTimingInspector()
         : null;
-    if (timingInspector !== null) renderer.inspector = timingInspector;
+    if (timingInspector !== null) {
+      renderer.inspector = timingInspector;
+      timingInspector.enableControlledSampling(renderer);
+    }
     renderer.setPixelRatio(options.pixelRatio);
     viewport.appendChild(renderer.domElement);
 
