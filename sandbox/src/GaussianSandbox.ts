@@ -67,7 +67,6 @@ export class GaussianSandbox {
       const encodeStart = performance.now();
       this.controls.update();
       this.pipeline?.render();
-      timingInspector?.resolvePendingTimestamps(renderer);
       this.debugPanel.update(time, performance.now() - encodeStart);
     });
     addEventListener("resize", () => this.resize());

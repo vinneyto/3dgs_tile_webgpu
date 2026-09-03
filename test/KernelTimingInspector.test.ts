@@ -3,16 +3,58 @@ import { describe, expect, it, vi } from "vitest";
 import { KernelTimingInspector } from "../sandbox/src/KernelTimingInspector";
 
 describe("KernelTimingInspector", () => {
-  it("resolves both timestamp pools after each profiled frame", () => {
+  it("pauses query allocation until both timestamp pools resolve", async () => {
     const inspector = new KernelTimingInspector();
-    const resolveTimestampsAsync = vi.fn(() => Promise.resolve());
+    let finishCompute!: () => void;
+    const computePending = new Promise<void>((resolve) => {
+      finishCompute = resolve;
+    });
+    const backend = {
+      trackTimestamp: true,
+      hasTimestampQuery: vi.fn(() => true),
+      getTimestamp: vi.fn(() => 1.25),
+    };
+    const resolveTimestampsAsync = vi.fn((type: string) =>
+      type === TimestampQuery.COMPUTE ? computePending : Promise.resolve(),
+    );
+    inspector.setRenderer({ backend, resolveTimestampsAsync } as never);
+    Object.assign(inspector, {
+      frames: [
+        {
+          frameId: 1,
+          computes: [
+            {
+              uid: "c:kernel:f1",
+              computeNode: { name: "3DGS projection WGSL" },
+              cpu: 0.1,
+              gpu: 0,
+            },
+          ],
+          renders: [{ uid: "r:frame:f1", gpu: 0 }],
+        },
+      ],
+    });
 
-    inspector.resolvePendingTimestamps({ resolveTimestampsAsync } as never);
+    const pending = inspector.resolveTimestamp();
 
     expect(resolveTimestampsAsync.mock.calls).toEqual([
       [TimestampQuery.COMPUTE],
       [TimestampQuery.RENDER],
     ]);
+    expect(backend.trackTimestamp).toBe(false);
+    expect(inspector.resolveTimestamp()).toBe(pending);
+    expect(resolveTimestampsAsync).toHaveBeenCalledTimes(2);
+
+    finishCompute();
+    await pending;
+
+    expect(backend.trackTimestamp).toBe(true);
+    expect(inspector.latest).toMatchObject({
+      frameId: 1,
+      computeMs: 1.25,
+      renderMs: 1.25,
+      kernels: [{ name: "projection", gpuMs: 1.25 }],
+    });
   });
 
   it("records every frame in explicit profiling mode", () => {
