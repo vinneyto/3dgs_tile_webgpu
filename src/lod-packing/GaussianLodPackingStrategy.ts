@@ -1,4 +1,4 @@
-import type { Vector3 } from "three/webgpu";
+import type { Camera, Object3D } from "three/webgpu";
 
 import type { GaussianLod, GaussianLodPacking } from "../GaussianLod";
 
@@ -9,21 +9,9 @@ export interface GaussianLodPackingContext {
 
 /** Selects a non-overlapping octree cell/LOD cut for a GaussianStore budget. */
 export interface GaussianLodPackingStrategy {
-  /** Explicit opt-in for strategies whose focus follows the render camera. */
-  readonly cameraDriven?: boolean;
+  /** Update view-dependent parameters in the packed cloud's local space. */
+  setFromCamera(camera: Camera, localSpace: Object3D): this;
   pack(context: GaussianLodPackingContext): GaussianLodPacking;
-}
-
-/** A packing strategy whose local-space focus can follow the render camera. */
-export interface CameraDrivenGaussianLodPackingStrategy extends GaussianLodPackingStrategy {
-  readonly cameraDriven: true;
-  setCenter(center: Vector3): this;
-}
-
-export function isCameraDrivenGaussianLodPackingStrategy(
-  strategy: GaussianLodPackingStrategy,
-): strategy is CameraDrivenGaussianLodPackingStrategy {
-  return strategy.cameraDriven === true;
 }
 
 export function validateGaussianLodBudget(maxGaussians: number): void {

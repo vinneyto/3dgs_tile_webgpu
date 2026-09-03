@@ -1,12 +1,10 @@
-import type { Vector3 } from "three/webgpu";
+import type { Camera, Object3D } from "three/webgpu";
 
 import type { GaussianLod, GaussianLodPacking } from "../GaussianLod";
 import { RGB8E8_SH_BYTES_PER_COEFFICIENT } from "../GaussianSh";
 import {
-  type CameraDrivenGaussianLodPackingStrategy,
   type GaussianLodPackingContext,
   type GaussianLodPackingStrategy,
-  isCameraDrivenGaussianLodPackingStrategy,
   validateGaussianLodBudget,
 } from "./GaussianLodPackingStrategy";
 
@@ -80,7 +78,6 @@ export class StreamingLodPackingStrategy<
   readonly maxUploadBytesPerPack: number;
   readonly maxChangedCellsPerPack: number;
 
-  private readonly cameraTarget: CameraDrivenGaussianLodPackingStrategy | null;
   private lod: GaussianLod | null = null;
   private appliedNodeIds = new Uint32Array();
   private appliedLodLevels = new Uint8Array();
@@ -98,9 +95,6 @@ export class StreamingLodPackingStrategy<
 
   constructor(targetStrategy: T, options: StreamingLodPackingOptions = {}) {
     this.targetStrategy = targetStrategy;
-    this.cameraTarget = isCameraDrivenGaussianLodPackingStrategy(targetStrategy)
-      ? targetStrategy
-      : null;
     this.targetPlanner = options.targetPlanner ?? null;
     this.maxUploadBytesPerPack =
       options.maxUploadBytesPerPack ?? DEFAULT_MAX_UPLOAD_BYTES;
@@ -124,17 +118,9 @@ export class StreamingLodPackingStrategy<
     }
   }
 
-  /** Whether this wrapper's target explicitly follows the render camera. */
-  get tracksCamera(): boolean {
-    return this.cameraTarget !== null;
-  }
-
-  /** Update a camera-driven target and invalidate its pending packing. */
-  setCenter(center: Vector3): boolean {
-    if (this.cameraTarget === null) return false;
-    this.cameraTarget.setCenter(center);
-    this.invalidateTarget();
-    return true;
+  setFromCamera(camera: Camera, localSpace: Object3D): this {
+    this.targetStrategy.setFromCamera(camera, localSpace);
+    return this.invalidateTarget();
   }
 
   /** Discard an unfinished target after changing the wrapped strategy. */

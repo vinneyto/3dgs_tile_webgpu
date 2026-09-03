@@ -1,5 +1,11 @@
 import { describe, expect, expectTypeOf, it, vi } from "vitest";
-import { Ray, StorageBufferAttribute, Vector3 } from "three/webgpu";
+import {
+  Object3D,
+  PerspectiveCamera,
+  Ray,
+  StorageBufferAttribute,
+  Vector3,
+} from "three/webgpu";
 
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLod } from "../src/GaussianLod";
@@ -488,7 +494,12 @@ describe("GaussianLod", () => {
       { levels: [{ retention: 0.5 }, { retention: 1 }] },
     );
     let target = packingAtLevel(lod, 0);
-    const targetStrategy = { pack: vi.fn(() => target) };
+    const targetStrategy = {
+      setFromCamera() {
+        return this;
+      },
+      pack: vi.fn(() => target),
+    };
     const streaming = new StreamingLodPackingStrategy(targetStrategy, {
       maxChangedCellsPerPack: 1,
       maxUploadBytesPerPack: 1,
@@ -518,10 +529,14 @@ describe("GaussianLod", () => {
     expect(targetStrategy.pack).toHaveBeenCalledTimes(3);
   });
 
-  it("preserves the wrapped strategy type and explicit camera capability", () => {
+  it("preserves the wrapped strategy type and delegates camera state", () => {
     const target = new TieredRadialLodPackingStrategy();
     const streaming = new StreamingLodPackingStrategy(target);
     const erased: GaussianLodPackingStrategy = streaming;
+    const camera = new PerspectiveCamera();
+    const localSpace = new Object3D();
+    camera.position.set(4, 5, 6);
+    localSpace.position.set(1, 2, 3);
 
     expectTypeOf(
       streaming.targetStrategy,
@@ -533,19 +548,9 @@ describe("GaussianLod", () => {
     expectTypeOf(
       erased.targetStrategy,
     ).toEqualTypeOf<GaussianLodPackingStrategy>();
-    expect(erased.tracksCamera).toBe(true);
-    expect(erased.setCenter(new Vector3(1, 2, 3))).toBe(true);
-    expect(target.center).toEqual(new Vector3(1, 2, 3));
-
-    const fixed = new StreamingLodPackingStrategy({
-      pack: vi.fn(() => ({
-        nodeIds: new Uint32Array(),
-        lodLevels: new Uint8Array(),
-        gaussianCount: 0,
-      })),
-    });
-    expect(fixed.tracksCamera).toBe(false);
-    expect(fixed.setCenter(new Vector3())).toBe(false);
+    expect(erased.setFromCamera(camera, localSpace)).toBe(erased);
+    expect(target.center).toEqual(new Vector3(3, 3, 3));
+    expect(erased.needsPack).toBe(true);
   });
 
   it("waits for an asynchronous target and releases it after building the transition", () => {
@@ -591,7 +596,12 @@ describe("GaussianLod", () => {
     };
     const initial = packingAtLevel(lod, 0);
     const streaming = new StreamingLodPackingStrategy(
-      { pack: () => initial },
+      {
+        setFromCamera() {
+          return this;
+        },
+        pack: () => initial,
+      },
       {
         maxChangedCellsPerPack: 1,
         maxUploadBytesPerPack: 1,
@@ -629,6 +639,9 @@ describe("GaussianLod", () => {
 
   it("validates streaming batch limits", () => {
     const targetStrategy = {
+      setFromCamera() {
+        return this;
+      },
       pack: () => ({
         nodeIds: new Uint32Array(),
         lodLevels: new Uint8Array(),

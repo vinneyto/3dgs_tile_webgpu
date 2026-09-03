@@ -1,8 +1,6 @@
 export {
-  type CameraDrivenGaussianLodPackingStrategy,
   type GaussianLodPackingContext,
   type GaussianLodPackingStrategy,
-  isCameraDrivenGaussianLodPackingStrategy,
 } from "./GaussianLodPackingStrategy";
 export { MaximumLodPackingStrategy } from "./MaximumLodPackingStrategy";
 export {

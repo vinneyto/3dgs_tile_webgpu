@@ -1,12 +1,16 @@
-import { Vector3 } from "three/webgpu";
+import { Vector3, type Camera, type Object3D } from "three/webgpu";
 
 import type { GaussianLodPacking } from "../GaussianLod";
 import {
-  type CameraDrivenGaussianLodPackingStrategy,
   type GaussianLodPackingContext,
+  type GaussianLodPackingStrategy,
   validateGaussianLodBudget,
 } from "./GaussianLodPackingStrategy";
-import { type GaussianLodPackingCenter, radialLodCells } from "./radialCells";
+import {
+  cameraPositionInLocalSpace,
+  type GaussianLodPackingCenter,
+  radialLodCells,
+} from "./radialCells";
 
 export interface RadialLodPackingOptions {
   /** Local-space focus point. Defaults to the tight object-bounds center. */
@@ -19,8 +23,8 @@ export interface RadialLodPackingOptions {
  * Packs one fixed LOD as a continuous radial cut from the focus outwards.
  * Selection stops when the next whole leaf cell exceeds the capacity.
  */
-export class RadialLodPackingStrategy implements CameraDrivenGaussianLodPackingStrategy {
-  readonly cameraDriven = true as const;
+export class RadialLodPackingStrategy implements GaussianLodPackingStrategy {
+  private readonly cameraCenter = new Vector3();
   center: GaussianLodPackingCenter;
   readonly lodLevel: number | "finest";
 
@@ -44,6 +48,12 @@ export class RadialLodPackingStrategy implements CameraDrivenGaussianLodPackingS
   setCenter(center: GaussianLodPackingCenter): this {
     this.center = center instanceof Vector3 ? center.clone() : center;
     return this;
+  }
+
+  setFromCamera(camera: Camera, localSpace: Object3D): this {
+    return this.setCenter(
+      cameraPositionInLocalSpace(camera, localSpace, this.cameraCenter),
+    );
   }
 
   pack({ lod, maxGaussians }: GaussianLodPackingContext): GaussianLodPacking {

@@ -748,7 +748,7 @@ export class GaussianStore {
   }
 
   /**
-   * Update camera-relative built-in streaming LODs and apply at most one
+   * Update camera-relative streaming LODs and apply at most one
    * bounded upload batch per cloud. GaussianPass calls this automatically.
    */
   updateLod(camera: Camera): GaussianStoreLodUpdate {
@@ -767,8 +767,7 @@ export class GaussianStore {
       if (
         entry.lod === null ||
         strategy === null ||
-        !isStreamingLodPackingStrategy(strategy) ||
-        !strategy.tracksCamera
+        !isStreamingLodPackingStrategy(strategy)
       ) {
         continue;
       }
@@ -783,7 +782,7 @@ export class GaussianStore {
         focus.distanceToSquared(entry.lastLodFocus) >=
           updateDistance * updateDistance
       ) {
-        strategy.setCenter(focus);
+        strategy.setFromCamera(camera, entry.cloud);
         entry.lastLodFocus.copy(focus);
       }
       let applied = false;

@@ -138,6 +138,9 @@ describe("GaussianStore", () => {
     const lod = singleLevelLod([0, 1, 2, 3]);
     const store = new GaussianStore({
       defaultPackingStrategy: {
+        setFromCamera() {
+          return this;
+        },
         pack: () => ({
           nodeIds: Uint32Array.of(lod.octree.rootNode),
           lodLevels: Uint8Array.of(0),
@@ -174,6 +177,9 @@ describe("GaussianStore", () => {
     );
     const nodeIds = lod.octree.leafNodeIds.slice(0, 2);
     const strategy = {
+      setFromCamera() {
+        return this;
+      },
       pack: () => ({
         nodeIds,
         lodLevels: Uint8Array.from([0, 1]),
@@ -378,6 +384,9 @@ describe("GaussianStore", () => {
     );
     let level = 0;
     const strategy = {
+      setFromCamera() {
+        return this;
+      },
       pack: () => ({
         nodeIds: lod.octree.leafNodeIds.slice(),
         lodLevels: new Uint8Array(lod.octree.leafNodeIds.length).fill(level),
@@ -418,6 +427,9 @@ describe("GaussianStore", () => {
     );
     let level = 0;
     const strategy = {
+      setFromCamera() {
+        return this;
+      },
       pack: () => ({
         nodeIds: lod.octree.leafNodeIds.slice(),
         lodLevels: new Uint8Array(lod.octree.leafNodeIds.length).fill(level),
@@ -468,6 +480,9 @@ describe("GaussianStore", () => {
 
     let level = 0;
     const targetStrategy = {
+      setFromCamera() {
+        return this;
+      },
       pack: vi.fn(() => packingForLevel(lod, level)),
     };
     const streaming = new StreamingLodPackingStrategy(targetStrategy, {
