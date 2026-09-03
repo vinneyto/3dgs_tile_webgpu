@@ -140,6 +140,15 @@ The built-in default is remaining-capacity budgeting plus a separate streaming
 cloud-local space, plans newest-target-only updates in a worker and uploads at
 most 1 MiB / 16 changed cells per cloud and frame.
 
+```ts
+const store = new GaussianStore({
+  defaultStreamingLod: {
+    maxUploadBytesPerPack: 2 * 1024 * 1024,
+    maxChangedCellsPerPack: 32,
+  },
+});
+```
+
 Pass diagnostics can be observed without GPU readback. Detailed counters remain
 available through `await pass.readStats()` (kernel profiles require
 `profileKernels: true`):
@@ -685,28 +694,46 @@ npm install
 npm run sandbox
 ```
 
-The sandbox is intentionally a small integration example: `main.ts` creates
-the Three.js renderer and camera, calls `store.load()`, creates `gaussianPass`,
-assigns it to `RenderPipeline`, and renders. It contains no manual device access,
-Store packing, or LOD scheduling. It loads `sample.ply` by default; another URL
-can be supplied explicitly:
+The sandbox keeps the full viewer and diagnostics from the original demo while
+its renderer integration contains no manual device access, Store packing, or
+LOD scheduling. It loads `sample.ply` by default and enables standard Three.js
+`OrbitControls`. Use **Open PLY** or drag a canonical 3DGS PLY onto the canvas
+to inspect another cloud. A URL can also be supplied explicitly:
 
 ```text
-http://localhost:5173/?ply=/my-cloud.ply
+http://localhost:5173/?ply=/my-cloud.ply&sort=packed16&dpr=1
 ```
 
-Files addressed by URL belong in `sandbox/public/`. The loader accepts ASCII,
-binary little-endian, and binary big-endian scalar PLY vertex data. Matching
-`lidar_sim`, it performs these boundary conversions:
+Open **Octree / LOD visualization** in the sandbox HUD to toggle the local
+octree grid or color rendered splats by their current packed LOD. The default
+80/10/10 tiered radial focus follows the camera and uses the Store's automatic
+device-sized budget. Target selection runs in a module worker; bounded Store
+buffer updates remain on the main thread. Camera-driven transitions default to
+1 MiB and 16 changed leaves per frame; use
+`?lodUploadKiB=1024&lodCells=16` to tune those limits.
+
+Files addressed by URL belong in `sandbox/public/`; the file picker and
+drag-and-drop do not require copying the file into the repository. The loader
+accepts ASCII, binary little-endian, and binary big-endian scalar PLY vertex
+data. Matching `lidar_sim`, it performs these boundary conversions:
 
 - `scale_0..2`: `exp(logScale)`;
 - `opacity`: `sigmoid(opacityLogit)`;
 - `rot_0..3`: canonical PLY `wxyz` to normalized Three.js/renderer `xyzw`;
 - `f_dc_*` and channel-major `f_rest_*`: Gaussian-major SH coefficient vectors.
 
-## Profiling and raster controls
+The HUD reports CPU encoding time, Three.js compute-call count,
+requested/emitted intersection counts, capacity overflow, tile-stage rebuilds,
+`N_visible`, packing/LOD details, and Three.js-tracked GPU memory.
 
-`profileKernels: true` adds an asynchronous readback of emitted splats per tile: max,
+Append `?profile=kernels` to enable the heavier profiling mode. It requests GPU
+timestamp queries, opens **Kernel timings**, and splits the normally batched
+prepare/emit group into separate compute passes. Timestamp rows are available
+only when the browser and adapter expose `timestamp-query`; the HUD reports
+that limitation explicitly otherwise. The sandbox resolves both Three.js
+timestamp pools after every profiled frame.
+
+The same flag adds an asynchronous readback of emitted splats per tile: max,
 mean, median, p95, p99, and counts above 256, 512, 1024 and 2048. It also runs a
 profiling-only projection kernel that counts zero-pixel subpixel splats whose
 alpha-support AABB is at most one pixel in both dimensions but contains no
@@ -723,12 +750,15 @@ single-workgroup path. Heavier tiles are split into compact indirect tasks;
 each task processes a contiguous front-to-back range and writes partial color
 plus transmittance. A final pass combines those summaries in depth order with
 `C = C_front + T_front * C_back` and `T = T_front * T_back`. No intersections
-are discarded, and a Gaussian cannot be cut at a tile boundary. Set
-`rasterChunkSize` to another positive multiple of 256, or to `null` to disable
-exact chunking for an A/B measurement.
+are discarded, and a Gaussian cannot be cut at a tile boundary. Use
+`?rasterChunk=4096` to change the sandbox threshold or `?rasterChunk=0` to
+disable exact chunking for an A/B measurement. Chunk sizes must be positive
+multiples of 256.
 
-The separate `maxRasterizedSplatsPerTile` lossy raster sample cap remains
-disabled by default because capped sampling can reveal a moving tile pattern.
+The separate lossy raster sample cap remains disabled by default because
+capped sampling can reveal a moving tile pattern. Append `&tileCap=8192` (or
+another positive integer) to enable the experiment; `tileCap=0` explicitly
+disables it.
 Overflowing tiles are sampled at evenly spaced bin centers across their
 complete depth-ordered ranges instead of rendering a contiguous prefix.
 Intersection emission and radix sorting remain unchanged.
@@ -737,8 +767,14 @@ Subpixel sample culling is enabled by default. During projection, Gaussians
 whose alpha-support AABB is at most one pixel in both dimensions are tested
 against actual pixel centers. A Gaussian with no sample at or above the
 `1/255` alpha cutoff is removed before visible compaction, both radix sorts,
-intersection emission and rasterization. Pass
-`{ subpixelSampleCulling: false }` to disable it for A/B timing.
+intersection emission and rasterization. Set `?subpixelCull=0` in the sandbox
+to disable it for A/B timing.
+
+The memory delta is captured after a 30-frame warm-up. Diagnostic intersection
+readback runs asynchronously every 1.5 seconds; `?stats=0` disables that
+readback outside profiling mode. Append `?debug=0` to hide the HUD. The demo
+defaults to `dpr=1`; raising it to `dpr=2` quadruples the number of rasterized
+pixels and is an explicit quality/performance choice.
 
 Canonical 3DGS SH coefficients reconstruct sRGB values. The output is an `rgba16float` storage texture, for
 which WebGPU has no hardware sRGB sampling format. `GaussianPass` therefore keeps the physical texture raw and

@@ -14,6 +14,8 @@ import {
   StreamingLodPackingStrategy,
   TieredRadialLodPackingStrategy,
   type GaussianLodPackingStrategy,
+  type StreamingLodPackingOptions,
+  type StreamingLodTargetStats,
 } from "./lod-packing";
 import {
   RemainingCapacityBudgetStrategy,
@@ -53,9 +55,16 @@ export interface GaussianStoreOptions {
   budgetingStrategy?: GaussianStoreBudgetStrategy;
   /** Used by LOD entries without an individual override. */
   defaultPackingStrategy?: GaussianLodPackingStrategy;
+  /** Upload limits for the built-in streaming LOD strategy. */
+  defaultStreamingLod?: GaussianStoreDefaultLodOptions;
   /** Maximum packed Gaussian count. Defaults to the rendering device limit. */
   maxGaussians?: number | "auto";
 }
+
+export type GaussianStoreDefaultLodOptions = Omit<
+  StreamingLodPackingOptions,
+  "targetPlanner"
+>;
 
 /** The device limits that constrain every packed storage-buffer binding. */
 export interface GaussianStorePackLimits {
@@ -90,6 +99,15 @@ export interface GaussianStoreLodBatchResult {
 export interface GaussianStoreLodUpdate {
   readonly appliedBatches: number;
   readonly pending: boolean;
+  readonly clouds: readonly GaussianStoreCloudLodUpdate[];
+}
+
+export interface GaussianStoreCloudLodUpdate {
+  readonly cloud: GaussianCloud;
+  readonly focusDistance: number;
+  readonly applied: boolean;
+  readonly pending: boolean;
+  readonly targetStats: StreamingLodTargetStats;
 }
 
 export type GaussianStoreSlotRange = SlotRange;
@@ -168,6 +186,7 @@ export class GaussianStore {
   private readonly loader: GaussianDataLoader;
   readonly budgetingStrategy: GaussianStoreBudgetStrategy;
   readonly defaultPackingStrategy: GaussianLodPackingStrategy | null;
+  private readonly defaultStreamingLod: GaussianStoreDefaultLodOptions;
   readonly maxGaussiansOption: number | "auto";
   readonly packedShFormat = "rgb8e8" as const;
   /** Optional attributes indexed by the same gaussianIndex as the packed data. */
@@ -201,6 +220,7 @@ export class GaussianStore {
     this.budgetingStrategy =
       options.budgetingStrategy ?? new RemainingCapacityBudgetStrategy();
     this.defaultPackingStrategy = options.defaultPackingStrategy ?? null;
+    this.defaultStreamingLod = { ...options.defaultStreamingLod };
     this.maxGaussiansOption = validateMaxGaussians(
       options.maxGaussians ?? "auto",
     );
@@ -350,7 +370,7 @@ export class GaussianStore {
     const packingStrategy =
       options.packingStrategy ??
       this.defaultPackingStrategy ??
-      createDefaultPackingStrategy();
+      createDefaultPackingStrategy(this.defaultStreamingLod);
     this.entries.push({
       cloud,
       count: 0,
@@ -733,12 +753,14 @@ export class GaussianStore {
   updateLod(camera: Camera): GaussianStoreLodUpdate {
     this.assertUsable();
     if (this.packingInvalid || this.packedData === null) {
-      return { appliedBatches: 0, pending: false };
+      return { appliedBatches: 0, pending: false, clouds: [] };
     }
     camera.updateWorldMatrix(true, false);
     const focus = new Vector3();
+    const boundsCenter = new Vector3();
     let appliedBatches = 0;
     let pending = false;
+    const clouds: GaussianStoreCloudLodUpdate[] = [];
     for (const entry of this.entries) {
       const strategy = entry.packingStrategy;
       if (
@@ -764,12 +786,24 @@ export class GaussianStore {
         strategy.invalidateTarget();
         entry.lastLodFocus.copy(focus);
       }
-      if (!strategy.needsPack) continue;
-      const result = this.packLodBatch(entry.cloud);
-      if (result.applied) appliedBatches++;
-      pending ||= result.pending || strategy.needsPack;
+      let applied = false;
+      if (strategy.needsPack) {
+        const result = this.packLodBatch(entry.cloud);
+        applied = result.applied;
+        if (applied) appliedBatches++;
+      }
+      const cloudPending = strategy.needsPack;
+      pending ||= cloudPending;
+      entry.lod.octree.rootBounds.getCenter(boundsCenter);
+      clouds.push({
+        cloud: entry.cloud,
+        focusDistance: focus.distanceTo(boundsCenter),
+        applied,
+        pending: cloudPending,
+        targetStats: strategy.targetStats,
+      });
     }
-    return { appliedBatches, pending };
+    return { appliedBatches, pending, clouds };
   }
 
   /** Current packed attributes. pack() must have resolved all invalidations. */
@@ -1286,9 +1320,12 @@ function validateMaxGaussians(value: number | "auto"): number | "auto" {
   return value;
 }
 
-function createDefaultPackingStrategy(): StreamingLodPackingStrategy<TieredRadialLodPackingStrategy> {
+function createDefaultPackingStrategy(
+  options: GaussianStoreDefaultLodOptions,
+): StreamingLodPackingStrategy<TieredRadialLodPackingStrategy> {
   const target = new TieredRadialLodPackingStrategy();
   return new StreamingLodPackingStrategy(target, {
+    ...options,
     targetPlanner: new RadialLodWorkerPlanner(target),
   });
 }

@@ -66,6 +66,8 @@ export {
   type GaussianStoreAddOptions,
   type GaussianStoreLoadOptions,
   type GaussianStoreLodBatchResult,
+  type GaussianStoreCloudLodUpdate,
+  type GaussianStoreDefaultLodOptions,
   type GaussianStoreLodUpdate,
   type GaussianStoreOptions,
   type GaussianStorePackLimits,

@@ -7,12 +7,34 @@
   </head>
   <body>
     <main id="viewport"></main>
-    <aside id="hud">
-      <strong>3DGS WebGPU</strong>
+    <section id="hud">
+      <strong>3DGS WebGPU sandbox</strong>
       <span id="status">Starting WebGPU…</span>
-      <small>Orbit: drag · Zoom: wheel · Use ?ply=/model.ply</small>
-      <pre id="metrics"></pre>
-    </aside>
+      <button id="open-ply" type="button">Open PLY</button>
+      <input id="ply-file" type="file" accept=".ply" hidden />
+      <small>Orbit: drag · Zoom: wheel · Drop a canonical 3DGS PLY</small>
+      <details id="spatial-debug">
+        <summary>Octree / LOD visualization</summary>
+        <label>
+          <input id="show-octree" type="checkbox" />
+          Octree grid
+        </label>
+        <label>
+          <input id="color-splats-by-lod" type="checkbox" />
+          Color splats by LOD
+        </label>
+        <div class="lod-palette" aria-label="LOD color palette">
+          <span data-lod-color="0">LOD 0</span>
+          <span data-lod-color="1">LOD 1</span>
+          <span data-lod-color="2">LOD 2</span>
+        </div>
+      </details>
+      <pre id="metrics" aria-label="WebGPU diagnostics"></pre>
+      <details id="kernel-profile">
+        <summary>Kernel timings</summary>
+        <pre id="kernel-timings" aria-label="WebGPU kernel timings"></pre>
+      </details>
+    </section>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

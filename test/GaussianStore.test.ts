@@ -234,6 +234,22 @@ describe("GaussianStore", () => {
     );
   });
 
+  it("applies upload limits to the built-in streaming LOD strategy", () => {
+    const store = new GaussianStore({
+      defaultStreamingLod: {
+        maxUploadBytesPerPack: 4096,
+        maxChangedCellsPerPack: 3,
+      },
+    });
+
+    expect(() => store.addLod(singleLevelLod([0, 1, 2, 3]))).not.toThrow();
+    expect(() =>
+      new GaussianStore({
+        defaultStreamingLod: { maxChangedCellsPerPack: 0 },
+      }).addLod(singleLevelLod([0])),
+    ).toThrow(/positive integer/);
+  });
+
   it("can cap a cloud budget to a fraction of its full source", () => {
     const store = new GaussianStore({
       budgetingStrategy: new SourceFractionBudgetStrategy(0.5),
