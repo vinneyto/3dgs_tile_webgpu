@@ -41,6 +41,9 @@ export class DebugPanel {
   private targetStats: StreamingLodTargetStats | null = null;
   private kernelScrollActiveUntil = -Infinity;
   private unsubscribePassDebug: (() => void) | null = null;
+  private readonly handleKernelScroll = () => {
+    this.kernelScrollActiveUntil = performance.now() + KERNEL_SCROLL_IDLE_MS;
+  };
 
   constructor(
     private readonly renderer: WebGPURenderer,
@@ -52,14 +55,14 @@ export class DebugPanel {
   ) {
     this.element.hidden = !enabled;
     this.kernelElement.hidden = !enabled;
-    this.kernelElement.addEventListener(
-      "scroll",
-      () => {
-        this.kernelScrollActiveUntil =
-          performance.now() + KERNEL_SCROLL_IDLE_MS;
-      },
-      { passive: true },
-    );
+    this.kernelElement.addEventListener("scroll", this.handleKernelScroll, {
+      passive: true,
+    });
+  }
+
+  dispose(): void {
+    this.setPass(null);
+    this.kernelElement.removeEventListener("scroll", this.handleKernelScroll);
   }
 
   setPass(pass: null): void;

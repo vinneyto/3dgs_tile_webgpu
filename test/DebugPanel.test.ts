@@ -17,10 +17,11 @@ describe("DebugPanel", () => {
       }),
     };
     const element = fakeElement();
+    const kernelElement = fakeElement();
     const panel = new DebugPanel(
       {} as never,
       element,
-      fakeElement(),
+      kernelElement,
       null,
       false,
       false,
@@ -77,8 +78,12 @@ describe("DebugPanel", () => {
       packingFocusDistance: 4,
     });
 
-    panel.setPass(null);
+    panel.dispose();
     expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(kernelElement.removeEventListener).toHaveBeenCalledWith(
+      "scroll",
+      expect.any(Function),
+    );
   });
 });
 
@@ -86,5 +91,6 @@ function fakeElement(): HTMLElement {
   return {
     hidden: false,
     addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
   } as unknown as HTMLElement;
 }

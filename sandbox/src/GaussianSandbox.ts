@@ -37,6 +37,8 @@ export class GaussianSandbox {
   private pass: GaussianPass | null = null;
   private store: GaussianStore | null = null;
   private helperPass: ReturnType<typeof scenePass> | null = null;
+  private disposed = false;
+  private readonly handleResize = () => this.resize();
 
   private constructor(
     private readonly renderer: WebGPURenderer,
@@ -74,7 +76,7 @@ export class GaussianSandbox {
       }
       this.debugPanel.update(time, performance.now() - encodeStart);
     });
-    addEventListener("resize", () => this.resize());
+    addEventListener("resize", this.handleResize);
   }
 
   static async create(
@@ -125,6 +127,18 @@ export class GaussianSandbox {
     this.spatialDebug.setLodColoringEnabled(enabled);
   }
 
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.renderer.setAnimationLoop(null);
+    removeEventListener("resize", this.handleResize);
+    this.clearCloud();
+    this.debugPanel.dispose();
+    this.controls.dispose();
+    this.renderer.dispose();
+    this.renderer.domElement.remove();
+  }
+
   async loadUrl(url: string): Promise<void> {
     this.cloudStatus.loading(url);
     const store = this.createStore();
@@ -133,6 +147,10 @@ export class GaussianSandbox {
         name: `${url} Gaussian cloud`,
         lod: { levels: SANDBOX_LOD_LEVELS },
       });
+      if (this.disposed) {
+        store.dispose();
+        return;
+      }
       this.show(store, url, cloud);
     } catch (error) {
       store.dispose();
@@ -150,6 +168,10 @@ export class GaussianSandbox {
         data,
         `${file.name} Gaussian cloud`,
       );
+      if (this.disposed) {
+        store.dispose();
+        return;
+      }
       this.show(store, file.name, cloud);
     } catch (error) {
       store.dispose();

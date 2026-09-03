@@ -1,5 +1,6 @@
 import "./style.css";
 import { GaussianSandbox } from "./GaussianSandbox";
+import { SandboxUi } from "./SandboxUi";
 
 const viewport = document.querySelector<HTMLElement>("#viewport");
 const status = document.querySelector<HTMLElement>("#status");
@@ -37,36 +38,16 @@ const sandbox = await GaussianSandbox.create(
   metrics,
   kernelTimings,
 );
+const ui = new SandboxUi(sandbox, {
+  openButton,
+  fileInput,
+  octreeToggle,
+  lodColorToggle,
+});
 
-const applySpatialDebugState = () => {
-  sandbox.setOctreeHelperVisible(octreeToggle.checked);
-  sandbox.setLodColoringEnabled(lodColorToggle.checked);
-};
+import.meta.hot?.dispose(() => {
+  ui.dispose();
+  sandbox.dispose();
+});
 
-octreeToggle.addEventListener("change", applySpatialDebugState);
-lodColorToggle.addEventListener("change", applySpatialDebugState);
-
-applySpatialDebugState();
 await sandbox.loadUrl(parameters.get("ply") ?? "/sample.ply");
-
-openButton.addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", () => {
-  const file = fileInput.files?.[0];
-  if (file !== undefined) void sandbox.loadFile(file);
-  fileInput.value = "";
-});
-
-addEventListener("dragenter", (event) => {
-  event.preventDefault();
-  document.body.dataset.dragging = "true";
-});
-addEventListener("dragover", (event) => event.preventDefault());
-addEventListener("dragleave", (event) => {
-  if (event.relatedTarget === null) delete document.body.dataset.dragging;
-});
-addEventListener("drop", (event) => {
-  event.preventDefault();
-  delete document.body.dataset.dragging;
-  const file = event.dataTransfer?.files[0];
-  if (file !== undefined) void sandbox.loadFile(file);
-});
