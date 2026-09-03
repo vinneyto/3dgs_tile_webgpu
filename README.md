@@ -272,7 +272,8 @@ const mug = await store.load("mug.ply", {
 store.pack({ limits: device.limits });
 ```
 
-`GaussianLodPackingStrategy` is an interface with a `pack()` method.
+`GaussianLodPackingStrategy` is an interface with `setFromCamera()` and
+`pack()` methods.
 `MaximumLodPackingStrategy`, `RadialLodPackingStrategy`,
 `TieredRadialLodPackingStrategy`, and
 `DistanceAwareRadialLodPackingStrategy` are its stateless built-in
@@ -304,7 +305,7 @@ const cameraPacking = new DistanceAwareRadialLodPackingStrategy({
   levelDistance: 2,
 });
 
-cameraPacking.setCenter(cameraPositionInCloudLocalSpace);
+cameraPacking.setFromCamera(camera, cloud);
 cloud.invalidatePacking();
 store.pack({ limits: device.limits });
 ```
@@ -313,7 +314,10 @@ Large camera-driven changes can be spread over frames with a latest-target-wins
 wrapper. Its initial packing is immediate. Later calls transition whole leaf
 cells within both limits; calling `invalidateTarget()` again discards the
 unfinished target and diffs the actually applied packing against the newest
-one. A streaming instance is stateful and must belong to one cloud.
+one. A streaming instance is stateful and must belong to one cloud. Every
+packing strategy receives the render camera and the packed object's local
+space through `setFromCamera()`. Radial strategies derive a local-space focus;
+a frustum strategy can instead derive its view-projection transform.
 
 ```ts
 const radialPacking = new TieredRadialLodPackingStrategy();
@@ -324,8 +328,7 @@ const streamingPacking = new StreamingLodPackingStrategy(radialPacking, {
   targetPlanner: workerPlanner,
 });
 
-radialPacking.setCenter(cameraPositionInCloudLocalSpace);
-streamingPacking.invalidateTarget();
+streamingPacking.setFromCamera(camera, cloud);
 
 if (streamingPacking.needsPack) {
   store.packLodBatch(cloud);
@@ -395,7 +398,8 @@ ranges, so WebGPU uploads the packing delta instead of replacing every attribute
 buffer:
 
 ```ts
-tieredPacking.setCenter(nextLocalCenter);
+demoCamera.position.copy(nextCenterWorld);
+tieredPacking.setFromCamera(demoCamera, cloud);
 store.pack({ limits: device.limits });
 console.log(store.lastPackStats);
 // { fullRebuild: false, reusedSlots, writtenSlots, clearedSlots, ... }

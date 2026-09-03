@@ -40,6 +40,7 @@ export {
   RadialLodPackingStrategy,
   StreamingLodPackingStrategy,
   TieredRadialLodPackingStrategy,
+  isStreamingLodPackingStrategy,
   type DistanceAwareRadialLodPackingOptions,
   type GaussianLodPackingContext,
   type GaussianLodPackingStrategy,

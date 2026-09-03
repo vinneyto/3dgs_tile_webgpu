@@ -1,3 +1,5 @@
+import type { Camera, Object3D } from "three/webgpu";
+
 import type { GaussianLod, GaussianLodPacking } from "../GaussianLod";
 import { RGB8E8_SH_BYTES_PER_COEFFICIENT } from "../GaussianSh";
 import {
@@ -114,6 +116,11 @@ export class StreamingLodPackingStrategy<
         "Streaming LOD maxChangedCellsPerPack must be a positive integer",
       );
     }
+  }
+
+  setFromCamera(camera: Camera, localSpace: Object3D): this {
+    this.targetStrategy.setFromCamera(camera, localSpace);
+    return this.invalidateTarget();
   }
 
   /** Discard an unfinished target after changing the wrapped strategy. */
@@ -367,6 +374,13 @@ export class StreamingLodPackingStrategy<
       gaussianCount: this.appliedGaussianCount,
     };
   }
+}
+
+/** Preserve the default generic instead of narrowing an instanceof to `any`. */
+export function isStreamingLodPackingStrategy(
+  strategy: GaussianLodPackingStrategy,
+): strategy is StreamingLodPackingStrategy {
+  return strategy instanceof StreamingLodPackingStrategy;
 }
 
 function cellChange(

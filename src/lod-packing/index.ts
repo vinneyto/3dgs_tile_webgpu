@@ -18,6 +18,7 @@ export {
 export { RadialLodWorkerPlanner } from "./RadialLodWorkerPlanner";
 export {
   StreamingLodPackingStrategy,
+  isStreamingLodPackingStrategy,
   type StreamingLodCellTransition,
   type StreamingLodPlannedTarget,
   type StreamingLodPackingBatch,
