@@ -33,6 +33,7 @@ export class GaussianLodColorHelper {
   private baseColorNode: Node | null = null;
   private helperColorNode: Node | null = null;
   private boundBuffer: StorageBufferAttribute | null = null;
+  private readonly unsubscribeDebug: () => void;
   private active = false;
   private disposed = false;
 
@@ -56,6 +57,7 @@ export class GaussianLodColorHelper {
     this.colors = [...(options.colors ?? DEFAULT_COLORS)];
     this.tintStrength = tintStrength;
     this.lodLevelAttribute = pass.gaussianStore.enablePackedLodLevelAttribute();
+    this.unsubscribeDebug = pass.subscribeDebug(() => this.update());
     this.enabled = options.enabled ?? true;
   }
 
@@ -69,7 +71,7 @@ export class GaussianLodColorHelper {
     if (value) {
       this.baseColorNode = this.pass.rasterColorNode;
       this.active = true;
-      this.rebuildColorNode();
+      if (this.lodLevelAttribute.isAllocated) this.rebuildColorNode();
       return;
     }
     if (this.pass.rasterColorNode === this.helperColorNode) {
@@ -84,7 +86,7 @@ export class GaussianLodColorHelper {
   /** Refresh after store.pack(); only a replaced backing buffer rebuilds the node. */
   update(): void {
     this.assertUsable();
-    if (!this.active) return;
+    if (!this.active || !this.lodLevelAttribute.isAllocated) return;
     if (this.lodLevelAttribute.bufferAttribute !== this.boundBuffer) {
       this.rebuildColorNode();
     }
@@ -92,6 +94,7 @@ export class GaussianLodColorHelper {
 
   dispose(): void {
     if (this.disposed) return;
+    this.unsubscribeDebug();
     if (this.active && this.pass.rasterColorNode === this.helperColorNode) {
       this.pass.rasterColorNode = this.baseColorNode!;
     }

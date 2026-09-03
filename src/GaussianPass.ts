@@ -34,6 +34,7 @@ import type {
   AntialiasMode,
   DepthSortMode,
   GaussianPassDebugInfo,
+  GaussianPassDebugListener,
   GaussianPassOptions,
   GaussianPassResources,
   GaussianPassStats,
@@ -55,7 +56,6 @@ export class GaussianPass extends PassNode {
   readonly gaussianStore: GaussianStore;
   readonly depthSortMode: DepthSortMode;
   readonly antialiasMode: AntialiasMode;
-  readonly intersectionCapacity: number;
   readonly background: readonly [number, number, number, number];
   readonly outputDepth: boolean;
   readonly colorSpace: ColorSpace;
@@ -68,6 +68,9 @@ export class GaussianPass extends PassNode {
   readonly depthTexture: StorageTexture | null;
 
   private readonly ownerRenderer: WebGPURenderer;
+  private readonly requestedIntersectionCapacity: number | null;
+  private resolvedIntersectionCapacity = 0;
+  private readonly debugListeners = new Set<GaussianPassDebugListener>();
   private workingColorNode: Node | null = null;
   private pipeline: TiledGaussianPipeline | null = null;
   private pipelineLayoutVersion = -1;
@@ -100,20 +103,19 @@ export class GaussianPass extends PassNode {
       requestedRadixBackend,
       renderer.hasFeature("subgroups"),
     );
-    const gaussianData = gaussianStore.getPackedData();
-    const intersectionCapacity =
-      options.intersectionCapacity ?? gaussianData.count * 16;
-    if (!Number.isInteger(intersectionCapacity) || intersectionCapacity <= 0) {
+    const intersectionCapacity = options.intersectionCapacity ?? null;
+    if (
+      intersectionCapacity !== null &&
+      (!Number.isInteger(intersectionCapacity) || intersectionCapacity <= 0)
+    ) {
       throw new RangeError("intersectionCapacity must be a positive integer");
     }
-    if (intersectionCapacity > WORKGROUP_SIZE * 65_535) {
+    if (
+      intersectionCapacity !== null &&
+      intersectionCapacity > WORKGROUP_SIZE * 65_535
+    ) {
       throw new RangeError(
         "intersectionCapacity exceeds the one-dimensional indirect dispatch limit",
-      );
-    }
-    if (gaussianData.count > WORKGROUP_SIZE * 65_535) {
-      throw new RangeError(
-        "Gaussian count exceeds the one-dimensional projection dispatch limit",
       );
     }
     const maxRasterizedSplatsPerTile =
@@ -131,14 +133,17 @@ export class GaussianPass extends PassNode {
       options.rasterChunkSize === undefined
         ? DEFAULT_RASTER_CHUNK_SIZE
         : options.rasterChunkSize;
-    validateRasterChunkSize(rasterChunkSize, intersectionCapacity);
+    validateRasterChunkSize(
+      rasterChunkSize,
+      intersectionCapacity ?? WORKGROUP_SIZE * 65_535,
+    );
 
     this.name = "GaussianPass";
     this.ownerRenderer = renderer;
     this.gaussianStore = gaussianStore;
     this.depthSortMode = depthSortMode;
     this.antialiasMode = antialiasMode;
-    this.intersectionCapacity = intersectionCapacity;
+    this.requestedIntersectionCapacity = intersectionCapacity;
     this.background = options.background ?? [0, 0, 0, 0];
     this.outputDepth = options.outputDepth ?? false;
     this.colorSpace = options.colorSpace ?? SRGBColorSpace;
@@ -173,6 +178,13 @@ export class GaussianPass extends PassNode {
     } else {
       this.depthTexture = null;
     }
+  }
+
+  /** Resolved after the first render when omitted from GaussianPassOptions. */
+  get intersectionCapacity(): number {
+    return (
+      this.requestedIntersectionCapacity ?? this.resolvedIntersectionCapacity
+    );
   }
 
   override getTexture(name: string): Texture {
@@ -329,20 +341,24 @@ export class GaussianPass extends PassNode {
     ) {
       this.setSize(width, height);
     }
-    renderer.initRenderTarget(this.renderTarget);
-
     if (this.gaussianStore.needsPack) {
-      throw new Error(
-        "GaussianStore layout is invalidated; call store.pack({ limits: device.limits }) before rendering",
+      this.gaussianStore.pack({ limits: webGpuDeviceLimits(renderer) });
+    }
+    const lodUpdate = this.gaussianStore.updateLod(this.camera);
+    const data = this.gaussianStore.getPackedData();
+    if (this.requestedIntersectionCapacity === null) {
+      this.resolvedIntersectionCapacity = Math.min(
+        WORKGROUP_SIZE * 65_535,
+        Math.max(1, data.count * 16),
       );
     }
+    renderer.initRenderTarget(this.renderTarget);
 
     if (
       this.pipeline === null ||
       this.pipelineLayoutVersion !== this.gaussianStore.layoutVersion
     ) {
       this.pipeline?.dispose();
-      const data = this.gaussianStore.getPackedData();
       if (data.count > WORKGROUP_SIZE * 65_535) {
         throw new RangeError(
           "Gaussian count exceeds the one-dimensional projection dispatch limit",
@@ -382,7 +398,21 @@ export class GaussianPass extends PassNode {
       this.depthTexture,
     );
     this.pipeline.render();
+    if (this.debugListeners.size > 0) {
+      const snapshot = {
+        pass: this.getDebugInfo(),
+        storePack: this.gaussianStore.lastPackStats,
+        lod: lodUpdate,
+      };
+      for (const listener of this.debugListeners) listener(snapshot);
+    }
     return undefined;
+  }
+
+  /** Subscribe to allocation, LOD and CPU-side pass diagnostics. */
+  subscribeDebug(listener: GaussianPassDebugListener): () => void {
+    this.debugListeners.add(listener);
+    return () => this.debugListeners.delete(listener);
   }
 
   /** Three.js storage attributes produced by the renderer, available after the first frame. */
@@ -430,6 +460,7 @@ export class GaussianPass extends PassNode {
     this.disposed = true;
     this.pipeline?.dispose();
     this.pipeline = null;
+    this.debugListeners.clear();
     this.depthTexture?.dispose();
     super.dispose();
   }
@@ -477,6 +508,8 @@ export type {
   AntialiasMode,
   DepthSortMode,
   GaussianPassDebugInfo,
+  GaussianPassDebugListener,
+  GaussianPassDebugSnapshot,
   GaussianPassOptions,
   GaussianPassProfileStats,
   GaussianPassResources,
@@ -486,3 +519,13 @@ export type {
   RadixBackend,
   ResolvedRadixBackend,
 } from "./pipeline/types";
+
+function webGpuDeviceLimits(renderer: WebGPURenderer): GPUDevice["limits"] {
+  const backend = renderer.backend as unknown as { device?: GPUDevice };
+  if (backend.device === undefined) {
+    throw new Error(
+      "GaussianPass requires an initialized WebGPURenderer before the first render",
+    );
+  }
+  return backend.device.limits;
+}

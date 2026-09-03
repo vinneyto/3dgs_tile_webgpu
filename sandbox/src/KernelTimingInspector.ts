@@ -1,4 +1,8 @@
-import type { ComputeNode } from "three/webgpu";
+import {
+  TimestampQuery,
+  type ComputeNode,
+  type WebGPURenderer,
+} from "three/webgpu";
 import { RendererInspector } from "three/addons/inspector/RendererInspector.js";
 
 export interface KernelTiming {
@@ -31,17 +35,38 @@ interface ResolvedInspectorFrame {
   frameId: number;
   computes: InspectorComputeStats[];
   renders: InspectorRenderStats[];
+  resolvedCompute?: boolean;
+  resolvedRender?: boolean;
+}
+
+interface TimestampBackend {
+  trackTimestamp: boolean;
+  timestampQueryPool?: {
+    compute?: TimestampPool;
+    render?: TimestampPool;
+  };
+  hasTimestampQuery(uid: string): boolean;
+  getTimestamp(uid: string): number;
+}
+
+interface TimestampPool {
+  trackTimestamp: boolean;
 }
 
 /** Uses Three.js' inspector/timestamp integration without accessing GPUDevice. */
 export class KernelTimingInspector extends RendererInspector {
   latest: FrameKernelTimings | null = null;
+  private timestampResolution: Promise<void> | null = null;
+  private timestampReadback: Promise<unknown> | null = null;
+  private sampledFramePending = false;
+  private timestampErrorReported = false;
 
   constructor() {
     super();
-    // RendererInspector retains frame metadata for its UI. The sandbox only
-    // needs the latest samples, so keep this bounded and small.
-    Object.assign(this, { maxFrames: 8 });
+    // Frames rendered while a timestamp readback is pending are intentionally
+    // not sampled. Keep enough metadata for a slow GPU to finish the sampled
+    // frame without it being evicted by RendererInspector.
+    Object.assign(this, { maxFrames: 256 });
   }
 
   resolveFrame(value: unknown): void {
@@ -77,6 +102,97 @@ export class KernelTimingInspector extends RendererInspector {
     };
   }
 
+  /** Disable Three.js' continuous query allocation and sample on demand. */
+  enableControlledSampling(renderer: WebGPURenderer): void {
+    setTimestampTracking(renderer, false);
+  }
+
+  /** Enable timestamp allocation for one frame when no readback is pending. */
+  beginFrameSample(renderer: WebGPURenderer): boolean {
+    if (
+      this.timestampResolution !== null ||
+      this.timestampReadback !== null ||
+      this.sampledFramePending
+    ) {
+      setTimestampTracking(renderer, false);
+      return false;
+    }
+    this.sampledFramePending = true;
+    setTimestampTracking(renderer, true);
+    return true;
+  }
+
+  /** Stop allocation and drain both pools as soon as frame encoding completes. */
+  endFrameSample(renderer: WebGPURenderer): void {
+    if (!this.sampledFramePending || this.timestampReadback !== null) {
+      setTimestampTracking(renderer, false);
+      return;
+    }
+    // The renderer is already initialized, so both calls synchronously enter
+    // Three.js' pools and reset their cursors before waiting for mapAsync().
+    setTimestampTracking(renderer, true);
+    this.timestampReadback = Promise.all([
+      renderer.resolveTimestampsAsync(TimestampQuery.COMPUTE),
+      renderer.resolveTimestampsAsync(TimestampQuery.RENDER),
+    ]);
+    setTimestampTracking(renderer, false);
+  }
+
+  /**
+   * RendererInspector calls this from finish(), after all queries for the
+   * sampled frame have been registered. Pause new query allocation until the
+   * GPU readback completes; Three.js cannot start another resolve while the
+   * query pool has a pending mapAsync().
+   */
+  resolveTimestamp(): Promise<void> {
+    if (this.timestampResolution !== null) return this.timestampResolution;
+    if (!this.sampledFramePending) return Promise.resolve();
+    this.sampledFramePending = false;
+    const renderer = this.getRenderer() as WebGPURenderer | null;
+    if (renderer === null) return Promise.resolve();
+    const backend = timestampBackend(renderer);
+    const frames = (this as unknown as { frames: ResolvedInspectorFrame[] })
+      .frames;
+    const frame = frames.at(-1);
+    if (frame === undefined) return Promise.resolve();
+
+    const readback = this.timestampReadback ?? Promise.resolve();
+    this.timestampResolution = readback
+      .then(() => this.resolveSampledFrame(frame, backend))
+      .catch((error: unknown) => this.reportTimestampError(error))
+      .finally(() => {
+        setTimestampTracking(renderer, false);
+        this.timestampReadback = null;
+        this.timestampResolution = null;
+      });
+    return this.timestampResolution;
+  }
+
+  private resolveSampledFrame(
+    frame: ResolvedInspectorFrame,
+    backend: TimestampBackend,
+  ): void {
+    for (const stats of frame.computes) {
+      stats.gpu = backend.hasTimestampQuery(stats.uid)
+        ? backend.getTimestamp(stats.uid)
+        : 0;
+    }
+    for (const stats of frame.renders) {
+      stats.gpu = backend.hasTimestampQuery(stats.uid)
+        ? backend.getTimestamp(stats.uid)
+        : 0;
+    }
+    frame.resolvedCompute = true;
+    frame.resolvedRender = true;
+    this.resolveFrame(frame);
+  }
+
+  private reportTimestampError(error: unknown): void {
+    if (this.timestampErrorReported) return;
+    this.timestampErrorReported = true;
+    console.error("Unable to resolve WebGPU timestamps", error);
+  }
+
   private releaseTimestampSamples(frame: ResolvedInspectorFrame): void {
     const renderer = this.getRenderer() as unknown as {
       backend?: {
@@ -94,6 +210,24 @@ export class KernelTimingInspector extends RendererInspector {
     for (const stats of frame.renders) {
       pools.render?.timestamps.delete(stats.uid);
     }
+  }
+}
+
+function timestampBackend(renderer: WebGPURenderer): TimestampBackend {
+  return renderer.backend as unknown as TimestampBackend;
+}
+
+function setTimestampTracking(
+  renderer: WebGPURenderer,
+  enabled: boolean,
+): void {
+  const backend = timestampBackend(renderer);
+  backend.trackTimestamp = enabled;
+  if (backend.timestampQueryPool?.compute !== undefined) {
+    backend.timestampQueryPool.compute.trackTimestamp = enabled;
+  }
+  if (backend.timestampQueryPool?.render !== undefined) {
+    backend.timestampQueryPool.render.trackTimestamp = enabled;
   }
 }
 

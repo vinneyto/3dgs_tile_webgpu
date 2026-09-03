@@ -213,6 +213,43 @@ describe("GaussianStore", () => {
     expect(cloud.gaussianCount).toBe(2);
   });
 
+  it("supports an explicit Gaussian cap below the device limit", () => {
+    const strategy = new RadialLodPackingStrategy({ lodLevel: "finest" });
+    const store = new GaussianStore({
+      maxGaussians: 3,
+      defaultPackingStrategy: strategy,
+    });
+    const cloud = store.addLod(singleLevelLod([0, 1, 2, 3, 4, 5]));
+
+    store.pack({ limits: limitsForGaussianCapacity(6, 0) });
+
+    expect(store.maxGaussiansOption).toBe(3);
+    expect(store.maxGaussians).toBe(3);
+    expect(cloud.gaussianCount).toBe(3);
+  });
+
+  it("validates the configured Gaussian cap", () => {
+    expect(() => new GaussianStore({ maxGaussians: 0 })).toThrow(
+      /maxGaussians/,
+    );
+  });
+
+  it("applies upload limits to the built-in streaming LOD strategy", () => {
+    const store = new GaussianStore({
+      defaultStreamingLod: {
+        maxUploadBytesPerPack: 4096,
+        maxChangedCellsPerPack: 3,
+      },
+    });
+
+    expect(() => store.addLod(singleLevelLod([0, 1, 2, 3]))).not.toThrow();
+    expect(() =>
+      new GaussianStore({
+        defaultStreamingLod: { maxChangedCellsPerPack: 0 },
+      }).addLod(singleLevelLod([0])),
+    ).toThrow(/positive integer/);
+  });
+
   it("can cap a cloud budget to a fraction of its full source", () => {
     const store = new GaussianStore({
       budgetingStrategy: new SourceFractionBudgetStrategy(0.5),

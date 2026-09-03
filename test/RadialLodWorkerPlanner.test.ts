@@ -31,10 +31,11 @@ describe("RadialLodWorkerPlanner", () => {
     });
     const planner = new RadialLodWorkerPlanner(targetStrategy);
     planner.initialize(lod);
-    const worker = FakeWorker.instances[0]!;
+    expect(FakeWorker.instances).toHaveLength(0);
     const context = { lod, maxGaussians: 4 };
 
     planner.request(context);
+    const worker = FakeWorker.instances[0]!;
     targetStrategy.setCenter(new Vector3(1, 0, 0));
     planner.request(context);
     targetStrategy.setCenter(new Vector3(2, 0, 0));

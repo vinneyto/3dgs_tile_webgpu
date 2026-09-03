@@ -1,7 +1,80 @@
-import { describe, expect, it } from "vitest";
+import { TimestampQuery } from "three/webgpu";
+import { describe, expect, it, vi } from "vitest";
 import { KernelTimingInspector } from "../sandbox/src/KernelTimingInspector";
 
 describe("KernelTimingInspector", () => {
+  it("pauses query allocation until both timestamp pools resolve", async () => {
+    const inspector = new KernelTimingInspector();
+    let finishCompute!: () => void;
+    const computePending = new Promise<void>((resolve) => {
+      finishCompute = resolve;
+    });
+    const backend = {
+      trackTimestamp: true,
+      timestampQueryPool: {
+        compute: { trackTimestamp: true, timestamps: new Map() },
+        render: { trackTimestamp: true, timestamps: new Map() },
+      },
+      hasTimestampQuery: vi.fn(() => true),
+      getTimestamp: vi.fn(() => 1.25),
+    };
+    const resolveTimestampsAsync = vi.fn((type: string) =>
+      type === TimestampQuery.COMPUTE ? computePending : Promise.resolve(),
+    );
+    const renderer = { backend, resolveTimestampsAsync } as never;
+    inspector.setRenderer(renderer);
+    inspector.enableControlledSampling(renderer);
+    expect(backend.trackTimestamp).toBe(false);
+    expect(backend.timestampQueryPool.compute.trackTimestamp).toBe(false);
+    expect(inspector.beginFrameSample(renderer)).toBe(true);
+    expect(backend.trackTimestamp).toBe(true);
+    expect(backend.timestampQueryPool.compute.trackTimestamp).toBe(true);
+    inspector.endFrameSample(renderer);
+    expect(backend.trackTimestamp).toBe(false);
+    expect(backend.timestampQueryPool.compute.trackTimestamp).toBe(false);
+    Object.assign(inspector, {
+      frames: [
+        {
+          frameId: 1,
+          computes: [
+            {
+              uid: "c:kernel:f1",
+              computeNode: { name: "3DGS projection WGSL" },
+              cpu: 0.1,
+              gpu: 0,
+            },
+          ],
+          renders: [{ uid: "r:frame:f1", gpu: 0 }],
+        },
+      ],
+    });
+
+    const pending = inspector.resolveTimestamp();
+
+    expect(resolveTimestampsAsync.mock.calls).toEqual([
+      [TimestampQuery.COMPUTE],
+      [TimestampQuery.RENDER],
+    ]);
+    expect(backend.trackTimestamp).toBe(false);
+    expect(inspector.resolveTimestamp()).toBe(pending);
+    expect(resolveTimestampsAsync).toHaveBeenCalledTimes(2);
+    expect(inspector.beginFrameSample(renderer)).toBe(false);
+    expect(backend.trackTimestamp).toBe(false);
+
+    finishCompute();
+    await pending;
+
+    expect(backend.trackTimestamp).toBe(false);
+    expect(inspector.beginFrameSample(renderer)).toBe(true);
+    inspector.endFrameSample(renderer);
+    expect(inspector.latest).toMatchObject({
+      frameId: 1,
+      computeMs: 1.25,
+      renderMs: 1.25,
+      kernels: [{ name: "projection", gpuMs: 1.25 }],
+    });
+  });
+
   it("records every frame in explicit profiling mode", () => {
     const inspector = new KernelTimingInspector();
     inspector.setRenderer({

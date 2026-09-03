@@ -35,7 +35,7 @@ interface LatestResult {
  * is retained.
  */
 export class RadialLodWorkerPlanner implements StreamingLodTargetPlanner {
-  private readonly worker: Worker;
+  private worker: Worker | null = null;
   private readonly boundsCenter = new Vector3();
   private lod: GaussianLod | null = null;
   private revision = 0;
@@ -53,12 +53,9 @@ export class RadialLodWorkerPlanner implements StreamingLodTargetPlanner {
     readonly targetStrategy:
       DistanceAwareRadialLodPackingStrategy | TieredRadialLodPackingStrategy,
   ) {
-    this.worker = new Worker(new URL("./RadialLodWorker.ts", import.meta.url), {
-      type: "module",
-      name: "3dgs-radial-lod",
-    });
-    this.worker.addEventListener("message", this.handleMessage);
-    this.worker.addEventListener("error", this.handleError);
+    // The worker is created only when the first camera-driven target is
+    // requested. Constructing a Store therefore remains CPU-only and works in
+    // SSR/test environments where Worker is unavailable.
   }
 
   get pending(): boolean {
@@ -82,6 +79,18 @@ export class RadialLodWorkerPlanner implements StreamingLodTargetPlanner {
       );
     }
     this.lod = lod;
+  }
+
+  private initializeWorker(): void {
+    if (this.worker !== null) return;
+    const lod = this.lod;
+    if (lod === null) throw new Error("Radial LOD worker has no GaussianLod");
+    this.worker = new Worker(new URL("./RadialLodWorker.ts", import.meta.url), {
+      type: "module",
+      name: "3dgs-radial-lod",
+    });
+    this.worker.addEventListener("message", this.handleMessage);
+    this.worker.addEventListener("error", this.handleError);
     const data = createRadialLodPlanData(lod);
     const buffers = Array.from({ length: OUTPUT_POOL_SIZE }, () =>
       createOutputBufferSet(data.leafNodeIds.length),
@@ -102,6 +111,7 @@ export class RadialLodWorkerPlanner implements StreamingLodTargetPlanner {
   request(context: GaussianLodPackingContext): void {
     this.assertUsable();
     this.initialize(context.lod);
+    this.initializeWorker();
     this.releaseLatestResult();
     const focus =
       this.targetStrategy.center instanceof Vector3
@@ -181,9 +191,10 @@ export class RadialLodWorkerPlanner implements StreamingLodTargetPlanner {
     this.disposed = true;
     this.latestResult = null;
     this.queuedRequest = null;
-    this.worker.removeEventListener("message", this.handleMessage);
-    this.worker.removeEventListener("error", this.handleError);
-    this.worker.terminate();
+    this.worker?.removeEventListener("message", this.handleMessage);
+    this.worker?.removeEventListener("error", this.handleError);
+    this.worker?.terminate();
+    this.worker = null;
   }
 
   private readonly handleMessage = (
@@ -217,7 +228,7 @@ export class RadialLodWorkerPlanner implements StreamingLodTargetPlanner {
     this.busy = true;
     this.activeMaxGaussians = request.maxGaussians;
     this.activeStarted = performance.now();
-    this.worker.postMessage(request.message);
+    this.worker!.postMessage(request.message);
   }
 
   private releaseLatestResult(): void {
@@ -230,7 +241,7 @@ export class RadialLodWorkerPlanner implements StreamingLodTargetPlanner {
 
   private recycle(buffer: RadialLodWorkerBufferSet): void {
     if (this.disposed) return;
-    this.worker.postMessage({ type: "recycle", buffer }, [
+    this.worker!.postMessage({ type: "recycle", buffer }, [
       buffer.nodeIds,
       buffer.lodLevels,
     ]);

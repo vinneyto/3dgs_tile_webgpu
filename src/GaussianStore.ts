@@ -1,4 +1,4 @@
-import { StorageBufferAttribute } from "three/webgpu";
+import { Camera, StorageBufferAttribute, Vector3 } from "three/webgpu";
 
 import { CanonicalGaussianPlyLoader } from "./CanonicalGaussianPlyLoader";
 import { GaussianCloud } from "./GaussianCloud";
@@ -10,9 +10,12 @@ import {
   type GaussianLodPacking,
 } from "./GaussianLod";
 import {
-  RadialLodPackingStrategy,
+  RadialLodWorkerPlanner,
   StreamingLodPackingStrategy,
+  TieredRadialLodPackingStrategy,
   type GaussianLodPackingStrategy,
+  type StreamingLodPackingOptions,
+  type StreamingLodTargetStats,
 } from "./lod-packing";
 import {
   RemainingCapacityBudgetStrategy,
@@ -52,7 +55,16 @@ export interface GaussianStoreOptions {
   budgetingStrategy?: GaussianStoreBudgetStrategy;
   /** Used by LOD entries without an individual override. */
   defaultPackingStrategy?: GaussianLodPackingStrategy;
+  /** Upload limits for the built-in streaming LOD strategy. */
+  defaultStreamingLod?: GaussianStoreDefaultLodOptions;
+  /** Maximum packed Gaussian count. Defaults to the rendering device limit. */
+  maxGaussians?: number | "auto";
 }
+
+export type GaussianStoreDefaultLodOptions = Omit<
+  StreamingLodPackingOptions,
+  "targetPlanner"
+>;
 
 /** The device limits that constrain every packed storage-buffer binding. */
 export interface GaussianStorePackLimits {
@@ -82,6 +94,20 @@ export interface GaussianStorePackStats {
 export interface GaussianStoreLodBatchResult {
   readonly applied: boolean;
   readonly pending: boolean;
+}
+
+export interface GaussianStoreLodUpdate {
+  readonly appliedBatches: number;
+  readonly pending: boolean;
+  readonly clouds: readonly GaussianStoreCloudLodUpdate[];
+}
+
+export interface GaussianStoreCloudLodUpdate {
+  readonly cloud: GaussianCloud;
+  readonly focusDistance: number;
+  readonly applied: boolean;
+  readonly pending: boolean;
+  readonly targetStats: StreamingLodTargetStats;
 }
 
 export type GaussianStoreSlotRange = SlotRange;
@@ -119,6 +145,8 @@ interface StoreEntry {
   readonly sourceDegree: 0 | 1 | 2 | 3;
   priority: number;
   readonly packingStrategy: GaussianLodPackingStrategy | null;
+  readonly ownsPackingStrategy: boolean;
+  readonly lastLodFocus: Vector3;
   source: GaussianData | null;
   ownsSource: boolean;
   lod: GaussianLod | null;
@@ -157,7 +185,9 @@ const MAX_EXACT_FLOAT_INTEGER = 16_777_216;
 export class GaussianStore {
   private readonly loader: GaussianDataLoader;
   readonly budgetingStrategy: GaussianStoreBudgetStrategy;
-  readonly defaultPackingStrategy: GaussianLodPackingStrategy;
+  readonly defaultPackingStrategy: GaussianLodPackingStrategy | null;
+  private readonly defaultStreamingLod: GaussianStoreDefaultLodOptions;
+  readonly maxGaussiansOption: number | "auto";
   readonly packedShFormat = "rgb8e8" as const;
   /** Optional attributes indexed by the same gaussianIndex as the packed data. */
   readonly attributes = new GaussianStoreAttributes();
@@ -189,8 +219,11 @@ export class GaussianStore {
     this.loader = options.loader ?? new CanonicalGaussianPlyLoader();
     this.budgetingStrategy =
       options.budgetingStrategy ?? new RemainingCapacityBudgetStrategy();
-    this.defaultPackingStrategy =
-      options.defaultPackingStrategy ?? new RadialLodPackingStrategy();
+    this.defaultPackingStrategy = options.defaultPackingStrategy ?? null;
+    this.defaultStreamingLod = { ...options.defaultStreamingLod };
+    this.maxGaussiansOption = validateMaxGaussians(
+      options.maxGaussians ?? "auto",
+    );
   }
 
   get maxGaussians(): number {
@@ -303,6 +336,8 @@ export class GaussianStore {
       sourceDegree: data.shDegree,
       priority,
       packingStrategy: null,
+      ownsPackingStrategy: false,
+      lastLodFocus: new Vector3(Number.NaN, Number.NaN, Number.NaN),
       source: data,
       ownsSource: options.ownsData ?? false,
       lod: null,
@@ -332,13 +367,21 @@ export class GaussianStore {
       null,
       priority,
     );
+    const packingStrategy =
+      options.packingStrategy ??
+      this.defaultPackingStrategy ??
+      createDefaultPackingStrategy(this.defaultStreamingLod);
     this.entries.push({
       cloud,
       count: 0,
       sourceGaussianCount: lod.octree.data.count,
       sourceDegree: lod.octree.data.shDegree,
       priority,
-      packingStrategy: options.packingStrategy ?? null,
+      packingStrategy,
+      ownsPackingStrategy:
+        options.packingStrategy === undefined &&
+        this.defaultPackingStrategy === null,
+      lastLodFocus: new Vector3(Number.NaN, Number.NaN, Number.NaN),
       source: null,
       ownsSource: false,
       lod,
@@ -362,6 +405,8 @@ export class GaussianStore {
       entry.source.dispose();
     }
     if (entry?.lod !== null && entry?.ownsLod === true) entry.lod.dispose();
+    if (entry?.ownsPackingStrategy === true)
+      disposePackingStrategy(entry.packingStrategy);
     cloud.removeFromParent();
     this.invalidatePacking();
   }
@@ -372,7 +417,11 @@ export class GaussianStore {
     if (this.entries.length === 0) {
       throw new Error("GaussianStore must contain at least one GaussianCloud");
     }
-    const capacity = capacityFromLimits(limits, this.shDegree);
+    const deviceCapacity = capacityFromLimits(limits, this.shDegree);
+    const capacity =
+      this.maxGaussiansOption === "auto"
+        ? deviceCapacity
+        : Math.min(deviceCapacity, this.maxGaussiansOption);
     const planningStarted = performance.now();
     const planned = this.planPackings(capacity);
     const planningMs = performance.now() - planningStarted;
@@ -435,7 +484,7 @@ export class GaussianStore {
     ) {
       throw new Error("GaussianCloud is not an initialized LOD entry");
     }
-    const strategy = entry.packingStrategy ?? this.defaultPackingStrategy;
+    const strategy = entry.packingStrategy!;
     if (!(strategy instanceof StreamingLodPackingStrategy)) {
       throw new Error(
         "GaussianCloud must use StreamingLodPackingStrategy for incremental LOD batches",
@@ -643,7 +692,7 @@ export class GaussianStore {
         continue;
       }
 
-      const strategy = entry.packingStrategy ?? this.defaultPackingStrategy;
+      const strategy = entry.packingStrategy!;
       const selectionChanged =
         entry.packingDirty ||
         entry.allocatedBudget !== allocatedBudget ||
@@ -697,6 +746,66 @@ export class GaussianStore {
     this.packingInvalid = true;
   }
 
+  /**
+   * Update camera-relative built-in streaming LODs and apply at most one
+   * bounded upload batch per cloud. GaussianPass calls this automatically.
+   */
+  updateLod(camera: Camera): GaussianStoreLodUpdate {
+    this.assertUsable();
+    if (this.packingInvalid || this.packedData === null) {
+      return { appliedBatches: 0, pending: false, clouds: [] };
+    }
+    camera.updateWorldMatrix(true, false);
+    const focus = new Vector3();
+    const boundsCenter = new Vector3();
+    let appliedBatches = 0;
+    let pending = false;
+    const clouds: GaussianStoreCloudLodUpdate[] = [];
+    for (const entry of this.entries) {
+      const strategy = entry.packingStrategy;
+      if (
+        entry.lod === null ||
+        !(strategy instanceof StreamingLodPackingStrategy) ||
+        !("setCenter" in strategy.targetStrategy) ||
+        typeof strategy.targetStrategy.setCenter !== "function"
+      ) {
+        continue;
+      }
+      entry.cloud.updateWorldMatrix(true, false);
+      camera.getWorldPosition(focus);
+      entry.cloud.worldToLocal(focus);
+      const rootRadius =
+        entry.lod.octree.rootBounds.getSize(new Vector3()).length() * 0.5;
+      const updateDistance = Math.max(0.05, rootRadius * 0.025);
+      if (
+        !Number.isFinite(entry.lastLodFocus.x) ||
+        focus.distanceToSquared(entry.lastLodFocus) >=
+          updateDistance * updateDistance
+      ) {
+        strategy.targetStrategy.setCenter(focus);
+        strategy.invalidateTarget();
+        entry.lastLodFocus.copy(focus);
+      }
+      let applied = false;
+      if (strategy.needsPack) {
+        const result = this.packLodBatch(entry.cloud);
+        applied = result.applied;
+        if (applied) appliedBatches++;
+      }
+      const cloudPending = strategy.needsPack;
+      pending ||= cloudPending;
+      entry.lod.octree.rootBounds.getCenter(boundsCenter);
+      clouds.push({
+        cloud: entry.cloud,
+        focusDistance: focus.distanceTo(boundsCenter),
+        applied,
+        pending: cloudPending,
+        targetStats: strategy.targetStats,
+      });
+    }
+    return { appliedBatches, pending, clouds };
+  }
+
   /** Current packed attributes. pack() must have resolved all invalidations. */
   getPackedData(): GaussianData {
     this.assertUsable();
@@ -717,6 +826,8 @@ export class GaussianStore {
     for (const entry of this.entries) {
       if (entry.source !== null && entry.ownsSource) entry.source.dispose();
       if (entry.lod !== null && entry.ownsLod) entry.lod.dispose();
+      if (entry.ownsPackingStrategy)
+        disposePackingStrategy(entry.packingStrategy);
       entry.cloud.removeFromParent();
     }
     this.entries.length = 0;
@@ -1198,6 +1309,37 @@ function validatePackingPriority(value: number): number {
     );
   }
   return value;
+}
+
+function validateMaxGaussians(value: number | "auto"): number | "auto" {
+  if (value !== "auto" && (!Number.isSafeInteger(value) || value <= 0)) {
+    throw new RangeError(
+      'GaussianStore maxGaussians must be "auto" or a positive safe integer',
+    );
+  }
+  return value;
+}
+
+function createDefaultPackingStrategy(
+  options: GaussianStoreDefaultLodOptions,
+): StreamingLodPackingStrategy<TieredRadialLodPackingStrategy> {
+  const target = new TieredRadialLodPackingStrategy();
+  return new StreamingLodPackingStrategy(target, {
+    ...options,
+    targetPlanner: new RadialLodWorkerPlanner(target),
+  });
+}
+
+function disposePackingStrategy(
+  strategy: GaussianLodPackingStrategy | null,
+): void {
+  if (
+    strategy !== null &&
+    "dispose" in strategy &&
+    typeof strategy.dispose === "function"
+  ) {
+    strategy.dispose();
+  }
 }
 
 function validateBudgetAllocation(
