@@ -13,7 +13,8 @@ project Gaussians and test tile/ellipse overlap
 → emit K intersections in depth order
 → stable radix-sort K intersections by tile ID only
 → build per-tile ranges
-→ front-to-back tile rasterization
+→ direct rasterization of normal tiles
+→ exact parallel chunks plus ordered composition for overloaded tiles
 ```
 
 `K` never has to cross to JavaScript. Compute nodes whose useful work is proportional to `K` are launched with
@@ -56,6 +57,7 @@ src/
 ├── nodes/GaussianContextNodes.ts   projection/raster TSL accessors and slot contracts
 ├── kernels/                        explicit WGSL strings used by wgslFn
 │   ├── projectionHelpers.ts        covariance, SH and tile-count helpers
+│   ├── rasterChunks.ts             overflow chunk scheduling
 │   ├── rasterHelpers.ts            Morton and workgroup-load helpers
 │   ├── scan.ts                     hierarchical exclusive scan
 │   ├── visibility.ts               visible compaction and depth ordering
@@ -122,6 +124,7 @@ const pass = gaussianPass(renderer, camera, store, {
   antialiasMode: "compensated",
   radixBackend: "auto",
   intersectionCapacity: 4_000_000,
+  rasterChunkSize: 8_192,
   background: [0, 0, 0, 0],
   outputDepth: true,
 });
@@ -675,8 +678,19 @@ diagnostic readbacks, so its FPS is not the final production-performance number.
 
 The tile profile also reports total and worst-tile raster batches (256 splats
 per batch), plus counterfactual dropped-intersection, affected-tile and batch
-counts for caps of 2048, 4096 and 8192. The raster sample cap is disabled by
-default because capped sampling can reveal a moving tile pattern. Append
+counts for caps of 2048, 4096 and 8192. Exact chunked rasterization is enabled
+by default with `rasterChunkSize: 8192`. Tiles within that limit retain the
+single-workgroup path. Heavier tiles are split into compact indirect tasks;
+each task processes a contiguous front-to-back range and writes partial color
+plus transmittance. A final pass combines those summaries in depth order with
+`C = C_front + T_front * C_back` and `T = T_front * T_back`. No intersections
+are discarded, and a Gaussian cannot be cut at a tile boundary. Use
+`?rasterChunk=4096` to change the sandbox threshold or `?rasterChunk=0` to
+disable exact chunking for an A/B measurement. Chunk sizes must be positive
+multiples of 256.
+
+The separate lossy raster sample cap remains disabled by default because
+capped sampling can reveal a moving tile pattern. Append
 `&tileCap=8192` (or another positive integer) to enable the experiment;
 `tileCap=0` explicitly disables it. Overflowing tiles are sampled at evenly
 spaced bin centers across their complete depth-ordered ranges instead of

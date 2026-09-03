@@ -263,6 +263,7 @@ export class GaussianSandbox {
       profileKernels:
         new URLSearchParams(location.search).get("profile") === "kernels",
       maxRasterizedSplatsPerTile: readTileCap(),
+      rasterChunkSize: readRasterChunkSize(),
       subpixelSampleCulling:
         new URLSearchParams(location.search).get("subpixelCull") !== "0",
       radixBackend: readRadixBackend(),
@@ -476,6 +477,17 @@ function readTileCap(): number | null | undefined {
     throw new RangeError("tileCap must be a positive integer or 0");
   }
   return cap;
+}
+
+function readRasterChunkSize(): number | null | undefined {
+  const raw = new URLSearchParams(location.search).get("rasterChunk");
+  if (raw === null) return undefined;
+  if (raw === "0") return null;
+  const size = Number(raw);
+  if (!Number.isSafeInteger(size) || size <= 0) {
+    throw new RangeError("rasterChunk must be a positive integer or 0");
+  }
+  return size;
 }
 
 function webGpuDeviceLimits(renderer: WebGPURenderer): GPUSupportedLimits {

@@ -180,6 +180,12 @@ export class DebugPanel {
       debug === null
         ? "subpixel cull  —"
         : `subpixel cull  ${debug.subpixelSampleCulling ? "on" : "OFF"} · ?subpixelCull=0 disables it`;
+    const rasterChunkLine =
+      debug === null
+        ? "raster chunks  —"
+        : debug.rasterChunkSize === null
+          ? "raster chunks  OFF · ?rasterChunk=8192 enables it"
+          : `raster chunks  exact above ${formatInteger(debug.rasterChunkSize)} splats · ?rasterChunk=0 disables it`;
     const packingLines = this.packStatsLines();
     const profileLines = this.profileStatsLines(
       profileKernels,
@@ -197,6 +203,7 @@ export class DebugPanel {
       pipelineLine,
       stagesLine,
       subpixelCullLine,
+      rasterChunkLine,
       ...profileLines,
       "",
       ...packingLines,

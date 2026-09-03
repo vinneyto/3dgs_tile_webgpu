@@ -23,8 +23,12 @@ import {
   createDefaultGaussianNodeSlots,
   type GaussianNodeSlots,
 } from "./nodes/GaussianContextNodes";
+import { validateRasterChunkSize } from "./kernels/rasterChunks";
 import { TiledGaussianPipeline } from "./pipeline/TiledGaussianPipeline";
-import { WORKGROUP_SIZE } from "./pipeline/constants";
+import {
+  DEFAULT_RASTER_CHUNK_SIZE,
+  WORKGROUP_SIZE,
+} from "./pipeline/constants";
 import { resolveRadixBackend } from "./pipeline/radixBackend";
 import type {
   AntialiasMode,
@@ -57,6 +61,7 @@ export class GaussianPass extends PassNode {
   readonly colorSpace: ColorSpace;
   readonly profileKernels: boolean;
   readonly maxRasterizedSplatsPerTile: number | null;
+  readonly rasterChunkSize: number | null;
   readonly subpixelSampleCulling: boolean;
   readonly radixBackend: ResolvedRadixBackend;
   readonly colorTexture: StorageTexture;
@@ -122,6 +127,11 @@ export class GaussianPass extends PassNode {
         "maxRasterizedSplatsPerTile must be a positive integer",
       );
     }
+    const rasterChunkSize =
+      options.rasterChunkSize === undefined
+        ? DEFAULT_RASTER_CHUNK_SIZE
+        : options.rasterChunkSize;
+    validateRasterChunkSize(rasterChunkSize, intersectionCapacity);
 
     this.name = "GaussianPass";
     this.ownerRenderer = renderer;
@@ -134,6 +144,7 @@ export class GaussianPass extends PassNode {
     this.colorSpace = options.colorSpace ?? SRGBColorSpace;
     this.profileKernels = options.profileKernels ?? false;
     this.maxRasterizedSplatsPerTile = maxRasterizedSplatsPerTile;
+    this.rasterChunkSize = rasterChunkSize;
     this.subpixelSampleCulling = options.subpixelSampleCulling ?? true;
     this.radixBackend = radixBackend;
 
@@ -348,6 +359,7 @@ export class GaussianPass extends PassNode {
         this.background,
         this.profileKernels,
         this.maxRasterizedSplatsPerTile,
+        this.rasterChunkSize,
         this.subpixelSampleCulling,
         this.radixBackend,
         this.nodeSlots,
@@ -407,6 +419,7 @@ export class GaussianPass extends PassNode {
         radixBackend: this.radixBackend,
         profileKernels: this.profileKernels,
         maxRasterizedSplatsPerTile: this.maxRasterizedSplatsPerTile,
+        rasterChunkSize: this.rasterChunkSize,
         subpixelSampleCulling: this.subpixelSampleCulling,
       }
     );

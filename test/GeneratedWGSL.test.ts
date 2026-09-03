@@ -67,6 +67,8 @@ describe("generated Gaussian WGSL", () => {
       null,
       frame,
       2_048,
+      8_192,
+      1,
       nodes,
     );
 
@@ -76,6 +78,22 @@ describe("generated Gaussian WGSL", () => {
     const rasterSource = buildCompute(
       (rasterizer as unknown as { computeNode: unknown }).computeNode,
     );
+    const rasterInternals = rasterizer as unknown as {
+      chunkComputeNode: unknown;
+      compositeNode: unknown;
+      chunks: {
+        countNode: unknown;
+        prepareNode: unknown;
+        emitNode: unknown;
+      };
+    };
+    const chunkSource = buildCompute(rasterInternals.chunkComputeNode);
+    const compositeSource = buildCompute(rasterInternals.compositeNode);
+    const countChunksSource = buildCompute(rasterInternals.chunks.countNode);
+    const prepareChunksSource = buildCompute(
+      rasterInternals.chunks.prepareNode,
+    );
+    const emitChunksSource = buildCompute(rasterInternals.chunks.emitNode);
 
     expect(projectionSource).toContain(
       "project_gaussian_covariance_compensated",
@@ -87,6 +105,12 @@ describe("generated Gaussian WGSL", () => {
     expect(rasterSource).toContain("floor");
     expect(rasterSource).toContain("2048u");
     expect(rasterSource).toContain("workgroupBarrier");
+    expect(chunkSource).toContain("rasterSampleStart");
+    expect(chunkSource).toContain("8192u");
+    expect(compositeSource).toContain("chunkCompositeTransmittance");
+    expect(countChunksSource).toContain("count_raster_chunks");
+    expect(prepareChunksSource).toContain("prepare_raster_chunk_dispatch");
+    expect(emitChunksSource).toContain("emit_raster_chunk_tasks");
     expect(projectionSource).not.toMatch(/return;\s*return;/);
     expect(rasterSource).not.toMatch(/continue;\s*continue;/);
     expect(rasterSource).not.toMatch(/break;\s*break;/);
@@ -101,7 +125,7 @@ describe("generated Gaussian WGSL", () => {
 
     const pixelSetup = rasterSource.indexOf("rasterActivePixel =");
     const outerLoop = rasterSource.indexOf(
-      "for ( var i : u32 = 0u; i < rasterTileSampleCount;",
+      "for ( var i : u32 = 0u; i < rasterSampleEnd;",
     );
     const outputStore = rasterSource.lastIndexOf("textureStore(");
     expect(pixelSetup).toBeGreaterThan(-1);
@@ -121,11 +145,13 @@ describe("generated Gaussian WGSL", () => {
       .mul(rasterPower.mul(0.25).exp());
     nodes.rasterDiscardNode = rasterUV.x.lessThan(0);
 
-    const { projectionSource, rasterSource } = buildPipeline(nodes);
+    const { projectionSource, rasterSource, chunkSource } =
+      buildPipeline(nodes);
 
     expect(projectionSource).toContain("vec3<f32>( 1.0, 0.75, 0.5 )");
     expect(rasterSource).toContain("0.25");
     expect(rasterSource).toContain("vec3<f32>");
+    expect(chunkSource).toContain("0.25");
   });
 
   it("omits subpixel sample culling when disabled", () => {
@@ -227,6 +253,8 @@ function buildPipeline(
     null,
     frame,
     null,
+    8_192,
+    1,
     nodes,
   );
 
@@ -236,6 +264,9 @@ function buildPipeline(
     ),
     rasterSource: buildCompute(
       (rasterizer as unknown as { computeNode: unknown }).computeNode,
+    ),
+    chunkSource: buildCompute(
+      (rasterizer as unknown as { chunkComputeNode: unknown }).chunkComputeNode,
     ),
   };
 }

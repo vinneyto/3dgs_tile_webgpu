@@ -31,9 +31,20 @@ describe("GaussianPass node slots", () => {
     expect(pass.gaussianColorNode).toBe(gaussianColor);
     expect(pass.rasterColorNode).toBe(rasterGaussianColor);
     expect(pass.maxRasterizedSplatsPerTile).toBeNull();
+    expect(pass.rasterChunkSize).toBe(8_192);
 
-    const capped = createPass({ maxRasterizedSplatsPerTile: 8_192 }).pass;
+    const capped = createPass({
+      maxRasterizedSplatsPerTile: 8_192,
+      rasterChunkSize: null,
+    }).pass;
     expect(capped.maxRasterizedSplatsPerTile).toBe(8_192);
+    expect(capped.rasterChunkSize).toBeNull();
+  });
+
+  it("validates exact raster chunk sizes", () => {
+    expect(() => createPass({ rasterChunkSize: 1_000 })).toThrow(
+      /multiple of 256/,
+    );
   });
 
   it("rebuilds only the stage whose root node changed", () => {
@@ -63,7 +74,10 @@ describe("GaussianPass node slots", () => {
 });
 
 function createPass(
-  options: { maxRasterizedSplatsPerTile?: number | null } = {},
+  options: {
+    maxRasterizedSplatsPerTile?: number | null;
+    rasterChunkSize?: number | null;
+  } = {},
 ): {
   pass: GaussianPass;
   renderer: WebGPURenderer;
