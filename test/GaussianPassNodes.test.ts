@@ -23,6 +23,32 @@ const TEST_LIMITS = {
 };
 
 describe("GaussianPass node slots", () => {
+  it("packs an uninitialized Store lazily on the first render", () => {
+    const store = new GaussianStore();
+    store.add(oneGaussian());
+    const renderer = createRenderer();
+    const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
+    const pipeline = {
+      rebuildProjection: vi.fn(),
+      rebuildRasterizer: vi.fn(),
+      prepareFrame: vi.fn(),
+      render: vi.fn(),
+      dispose: vi.fn(),
+    };
+    Object.assign(pass as unknown as Record<string, unknown>, {
+      pipeline,
+      pipelineLayoutVersion: 1,
+    });
+
+    expect(store.needsPack).toBe(true);
+    pass.updateBefore({ renderer } as unknown as NodeFrame);
+
+    expect(store.needsPack).toBe(false);
+    expect(store.maxGaussians).toBeGreaterThan(0);
+    expect(pass.intersectionCapacity).toBe(16);
+    expect(pipeline.render).toHaveBeenCalledOnce();
+  });
+
   it("exposes the documented identity defaults", () => {
     const { pass } = createPass();
 
@@ -86,12 +112,7 @@ function createPass(
   const store = new GaussianStore();
   store.add(oneGaussian());
   store.pack({ limits: TEST_LIMITS });
-  const renderer = {
-    hasFeature: () => false,
-    getDrawingBufferSize: (target: { set(x: number, y: number): unknown }) =>
-      target.set(32, 32),
-    initRenderTarget: vi.fn(),
-  } as unknown as WebGPURenderer;
+  const renderer = createRenderer();
   const pass = new GaussianPass(
     renderer,
     new PerspectiveCamera(),
@@ -99,6 +120,16 @@ function createPass(
     options,
   );
   return { pass, renderer, store };
+}
+
+function createRenderer(): WebGPURenderer {
+  return {
+    hasFeature: () => false,
+    backend: { device: { limits: TEST_LIMITS } },
+    getDrawingBufferSize: (target: { set(x: number, y: number): unknown }) =>
+      target.set(32, 32),
+    initRenderTarget: vi.fn(),
+  } as unknown as WebGPURenderer;
 }
 
 function oneGaussian(): GaussianData {

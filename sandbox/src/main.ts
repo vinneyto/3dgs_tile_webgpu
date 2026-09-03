@@ -1,72 +1,82 @@
 import "./style.css";
-import { GaussianSandbox } from "./GaussianSandbox";
 
-const viewport = document.querySelector<HTMLElement>("#viewport");
-const status = document.querySelector<HTMLElement>("#status");
-const metrics = document.querySelector<HTMLElement>("#metrics");
-const kernelTimings = document.querySelector<HTMLElement>("#kernel-timings");
-const kernelProfile =
-  document.querySelector<HTMLDetailsElement>("#kernel-profile");
-const openButton = document.querySelector<HTMLButtonElement>("#open-ply");
-const fileInput = document.querySelector<HTMLInputElement>("#ply-file");
-const octreeToggle = document.querySelector<HTMLInputElement>("#show-octree");
-const lodColorToggle = document.querySelector<HTMLInputElement>(
-  "#color-splats-by-lod",
+import {
+  PerspectiveCamera,
+  RenderPipeline,
+  Sphere,
+  WebGPURenderer,
+} from "three/webgpu";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GaussianStore, gaussianPass } from "3dgs-tile-webgpu";
+
+const viewport = document.querySelector<HTMLElement>("#viewport")!;
+const status = document.querySelector<HTMLElement>("#status")!;
+const metrics = document.querySelector<HTMLElement>("#metrics")!;
+const plyUrl = new URLSearchParams(location.search).get("ply") ?? "/sample.ply";
+
+if (!navigator.gpu) throw new Error("WebGPU is unavailable in this browser");
+
+const renderer = new WebGPURenderer({ antialias: false });
+await renderer.init();
+renderer.setSize(innerWidth, innerHeight);
+viewport.appendChild(renderer.domElement);
+
+const camera = new PerspectiveCamera(
+  50,
+  innerWidth / innerHeight,
+  0.01,
+  10_000,
 );
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
 
-if (
-  viewport === null ||
-  status === null ||
-  metrics === null ||
-  kernelTimings === null ||
-  kernelProfile === null ||
-  openButton === null ||
-  fileInput === null ||
-  octreeToggle === null ||
-  lodColorToggle === null
-) {
-  throw new Error("Sandbox markup is incomplete");
-}
+// Package integration: CPU data now, GPU allocation and LOD updates lazily
+// during pipeline.render(). No GPUDevice or manual Store packing is needed.
+const store = new GaussianStore();
+status.textContent = `Loading ${plyUrl}…`;
+const cloud = await store.load(plyUrl);
 
-const parameters = new URLSearchParams(location.search);
-kernelProfile.open = parameters.get("profile") === "kernels";
-
-const sandbox = await GaussianSandbox.create(
-  viewport,
-  status,
-  metrics,
-  kernelTimings,
+const bounds = cloud.lod!.octree.bounds.getBoundingSphere(new Sphere());
+const radius = Math.max(bounds.radius, 0.1);
+camera.near = Math.max(radius / 10_000, 0.0001);
+camera.far = Math.max(radius * 20, 100);
+camera.position.set(
+  bounds.center.x + radius * 0.15,
+  bounds.center.y + radius * 0.35,
+  bounds.center.z + radius * 2.4,
 );
+camera.updateProjectionMatrix();
+controls.target.copy(bounds.center);
+controls.update();
 
-const applySpatialDebugState = () => {
-  sandbox.setOctreeHelperVisible(octreeToggle.checked);
-  sandbox.setLodColoringEnabled(lodColorToggle.checked);
-};
+const pass = gaussianPass(renderer, camera, store, {
+  background: [0.018, 0.022, 0.032, 1],
+});
+const pipeline = new RenderPipeline(renderer);
+pipeline.outputNode = pass;
 
-octreeToggle.addEventListener("change", applySpatialDebugState);
-lodColorToggle.addEventListener("change", applySpatialDebugState);
-
-applySpatialDebugState();
-await sandbox.loadUrl(parameters.get("ply") ?? "/sample.ply");
-
-openButton.addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", () => {
-  const file = fileInput.files?.[0];
-  if (file !== undefined) void sandbox.loadFile(file);
-  fileInput.value = "";
+let initialized = false;
+pass.subscribeDebug(({ pass: debug, storePack, lod }) => {
+  if (!initialized && debug.initialized) {
+    initialized = true;
+    status.textContent = `${cloud.name}: ${store.count.toLocaleString()} Gaussians`;
+  }
+  metrics.textContent = [
+    `${debug.width}×${debug.height} · ${debug.tilesX}×${debug.tilesY} tiles`,
+    `capacity ${store.maxGaussians.toLocaleString()} · LOD ${lod.pending ? "streaming" : "settled"}`,
+    storePack === null
+      ? "packing pending"
+      : `upload ${(storePack.estimatedUploadBytes / 1024).toFixed(0)} KiB`,
+  ].join("\n");
 });
 
-addEventListener("dragenter", (event) => {
-  event.preventDefault();
-  document.body.dataset.dragging = "true";
+renderer.setAnimationLoop(() => {
+  controls.update();
+  pipeline.render();
 });
-addEventListener("dragover", (event) => event.preventDefault());
-addEventListener("dragleave", (event) => {
-  if (event.relatedTarget === null) delete document.body.dataset.dragging;
-});
-addEventListener("drop", (event) => {
-  event.preventDefault();
-  delete document.body.dataset.dragging;
-  const file = event.dataTransfer?.files[0];
-  if (file !== undefined) void sandbox.loadFile(file);
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
 });

@@ -3,6 +3,10 @@ import type {
   IndirectStorageBufferAttribute,
   StorageBufferAttribute,
 } from "three/webgpu";
+import type {
+  GaussianStoreLodUpdate,
+  GaussianStorePackStats,
+} from "../GaussianStore";
 
 export type DepthSortMode = "float32" | "packed16";
 export type AntialiasMode = "compensated" | "classic";
@@ -37,6 +41,16 @@ export interface GaussianPassOptions {
   /** Select subgroup-accelerated or portable workgroup radix. Defaults to feature-based auto detection. */
   radixBackend?: RadixBackend;
 }
+
+export interface GaussianPassDebugSnapshot {
+  readonly pass: GaussianPassDebugInfo;
+  readonly storePack: GaussianStorePackStats | null;
+  readonly lod: GaussianStoreLodUpdate;
+}
+
+export type GaussianPassDebugListener = (
+  snapshot: GaussianPassDebugSnapshot,
+) => void;
 
 export interface GaussianPassStats {
   visibleGaussianCount: number;

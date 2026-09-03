@@ -1,8 +1,11 @@
 :root {
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  color: #eef2ff;
-  background: #07090e;
-  font-synthesis: none;
+  color: #e8edf5;
+  background: #05070a;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 html,
@@ -16,171 +19,31 @@ body,
 
 canvas {
   display: block;
-  width: 100%;
-  height: 100%;
 }
 
 #hud {
   position: fixed;
   top: 16px;
   left: 16px;
-  display: flex;
-  flex-direction: column;
-  max-width: min(420px, calc(100vw - 64px));
-  max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px);
-  box-sizing: border-box;
-  gap: 8px;
-  padding: 14px 16px;
-  border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: 12px;
-  background: rgb(13 17 26 / 82%);
-  box-shadow: 0 12px 36px rgb(0 0 0 / 28%);
-  backdrop-filter: blur(12px);
-  overflow: hidden;
+  display: grid;
+  gap: 6px;
+  max-width: min(520px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border: 1px solid #ffffff1f;
+  border-radius: 10px;
+  background: #0b1018d9;
+  backdrop-filter: blur(10px);
+  pointer-events: none;
 }
 
-#hud:has(#kernel-profile[open]) {
-  height: calc(100vh - 32px);
-  height: calc(100dvh - 32px);
-}
-
-#status {
-  color: #b9c3d8;
-  line-height: 1.35;
-}
-
-#status[data-error="true"] {
-  color: #ff9f9f;
-}
-
-#open-ply {
-  width: max-content;
-  padding: 7px 12px;
-  border: 1px solid rgb(255 255 255 / 16%);
-  border-radius: 8px;
-  color: inherit;
-  background: #283754;
-  cursor: pointer;
-}
-
-#open-ply:hover {
-  background: #354a70;
-}
-
-small {
-  color: #8792a8;
+#status,
+#metrics {
+  color: #aebbd0;
 }
 
 #metrics {
-  flex-shrink: 0;
   margin: 4px 0 0;
-  padding-top: 10px;
-  border-top: 1px solid rgb(255 255 255 / 10%);
-  color: #a9d4b2;
   font:
-    11px/1.45 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
+    12px/1.5 ui-monospace,
     monospace;
-  font-variant-numeric: tabular-nums;
-  white-space: pre;
-}
-
-#kernel-profile {
-  min-height: 0;
-  color: #a9d4b2;
-}
-
-#spatial-debug {
-  color: #b9c3d8;
-  font-size: 12px;
-}
-
-#spatial-debug[open] {
-  display: grid;
-  gap: 7px;
-}
-
-#spatial-debug summary {
-  cursor: pointer;
-}
-
-#spatial-debug label {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  cursor: pointer;
-}
-
-.lod-palette {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-[data-lod-color]::before {
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 4px;
-  border-radius: 50%;
-  content: "";
-}
-
-[data-lod-color="0"]::before {
-  background: #e85d68;
-}
-
-[data-lod-color="1"]::before {
-  background: #f2b84b;
-}
-
-[data-lod-color="2"]::before {
-  background: #4ac58b;
-}
-
-#kernel-profile[open] {
-  display: flex;
-  flex: 1 1 0;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
-#kernel-profile summary {
-  cursor: pointer;
-  font-size: 12px;
-}
-
-#kernel-timings {
-  flex: 1 1 0;
-  min-height: 0;
-  margin: 8px 0 0;
-  overflow: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  font:
-    10px/1.45 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
-  font-variant-numeric: tabular-nums;
-  white-space: pre;
-}
-
-body[data-dragging="true"]::after {
-  position: fixed;
-  inset: 20px;
-  display: grid;
-  place-items: center;
-  border: 2px dashed #83aaff;
-  border-radius: 18px;
-  color: #dce7ff;
-  background: rgb(22 31 49 / 78%);
-  content: "Drop PLY to load";
-  font-size: 20px;
-  pointer-events: none;
 }

@@ -16,6 +16,22 @@ const TEST_LIMITS = {
 };
 
 describe("GaussianLodColorHelper", () => {
+  it("can be created before the Store is packed", () => {
+    const store = new GaussianStore();
+    store.add(oneGaussian());
+    const renderer = {
+      hasFeature: () => false,
+    } as unknown as WebGPURenderer;
+    const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
+
+    const helper = new GaussianLodColorHelper(pass);
+    expect(helper.lodLevelAttribute.isAllocated).toBe(false);
+
+    store.pack({ limits: TEST_LIMITS });
+    helper.update();
+    expect(helper.lodLevelAttribute.isAllocated).toBe(true);
+  });
+
   it("overrides and restores the GaussianPass color node", () => {
     const { pass, store } = createPass();
     const original = pass.rasterColorNode;

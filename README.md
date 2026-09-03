@@ -86,6 +86,72 @@ parser-agnostic `GaussianData` boundary.
 
 ## Usage
 
+Until the package is published to npm, install it directly from GitHub. npm
+runs the package build during installation:
+
+```bash
+npm install github:vinneyto/3dgs_tile_webgpu
+```
+
+The default path needs only a Store, a pass and a PLY URL. Loading is CPU-side;
+GPU buffers, the device-sized Gaussian budget and the render pipeline are
+created lazily on the first render. Camera-relative LOD updates and bounded
+streaming uploads are also driven by the pass.
+
+```ts
+import {
+  PerspectiveCamera,
+  RenderPipeline,
+  WebGPURenderer,
+} from "three/webgpu";
+import { GaussianStore, gaussianPass } from "3dgs-tile-webgpu";
+
+const renderer = new WebGPURenderer();
+await renderer.init();
+
+const camera = new PerspectiveCamera(
+  50,
+  innerWidth / innerHeight,
+  0.01,
+  10_000,
+);
+const store = new GaussianStore();
+const cloud = await store.load("scene.ply");
+scene.add(cloud);
+
+const pass = gaussianPass(renderer, camera, store);
+const pipeline = new RenderPipeline(renderer);
+pipeline.outputNode = pass;
+
+renderer.setAnimationLoop(() => pipeline.render());
+```
+
+`maxGaussians: "auto"` is the default. It resolves against
+`maxStorageBufferBindingSize` and `maxBufferSize` after the renderer has a
+device. A numeric value sets a lower application cap while still respecting
+the device limit:
+
+```ts
+const store = new GaussianStore({ maxGaussians: 1_000_000 });
+```
+
+The built-in default is remaining-capacity budgeting plus a separate streaming
+80/10/10 tiered radial strategy for each LOD cloud. It tracks the camera in
+cloud-local space, plans newest-target-only updates in a worker and uploads at
+most 1 MiB / 16 changed cells per cloud and frame.
+
+Pass diagnostics can be observed without GPU readback. Detailed counters remain
+available through `await pass.readStats()` (kernel profiles require
+`profileKernels: true`):
+
+```ts
+const unsubscribe = pass.subscribeDebug(({ pass, storePack, lod }) => {
+  console.log({ pass, storePack, lod });
+});
+```
+
+### Advanced data and strategy customization
+
 ```ts
 import {
   PerspectiveCamera,
@@ -116,7 +182,6 @@ const data = new GaussianData(
 
 const store = new GaussianStore();
 const cloud = store.add(data, { name: "cat" });
-store.pack({ limits: device.limits });
 scene.add(cloud); // GaussianCloud is an ordinary transformable Object3D
 
 const pass = gaussianPass(renderer, camera, store, {
@@ -141,7 +206,6 @@ The store uses the canonical 3DGS PLY loader by default:
 const store = new GaussianStore();
 const cat = await store.load("cat.ply");
 const dog = await store.load("dog.ply");
-store.pack({ limits: device.limits });
 
 cat.position.x = -1;
 dog.position.x = 1;
@@ -150,7 +214,9 @@ scene.add(cat, dog);
 
 `load()` expands to `loader → GaussianOctree → GaussianLod → addLod()`. Both
 `load()` and `addLod()` only register clouds and set `store.needsPack`; they do
-not select octree cells or rebuild buffers.
+not select octree cells or rebuild buffers. `GaussianPass` resolves that state
+automatically before rendering. `store.pack({ limits })` remains public for
+advanced/manual lifecycle control and tests.
 
 `GaussianStore` owns one global Gaussian capacity. During every structural
 `pack()`, its budget strategy visits clouds in `(priority, insertion order)` and
@@ -160,8 +226,8 @@ cloud. `SourceFractionBudgetStrategy` can instead cap each allocation to a
 fraction of that cloud's full source count. Lower priority numbers are packed
 first; every cloud defaults to `priority: 0`.
 
-The Store's default packing strategy uses the finest LOD and selects leaf cells
-radially from the object-bounds center until that cloud's allocation is full.
+The Store's default packing strategy uses streaming 80/10/10 radial LOD and
+selects leaf cells radially from the camera until that cloud's allocation is full.
 `pack({ limits: device.limits })` derives the Gaussian capacity from the actual
 device's `maxStorageBufferBindingSize`, `maxBufferSize`, and the highest SH
 degree among all registered clouds. The Store quantizes each packed RGB SH
@@ -367,11 +433,8 @@ The normal projection path still evaluates the cloud's color, including SH
 when present. Tinting happens in the rasterizer, where the extra LOD buffer
 stays within the WebGPU baseline storage-binding limit.
 
-The sandbox exercises this path continuously. Its cloud uses tiered packing
-around a white marker moving as `x = 5 sin(t)`, and calls `pack()` after each
-0.5 m displacement. Diagnostics show CPU pack time, repack count,
-reused/written/cleared slots, estimated upload bytes, planning versus slot-update
-time, and the first ten full-attribute and opacity-only slot ranges.
+The helper can be created before the first render. It subscribes to pass debug
+updates and binds the packed attribute after the Store is materialized lazily.
 
 `GaussianOctree` retains the complete CPU source. `GaussianLodPacking` is only
 the compact active cell/level cut (excluding clipped cells) used both to fill the GPU buffers and, through
@@ -521,8 +584,7 @@ low-pass covariance so subpixel splats do not flicker, but scales peak opacity b
 shrinks instead of remaining an opaque, approximately 4×4-pixel dot. Splats whose compensated peak alpha is
 below `1/255` are culled before intersection emission and sorting.
 
-Use `antialiasMode: "classic"` to reproduce the former fixed-footprint behavior. In the sandbox, append
-`?aa=classic` for an immediate comparison.
+Use `antialiasMode: "classic"` to reproduce the former fixed-footprint behavior.
 
 ## Sort modes
 
@@ -561,7 +623,7 @@ invocation. With the default `radixBackend: "auto"`, the pass selects the subgro
 Brush/FidelityFX-style kernels when `renderer.hasFeature("subgroups")` is true, otherwise it uses portable
 workgroup atomics, masks and barriers. Both backends produce the same stable order. `"subgroup"` and
 `"workgroup"` can be selected explicitly for testing; forcing `"subgroup"` without the WebGPU feature throws
-before pipeline creation. The sandbox accepts `?radix=subgroup` and `?radix=workgroup`.
+before pipeline creation.
 
 Projection and emission share a conservative StopThePop tile-vs-ellipse test. Tiles inside the screen-space
 AABB that cannot reach alpha `1/255` are excluded from `K`, reducing both sort and raster work.
@@ -623,51 +685,28 @@ npm install
 npm run sandbox
 ```
 
-The sandbox loads its small `sample.ply` by default and enables the standard Three.js `OrbitControls`. Use
-**Open PLY** or drag a canonical 3DGS PLY onto the canvas to inspect another cloud. A URL can also be supplied
-explicitly:
+The sandbox is intentionally a small integration example: `main.ts` creates
+the Three.js renderer and camera, calls `store.load()`, creates `gaussianPass`,
+assigns it to `RenderPipeline`, and renders. It contains no manual device access,
+Store packing, or LOD scheduling. It loads `sample.ply` by default; another URL
+can be supplied explicitly:
 
 ```text
-http://localhost:5173/?ply=/my-cloud.ply&sort=packed16&dpr=1
+http://localhost:5173/?ply=/my-cloud.ply
 ```
 
-Open **Octree / LOD visualization** in the sandbox HUD to toggle the local
-octree grid or color the rendered splats by their current packed LOD. The
-sandbox uses the packed-attribute helper instead of LOD volume boxes.
-Its fixed-budget 80/10/10 tiered radial packing focus follows the camera and
-repacks after meaningful camera movement. The sandbox uses the Store's default
-remaining-capacity budgeting, so the allocation comes directly from the
-WebGPU storage-buffer limits rather than an artificial source-count fraction.
-Zooming away does not independently lower detail: LOD selection only keeps the
-packed data inside its GPU allocation.
-Later target selection runs in a module worker; bounded Store buffer updates
-remain on the main thread. Camera-driven transitions default to 1 MiB and 16
-changed leaves per frame; use `?lodUploadKiB=1024&lodCells=16` to tune those
-limits.
-
-Files addressed by URL belong in `sandbox/public/`; the file picker and drag-and-drop do not require copying
-the file into the repository. The loader accepts ASCII, binary little-endian, and binary big-endian scalar PLY
-vertex data. Matching `lidar_sim`, it performs these boundary conversions:
+Files addressed by URL belong in `sandbox/public/`. The loader accepts ASCII,
+binary little-endian, and binary big-endian scalar PLY vertex data. Matching
+`lidar_sim`, it performs these boundary conversions:
 
 - `scale_0..2`: `exp(logScale)`;
 - `opacity`: `sigmoid(opacityLogit)`;
 - `rot_0..3`: canonical PLY `wxyz` to normalized Three.js/renderer `xyzw`;
 - `f_dc_*` and channel-major `f_rest_*`: Gaussian-major SH coefficient vectors.
 
-The HUD also reports CPU encoding time, Three.js compute-call count,
-requested/emitted intersection counts, capacity overflow, tile-stage rebuilds
-and Three.js-tracked GPU memory. It also reports `N_visible`, so the benefit of
-moving depth sorting from `K` to the compact visible set can be measured
-directly.
+## Profiling and raster controls
 
-Append `?profile=kernels` to enable the heavier profiling mode. It requests GPU
-timestamp queries, opens **Kernel timings**, and splits the normally batched
-prepare/emit group into separate compute passes. Timestamp rows are available
-only when the browser and adapter expose `timestamp-query`; the HUD reports
-that limitation explicitly otherwise. Radix stages already require distinct
-passes because their direct and indirect dispatch dimensions differ.
-
-The same flag adds an asynchronous readback of emitted splats per tile: max,
+`profileKernels: true` adds an asynchronous readback of emitted splats per tile: max,
 mean, median, p95, p99, and counts above 256, 512, 1024 and 2048. It also runs a
 profiling-only projection kernel that counts zero-pixel subpixel splats whose
 alpha-support AABB is at most one pixel in both dimensions but contains no
@@ -684,32 +723,22 @@ single-workgroup path. Heavier tiles are split into compact indirect tasks;
 each task processes a contiguous front-to-back range and writes partial color
 plus transmittance. A final pass combines those summaries in depth order with
 `C = C_front + T_front * C_back` and `T = T_front * T_back`. No intersections
-are discarded, and a Gaussian cannot be cut at a tile boundary. Use
-`?rasterChunk=4096` to change the sandbox threshold or `?rasterChunk=0` to
-disable exact chunking for an A/B measurement. Chunk sizes must be positive
-multiples of 256.
+are discarded, and a Gaussian cannot be cut at a tile boundary. Set
+`rasterChunkSize` to another positive multiple of 256, or to `null` to disable
+exact chunking for an A/B measurement.
 
-The separate lossy raster sample cap remains disabled by default because
-capped sampling can reveal a moving tile pattern. Append
-`&tileCap=8192` (or another positive integer) to enable the experiment;
-`tileCap=0` explicitly disables it. Overflowing tiles are sampled at evenly
-spaced bin centers across their complete depth-ordered ranges instead of
-rendering a contiguous prefix. Intersection emission and radix sorting remain
-unchanged.
+The separate `maxRasterizedSplatsPerTile` lossy raster sample cap remains
+disabled by default because capped sampling can reveal a moving tile pattern.
+Overflowing tiles are sampled at evenly spaced bin centers across their
+complete depth-ordered ranges instead of rendering a contiguous prefix.
+Intersection emission and radix sorting remain unchanged.
 
 Subpixel sample culling is enabled by default. During projection, Gaussians
 whose alpha-support AABB is at most one pixel in both dimensions are tested
 against actual pixel centers. A Gaussian with no sample at or above the
 `1/255` alpha cutoff is removed before visible compaction, both radix sorts,
-intersection emission and rasterization. Set `?subpixelCull=0` in the sandbox
-or pass `{ subpixelSampleCulling: false }` to disable it for A/B timing.
-
-The memory delta is captured after a 30-frame warm-up, making accidental per-frame resource growth visible.
-Diagnostic intersection readback runs asynchronously every 1.5 seconds;
-`?stats=0` disables that readback outside profiling mode. Append `?debug=0` to
-hide the HUD when measuring the undisturbed renderer.
-The demo defaults to `dpr=1`; raising it to `dpr=2` quadruples the number of rasterized pixels and is therefore
-an explicit quality/performance choice rather than an automatic use of the display pixel ratio.
+intersection emission and rasterization. Pass
+`{ subpixelSampleCulling: false }` to disable it for A/B timing.
 
 Canonical 3DGS SH coefficients reconstruct sRGB values. The output is an `rgba16float` storage texture, for
 which WebGPU has no hardware sRGB sampling format. `GaussianPass` therefore keeps the physical texture raw and
