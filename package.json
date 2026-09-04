@@ -22,7 +22,7 @@
     "sandbox": "vite --config vite.sandbox.config.ts",
     "sandbox:build": "vite build --config vite.sandbox.config.ts",
     "build": "vite build && tsc -p tsconfig.build.json",
-    "prepare": "npm run build",
+    "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "format": "prettier --write .",

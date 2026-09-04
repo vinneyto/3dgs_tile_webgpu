@@ -1,0 +1,52 @@
+import type { Node } from "three/webgpu";
+export declare const gaussianIndex: import("three/webgpu").PropertyNode<"uint">;
+export declare const gaussianObjectId: import("three/webgpu").PropertyNode<"uint">;
+export declare const gaussianPositionLocal: import("three/webgpu").PropertyNode<"vec3">;
+export declare const gaussianPositionWorld: import("three/webgpu").PropertyNode<"vec3">;
+export declare const gaussianScale: import("three/webgpu").PropertyNode<"vec3">;
+export declare const gaussianRotation: import("three/webgpu").PropertyNode<"vec4">;
+export declare const gaussianOpacity: import("three/webgpu").PropertyNode<"float">;
+export declare const gaussianColor: import("three/webgpu").PropertyNode<"vec3">;
+export declare const gaussianObjectMatrix: import("three/webgpu").PropertyNode<"mat4">;
+export declare const gaussianObjectVisible: import("three/webgpu").PropertyNode<"bool">;
+export declare const gaussianViewDirection: import("three/webgpu").PropertyNode<"vec3">;
+export declare const gaussianViewDepth: import("three/webgpu").PropertyNode<"float">;
+export declare const gaussianScreenPosition: import("three/webgpu").PropertyNode<"vec2">;
+export declare const gaussianScreenBoundsMin: import("three/webgpu").PropertyNode<"vec2">;
+export declare const gaussianScreenBoundsMax: import("three/webgpu").PropertyNode<"vec2">;
+export declare const gaussianProjectedSigma: import("three/webgpu").PropertyNode<"vec2">;
+export declare const gaussianProjectedArea: import("three/webgpu").PropertyNode<"float">;
+export declare const rasterGaussianIndex: import("three/webgpu").PropertyNode<"uint">;
+export declare const rasterObjectId: import("three/webgpu").PropertyNode<"uint">;
+export declare const rasterPixelCoordinate: import("three/webgpu").PropertyNode<"uvec2">;
+export declare const rasterScreenPosition: import("three/webgpu").PropertyNode<"vec2">;
+export declare const rasterScreenUV: import("three/webgpu").PropertyNode<"vec2">;
+export declare const rasterGaussianCenter: import("three/webgpu").PropertyNode<"vec2">;
+export declare const rasterPixelDelta: import("three/webgpu").PropertyNode<"vec2">;
+export declare const rasterGaussianCoord: import("three/webgpu").PropertyNode<"vec2">;
+export declare const rasterUV: import("three/webgpu").PropertyNode<"vec2">;
+export declare const rasterViewDepth: import("three/webgpu").PropertyNode<"float">;
+export declare const rasterGaussianColor: import("three/webgpu").PropertyNode<"vec3">;
+export declare const rasterGaussianOpacity: import("three/webgpu").PropertyNode<"float">;
+export declare const rasterPower: import("three/webgpu").PropertyNode<"float">;
+export declare const rasterWeight: import("three/webgpu").PropertyNode<"float">;
+export interface GaussianProjectionNodeSlots {
+    gaussianPositionLocalNode: Node;
+    gaussianPositionWorldNode: Node;
+    gaussianScaleNode: Node;
+    gaussianRotationNode: Node;
+    gaussianOpacityNode: Node;
+    gaussianColorNode: Node;
+    gaussianVisibilityNode: Node;
+}
+export interface GaussianRasterNodeSlots {
+    rasterColorNode: Node;
+    rasterAlphaNode: Node;
+    rasterDiscardNode: Node;
+}
+export type GaussianNodeSlots = GaussianProjectionNodeSlots & GaussianRasterNodeSlots;
+export declare function createDefaultGaussianNodeSlots(): GaussianNodeSlots;
+export declare const projectionContextNodes: Set<Node>;
+export declare const rasterContextNodes: Set<Node>;
+export declare function validateGaussianNodeDomain(node: Node, allowed: ReadonlySet<Node>, domain: "projection" | "raster"): void;
+export declare function validateGaussianNodeAccess(node: Node, allowed: ReadonlySet<Node>, field: string): void;
