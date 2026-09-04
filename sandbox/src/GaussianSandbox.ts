@@ -2,6 +2,7 @@ import {
   DirectionalLight,
   Group,
   HemisphereLight,
+  Layers,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
@@ -32,9 +33,11 @@ import {
   type CloudBounds,
 } from "./cloudData";
 import { CloudStatus } from "./CloudStatus";
-import { compositePremultipliedOver } from "./compositePremultipliedOver";
+import {
+  compositeDepthTestedPremultipliedOver,
+  compositePremultipliedOver,
+} from "./compositePremultipliedOver";
 import { DebugPanel } from "./DebugPanel";
-import { DepthTestedTransparentPass } from "./DepthTestedTransparentPass";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 import { readSandboxOptions, type SandboxOptions } from "./SandboxOptions";
 import { SpatialDebugHelpers } from "./SpatialDebugHelpers";
@@ -45,7 +48,8 @@ export class GaussianSandbox {
   private readonly controls: OrbitControls;
   private readonly hoverRaycaster = new Raycaster();
   private readonly hoverPointer = new Vector2();
-  private readonly drawingBufferSize = new Vector2();
+  private readonly sceneLayers = new Layers();
+  private readonly overlayLayers = new Layers();
   private readonly hoverMarkerGeometry = new SphereGeometry(1, 24, 16);
   private readonly hoverMarkerOpaque = new Mesh(
     this.hoverMarkerGeometry,
@@ -76,7 +80,8 @@ export class GaussianSandbox {
   private pass: GaussianPass | null = null;
   private store: GaussianStore | null = null;
   private opaquePass: PassNode | null = null;
-  private transparentPass: DepthTestedTransparentPass | null = null;
+  private transparentPass: PassNode | null = null;
+  private overlayPass: PassNode | null = null;
   private cloud: GaussianCloud | null = null;
   private controlsActive = false;
   private disposed = false;
@@ -115,6 +120,8 @@ export class GaussianSandbox {
     this.hoverMarker.visible = false;
     this.hoverMarkerOpaque.renderOrder = 1;
     this.hoverMarkerOverlay.renderOrder = 2;
+    this.hoverMarkerOverlay.layers.set(1);
+    this.overlayLayers.set(1);
     this.hoverMarker.add(this.hoverMarkerOpaque, this.hoverMarkerOverlay);
     const markerKeyLight = new DirectionalLight(0xffffff, 2.5);
     markerKeyLight.position.set(1, 2, 3);
@@ -294,6 +301,7 @@ export class GaussianSandbox {
     this.opaquePass = scenePass(this.scene, this.camera);
     this.opaquePass.transparent = false;
     this.opaquePass.opaque = true;
+    this.opaquePass.setLayers(this.sceneLayers);
     const opaqueDepth = this.opaquePass
       .getTextureNode("depth")
       .load(rasterPixelCoordinate);
@@ -303,12 +311,14 @@ export class GaussianSandbox {
       uniform(this.camera.far),
     ).negate();
     this.pass.rasterDiscardNode = opaqueViewDepth.lessThan(rasterViewDepth);
-    this.transparentPass = new DepthTestedTransparentPass(
-      this.scene,
-      this.camera,
-      this.opaquePass.renderTarget.depthTexture!,
-    );
-    this.prepareScenePassDepth();
+    this.transparentPass = scenePass(this.scene, this.camera);
+    this.transparentPass.transparent = true;
+    this.transparentPass.opaque = false;
+    this.transparentPass.setLayers(this.sceneLayers);
+    this.overlayPass = scenePass(this.scene, this.camera);
+    this.overlayPass.transparent = true;
+    this.overlayPass.opaque = false;
+    this.overlayPass.setLayers(this.overlayLayers);
     this.spatialDebug.attach(cloud, this.pass);
     this.debugPanel.setPass(this.pass, {
       cloud,
@@ -319,9 +329,15 @@ export class GaussianSandbox {
       this.opaquePass,
       this.pass,
     );
-    this.pipeline.outputNode = compositePremultipliedOver(
+    const withTransparentScene = compositeDepthTestedPremultipliedOver(
       opaqueWithGaussians,
       this.transparentPass,
+      this.opaquePass.getViewZNode(),
+      this.transparentPass.getViewZNode(),
+    );
+    this.pipeline.outputNode = compositePremultipliedOver(
+      withTransparentScene,
+      this.overlayPass,
     );
     this.cloudStatus.preparing(source, data.count);
   }
@@ -330,6 +346,7 @@ export class GaussianSandbox {
     this.debugPanel.setPass(null);
     this.spatialDebug.clear();
     this.pass?.dispose();
+    this.overlayPass?.dispose();
     this.transparentPass?.dispose();
     this.opaquePass?.dispose();
     this.pipeline?.dispose();
@@ -337,6 +354,7 @@ export class GaussianSandbox {
     this.cloud = null;
     this.hoverMarker.visible = false;
     this.pass = null;
+    this.overlayPass = null;
     this.transparentPass = null;
     this.opaquePass = null;
     this.pipeline = null;
@@ -387,17 +405,5 @@ export class GaussianSandbox {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
-    this.prepareScenePassDepth();
-  }
-
-  private prepareScenePassDepth(): void {
-    if (this.opaquePass === null || this.transparentPass === null) return;
-    this.renderer.getDrawingBufferSize(this.drawingBufferSize);
-    this.opaquePass.setSize(this.drawingBufferSize.x, this.drawingBufferSize.y);
-    this.transparentPass.prepareDepth(
-      this.renderer,
-      this.drawingBufferSize.x,
-      this.drawingBufferSize.y,
-    );
   }
 }
