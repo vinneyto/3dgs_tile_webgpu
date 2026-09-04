@@ -282,6 +282,22 @@ export class GaussianPass extends PassNode {
     return this.nodeSlots.rasterColorNode;
   }
 
+  get rasterPixelValueNode(): Node {
+    return this.nodeSlots.rasterPixelValueNode;
+  }
+
+  set rasterPixelValueNode(node: Node) {
+    this.setRasterNode("rasterPixelValueNode", node);
+  }
+
+  get rasterBreakNode(): Node {
+    return this.nodeSlots.rasterBreakNode;
+  }
+
+  set rasterBreakNode(node: Node) {
+    this.setRasterNode("rasterBreakNode", node);
+  }
+
   set rasterColorNode(node: Node) {
     this.setRasterNode("rasterColorNode", node);
   }
@@ -487,7 +503,11 @@ export class GaussianPass extends PassNode {
   private setRasterNode(
     key: keyof Pick<
       GaussianNodeSlots,
-      "rasterColorNode" | "rasterAlphaNode" | "rasterDiscardNode"
+      | "rasterPixelValueNode"
+      | "rasterBreakNode"
+      | "rasterColorNode"
+      | "rasterAlphaNode"
+      | "rasterDiscardNode"
     >,
     node: Node,
   ): void {

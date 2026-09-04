@@ -21,6 +21,7 @@ import {
   CanonicalGaussianPlyLoader,
   gaussianPass,
   rasterPixelCoordinate,
+  rasterPixelValue,
   rasterViewDepth,
   type GaussianCloud,
   type GaussianPass,
@@ -310,7 +311,8 @@ export class GaussianSandbox {
       uniform(this.camera.near),
       uniform(this.camera.far),
     ).negate();
-    this.pass.rasterDiscardNode = opaqueViewDepth.lessThan(rasterViewDepth);
+    this.pass.rasterPixelValueNode = opaqueViewDepth;
+    this.pass.rasterBreakNode = rasterPixelValue.lessThan(rasterViewDepth);
     this.transparentPass = scenePass(this.scene, this.camera);
     this.transparentPass.transparent = true;
     this.transparentPass.opaque = false;

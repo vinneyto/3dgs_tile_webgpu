@@ -21,6 +21,7 @@ export declare const rasterObjectId: import("three/webgpu").PropertyNode<"uint">
 export declare const rasterPixelCoordinate: import("three/webgpu").PropertyNode<"uvec2">;
 export declare const rasterScreenPosition: import("three/webgpu").PropertyNode<"vec2">;
 export declare const rasterScreenUV: import("three/webgpu").PropertyNode<"vec2">;
+export declare const rasterPixelValue: import("three/webgpu").PropertyNode<"float">;
 export declare const rasterGaussianCenter: import("three/webgpu").PropertyNode<"vec2">;
 export declare const rasterPixelDelta: import("three/webgpu").PropertyNode<"vec2">;
 export declare const rasterGaussianCoord: import("three/webgpu").PropertyNode<"vec2">;
@@ -40,6 +41,8 @@ export interface GaussianProjectionNodeSlots {
     gaussianVisibilityNode: Node;
 }
 export interface GaussianRasterNodeSlots {
+    rasterPixelValueNode: Node;
+    rasterBreakNode: Node;
     rasterColorNode: Node;
     rasterAlphaNode: Node;
     rasterDiscardNode: Node;
@@ -48,5 +51,7 @@ export type GaussianNodeSlots = GaussianProjectionNodeSlots & GaussianRasterNode
 export declare function createDefaultGaussianNodeSlots(): GaussianNodeSlots;
 export declare const projectionContextNodes: Set<Node>;
 export declare const rasterContextNodes: Set<Node>;
+export declare const rasterPixelContextNodes: Set<Node>;
+export declare const rasterBreakContextNodes: Set<Node>;
 export declare function validateGaussianNodeDomain(node: Node, allowed: ReadonlySet<Node>, domain: "projection" | "raster"): void;
 export declare function validateGaussianNodeAccess(node: Node, allowed: ReadonlySet<Node>, field: string): void;

@@ -47,6 +47,7 @@ import {
   workgroupUniformLoadWGSL,
 } from "../kernels/rasterHelpers";
 import {
+  rasterBreakContextNodes,
   rasterContextNodes,
   rasterGaussianCenter,
   rasterGaussianColor,
@@ -56,12 +57,15 @@ import {
   rasterObjectId,
   rasterPixelCoordinate,
   rasterPixelDelta,
+  rasterPixelValue,
   rasterPower,
   rasterScreenPosition,
   rasterScreenUV,
   rasterUV,
   rasterViewDepth,
   rasterWeight,
+  rasterPixelContextNodes,
+  validateGaussianNodeAccess,
   validateGaussianNodeDomain,
   type GaussianRasterNodeSlots,
 } from "../nodes/GaussianContextNodes";
@@ -123,12 +127,24 @@ export class TileRasterizer {
 
   rebuild(nodes: GaussianRasterNodeSlots): void {
     for (const node of [
+      nodes.rasterPixelValueNode,
+      nodes.rasterBreakNode,
       nodes.rasterColorNode,
       nodes.rasterAlphaNode,
       nodes.rasterDiscardNode,
     ]) {
       validateGaussianNodeDomain(node, rasterContextNodes, "raster");
     }
+    validateGaussianNodeAccess(
+      nodes.rasterPixelValueNode,
+      rasterPixelContextNodes,
+      "rasterPixelValueNode",
+    );
+    validateGaussianNodeAccess(
+      nodes.rasterBreakNode,
+      rasterBreakContextNodes,
+      "rasterBreakNode",
+    );
     const nextDirect = this.createRasterNode(nodes, "direct");
     const nextChunk =
       this.chunks === null ? null : this.createRasterNode(nodes, "chunk");
@@ -377,6 +393,17 @@ export class TileRasterizer {
         );
       }
       const pixelCenter = vec2(pixel).add(0.5);
+      const pixelOverrides: OverrideMap = new Map<any, () => any>([
+        [rasterPixelCoordinate, () => pixel],
+        [rasterScreenPosition, () => pixelCenter],
+        [rasterScreenUV, () => pixelCenter.div(frame.viewport.xy)],
+      ]);
+      const pixelValue = float(0).toVar("rasterPixelValue");
+      If(activePixel, () => {
+        pixelValue.assign(
+          resolveNode(nodes.rasterPixelValueNode, pixelOverrides),
+        );
+      });
       const accumulated = vec3(0).toVar("accumulated");
       const transmittance = float(1).toVar("transmittance");
       const depth = float(1).toVar("depth");
@@ -454,7 +481,25 @@ export class TileRasterizer {
               },
               ({ i: batchIndex }) => {
                 const mean = sharedMean.element(batchIndex);
+                const gaussianId = sharedGaussianId.element(batchIndex);
                 const delta = pixelCenter.sub(mean.xy);
+                const earlyOverrides: OverrideMap = new Map(pixelOverrides);
+                earlyOverrides.set(rasterPixelValue, () => pixelValue);
+                earlyOverrides.set(rasterGaussianIndex, () => gaussianId);
+                earlyOverrides.set(rasterObjectId, () =>
+                  uint(means.element(gaussianId).w),
+                );
+                earlyOverrides.set(rasterGaussianCenter, () => mean.xy);
+                earlyOverrides.set(rasterPixelDelta, () => delta);
+                earlyOverrides.set(rasterViewDepth, () => mean.z);
+                const shouldBreak = resolveNode(
+                  nodes.rasterBreakNode,
+                  earlyOverrides,
+                );
+                If(shouldBreak, () => {
+                  done.assign(bool(true));
+                  Break();
+                });
                 const conicAndThreshold = sharedConic.element(batchIndex);
                 const conic = conicAndThreshold.xyz;
                 const power = conic.x
@@ -470,7 +515,6 @@ export class TileRasterizer {
                     Continue();
                   },
                 );
-                const gaussianId = sharedGaussianId.element(batchIndex);
                 const l00 = sqrt(max(conic.x, 1e-12));
                 const l10 = conic.y.div(l00);
                 const l11 = sqrt(max(conic.z.sub(l10.mul(l10)), 1e-12));
@@ -479,16 +523,9 @@ export class TileRasterizer {
                   l11.mul(delta.y),
                 );
                 const overrides: OverrideMap = new Map<any, () => any>([
-                  [rasterGaussianIndex, () => gaussianId],
-                  [rasterObjectId, () => uint(means.element(gaussianId).w)],
-                  [rasterPixelCoordinate, () => pixel],
-                  [rasterScreenPosition, () => pixelCenter],
-                  [rasterScreenUV, () => pixelCenter.div(frame.viewport.xy)],
-                  [rasterGaussianCenter, () => mean.xy],
-                  [rasterPixelDelta, () => delta],
+                  ...earlyOverrides,
                   [rasterGaussianCoord, () => gaussianCoord],
                   [rasterUV, () => gaussianCoord.div(6).add(0.5)],
-                  [rasterViewDepth, () => mean.z],
                   [
                     rasterGaussianColor,
                     () => sharedColor.element(batchIndex).xyz,

@@ -512,20 +512,23 @@ const depthNode = pass.getTextureNode("depth"); // requires outputDepth: true
 ## Gaussian node customization
 
 `GaussianPass` exposes projection-domain slots evaluated once per packed
-Gaussian and raster-domain slots evaluated for every covered pixel/Gaussian
-pair. Read-only context accessors are imported from the package in the same
-style as Three.js TSL accessors:
+Gaussian, a pixel-scoped raster slot, and raster-domain slots evaluated during
+depth-ordered Gaussian traversal. Read-only context accessors are imported from
+the package in the same style as Three.js TSL accessors:
 
 ```ts
 import { Vector3 } from "three/webgpu";
-import { uniform } from "three/tsl";
+import { perspectiveDepthToViewZ, uniform } from "three/tsl";
 import {
   gaussianColor,
   gaussianProjectedArea,
   rasterGaussianColor,
   rasterGaussianOpacity,
+  rasterPixelCoordinate,
+  rasterPixelValue,
   rasterPower,
   rasterUV,
+  rasterViewDepth,
 } from "3dgs-tile-webgpu";
 
 const tint = uniform(new Vector3(1, 0.8, 0.8));
@@ -542,7 +545,25 @@ Projection slots are `gaussianPositionLocalNode`,
 `gaussianPositionWorldNode`, `gaussianScaleNode`, `gaussianRotationNode`,
 `gaussianOpacityNode`, `gaussianColorNode`, and `gaussianVisibilityNode`.
 Raster slots are `rasterColorNode`, `rasterAlphaNode`, and
-`rasterDiscardNode`.
+`rasterDiscardNode`. `rasterPixelValueNode` is evaluated once per active pixel
+before Gaussian iteration. Its cached scalar is exposed as `rasterPixelValue`.
+`rasterBreakNode` is evaluated for each depth-ordered Gaussian before ellipse
+evaluation; when true, it ends the remaining traversal for that pixel.
+
+Together, the pixel value and early break slots allow an external TSL depth
+module to sample scene depth once per pixel without coupling `GaussianPass` to
+a particular scene pass:
+
+```ts
+const sceneViewDepth = perspectiveDepthToViewZ(
+  opaquePass.getTextureNode("depth").load(rasterPixelCoordinate),
+  uniform(camera.near),
+  uniform(camera.far),
+).negate();
+
+pass.rasterPixelValueNode = sceneViewDepth;
+pass.rasterBreakNode = rasterPixelValue.lessThan(rasterViewDepth);
+```
 
 Replacing a projection root rebuilds only the projection `ComputeNode`;
 replacing a raster root rebuilds only the tile-rasterizer `ComputeNode`.

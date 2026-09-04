@@ -1,5 +1,5 @@
 import type { Node } from "three/webgpu";
-import { bool, exp, property } from "three/tsl";
+import { bool, exp, float, property } from "three/tsl";
 
 // Projection-domain accessors. gaussianIndex is the current packed
 // GaussianStore slot, not a persistent source-data identifier.
@@ -39,6 +39,7 @@ export const rasterObjectId = property("uint", "rasterObjectId");
 export const rasterPixelCoordinate = property("uvec2", "rasterPixelCoordinate");
 export const rasterScreenPosition = property("vec2", "rasterScreenPosition");
 export const rasterScreenUV = property("vec2", "rasterScreenUV");
+export const rasterPixelValue = property("float", "rasterPixelValue");
 export const rasterGaussianCenter = property("vec2", "rasterGaussianCenter");
 export const rasterPixelDelta = property("vec2", "rasterPixelDelta");
 export const rasterGaussianCoord = property("vec2", "rasterGaussianCoord");
@@ -60,6 +61,8 @@ export interface GaussianProjectionNodeSlots {
 }
 
 export interface GaussianRasterNodeSlots {
+  rasterPixelValueNode: Node;
+  rasterBreakNode: Node;
   rasterColorNode: Node;
   rasterAlphaNode: Node;
   rasterDiscardNode: Node;
@@ -77,6 +80,8 @@ export function createDefaultGaussianNodeSlots(): GaussianNodeSlots {
     gaussianOpacityNode: gaussianOpacity,
     gaussianColorNode: gaussianColor,
     gaussianVisibilityNode: bool(true),
+    rasterPixelValueNode: float(0),
+    rasterBreakNode: bool(false),
     rasterColorNode: rasterGaussianColor,
     rasterAlphaNode: rasterGaussianOpacity.mul(exp(rasterPower)),
     rasterDiscardNode: bool(false),
@@ -109,6 +114,7 @@ export const rasterContextNodes = new Set<Node>([
   rasterPixelCoordinate,
   rasterScreenPosition,
   rasterScreenUV,
+  rasterPixelValue,
   rasterGaussianCenter,
   rasterPixelDelta,
   rasterGaussianCoord,
@@ -118,6 +124,25 @@ export const rasterContextNodes = new Set<Node>([
   rasterGaussianOpacity,
   rasterPower,
   rasterWeight,
+]);
+
+// Accessors available to the pixel-scoped node before Gaussian iteration.
+export const rasterPixelContextNodes = new Set<Node>([
+  rasterPixelCoordinate,
+  rasterScreenPosition,
+  rasterScreenUV,
+]);
+
+// Accessors available before ellipse evaluation. A true rasterBreakNode ends
+// the current pixel's depth-ordered Gaussian traversal.
+export const rasterBreakContextNodes = new Set<Node>([
+  ...rasterPixelContextNodes,
+  rasterPixelValue,
+  rasterGaussianIndex,
+  rasterObjectId,
+  rasterGaussianCenter,
+  rasterPixelDelta,
+  rasterViewDepth,
 ]);
 
 export function validateGaussianNodeDomain(

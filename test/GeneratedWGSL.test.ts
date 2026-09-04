@@ -25,6 +25,7 @@ import {
   gaussianProjectedArea,
   rasterGaussianColor,
   rasterGaussianOpacity,
+  rasterPixelValue,
   rasterPixelCoordinate,
   rasterPower,
   rasterUV,
@@ -163,23 +164,39 @@ describe("generated Gaussian WGSL", () => {
     expect(chunkSource).toContain("0.25");
   });
 
-  it("builds raster discard against an external scene depth texture", () => {
+  it("loads external scene depth once per pixel before Gaussian iteration", () => {
     const nodes = createDefaultGaussianNodeSlots();
     const sceneDepth = texture(new DepthTexture(16, 16)).load(
       rasterPixelCoordinate,
     );
-    nodes.rasterDiscardNode = perspectiveDepthToViewZ(
+    nodes.rasterPixelValueNode = perspectiveDepthToViewZ(
       sceneDepth,
       uniform(0.01),
       uniform(10_000),
-    )
-      .negate()
-      .lessThan(rasterViewDepth);
+    ).negate();
+    nodes.rasterBreakNode = rasterPixelValue.lessThan(rasterViewDepth);
 
     const { rasterSource, chunkSource } = buildPipeline(nodes);
 
-    expect(rasterSource).toContain("textureLoad");
-    expect(chunkSource).toContain("textureLoad");
+    for (const source of [rasterSource, chunkSource]) {
+      const textureLoad = source.indexOf("textureLoad");
+      const gaussianIteration = source.indexOf("for (", textureLoad);
+      expect(textureLoad).toBeGreaterThan(-1);
+      expect(gaussianIteration).toBeGreaterThan(textureLoad);
+      expect(source.match(/textureLoad/g)).toHaveLength(1);
+      expect(source.slice(gaussianIteration)).toMatch(
+        /rasterPixelValue[\s\S]*done = true;[\s\S]*break;/,
+      );
+    }
+  });
+
+  it("rejects per-Gaussian accessors in the pixel-scoped node", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.rasterPixelValueNode = rasterViewDepth;
+
+    expect(() => buildPipeline(nodes)).toThrow(
+      /rasterPixelValueNode uses a context accessor that is not available/,
+    );
   });
 
   it("omits subpixel sample culling when disabled", () => {
