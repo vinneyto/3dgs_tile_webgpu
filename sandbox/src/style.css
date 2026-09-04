@@ -40,7 +40,7 @@ canvas {
   overflow: hidden;
 }
 
-#hud:has(#kernel-profile[open]) {
+#hud:has(#renderer-diagnostics[open], #kernel-profile[open]) {
   height: calc(100vh - 32px);
   height: calc(100dvh - 32px);
 }
@@ -72,12 +72,36 @@ small {
   color: #8792a8;
 }
 
-#metrics {
-  flex-shrink: 0;
+#renderer-diagnostics {
+  min-height: 0;
   margin: 4px 0 0;
   padding-top: 10px;
   border-top: 1px solid rgb(255 255 255 / 10%);
   color: #a9d4b2;
+}
+
+#renderer-diagnostics[open],
+#kernel-profile[open] {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+#renderer-diagnostics summary,
+#kernel-profile summary {
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#metrics {
+  flex: 1 1 0;
+  min-height: 0;
+  margin: 8px 0 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   font:
     11px/1.45 ui-monospace,
     SFMono-Regular,
@@ -139,19 +163,6 @@ small {
 
 [data-lod-color="2"]::before {
   background: #4ac58b;
-}
-
-#kernel-profile[open] {
-  display: flex;
-  flex: 1 1 0;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-}
-
-#kernel-profile summary {
-  cursor: pointer;
-  font-size: 12px;
 }
 
 #kernel-timings {
