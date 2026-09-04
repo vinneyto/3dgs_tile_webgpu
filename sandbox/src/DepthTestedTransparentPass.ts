@@ -7,26 +7,20 @@ import {
   type WebGPURenderer,
 } from "three/webgpu";
 
-/** Render only transparent objects while preserving an opaque pass's depth. */
+/** Render transparent objects against a copy of an opaque pass's depth. */
 export class DepthTestedTransparentPass extends PassNode {
-  private readonly sharedDepth: DepthTexture;
+  private readonly sourceDepth: DepthTexture;
 
-  constructor(scene: Scene, camera: Camera, sharedDepth: DepthTexture) {
+  constructor(scene: Scene, camera: Camera, sourceDepth: DepthTexture) {
     super(PassNode.COLOR, scene, camera);
     this.opaque = false;
     this.transparent = true;
-    this.sharedDepth = sharedDepth;
-
-    const privateDepth = this.renderTarget.depthTexture;
-    this.renderTarget.depthTexture = null;
-    privateDepth?.dispose();
-    this.renderTarget.depthTexture = sharedDepth;
+    this.sourceDepth = sourceDepth;
   }
 
   /**
    * Prime this render target after creation or resize so Three.js does not
-   * perform its one-time depth clear after the opaque pass has populated the
-   * shared attachment.
+   * perform its one-time depth clear after the opaque depth has been copied.
    */
   prepareDepth(renderer: WebGPURenderer, width: number, height: number): void {
     this.setSize(width, height);
@@ -46,6 +40,13 @@ export class DepthTestedTransparentPass extends PassNode {
         "DepthTestedTransparentPass requires a renderer in its NodeFrame",
       );
     }
+    const destinationDepth = this.renderTarget.depthTexture;
+    if (destinationDepth === null) {
+      throw new Error(
+        "DepthTestedTransparentPass requires its own depth texture",
+      );
+    }
+    renderer.copyTextureToTexture(this.sourceDepth, destinationDepth);
     const previousAutoClearDepth = renderer.autoClearDepth;
     renderer.autoClearDepth = false;
     try {
@@ -53,12 +54,5 @@ export class DepthTestedTransparentPass extends PassNode {
     } finally {
       renderer.autoClearDepth = previousAutoClearDepth;
     }
-  }
-
-  override dispose(): void {
-    if (this.renderTarget.depthTexture === this.sharedDepth) {
-      this.renderTarget.depthTexture = null;
-    }
-    super.dispose();
   }
 }
