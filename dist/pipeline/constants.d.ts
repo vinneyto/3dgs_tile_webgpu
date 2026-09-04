@@ -1,0 +1,10 @@
+export declare const TILE_SIZE = 16;
+export declare const WORKGROUP_SIZE = 256;
+export declare const DEFAULT_RASTER_CHUNK_SIZE = 8192;
+export declare const SCAN_BLOCK_ITEMS = 512;
+export declare const RADIX_BITS = 4;
+export declare const RADIX_SIZE: number;
+export declare const RADIX_ELEMENTS_PER_THREAD = 4;
+export declare const RADIX_BLOCK_ITEMS: number;
+export declare const RADIX_REDUCE_ITEMS: number;
+export declare const RADIX_MAX_SUBGROUPS = 32;

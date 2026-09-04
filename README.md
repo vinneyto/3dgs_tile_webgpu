@@ -86,8 +86,9 @@ parser-agnostic `GaussianData` boundary.
 
 ## Usage
 
-Until the package is published to npm, install it directly from GitHub. npm
-runs the package build during installation:
+Until the package is published to npm, install it directly from GitHub. The
+repository includes the compiled `dist` output, so installation does not need
+to install the package's development toolchain or run a local build:
 
 ```bash
 npm install github:vinneyto/3dgs_tile_webgpu
@@ -686,6 +687,9 @@ npm test
 npm run build
 npm run dev
 ```
+
+Commit the regenerated `dist` output together with source changes. Publishing
+the package also rebuilds it through `prepublishOnly`.
 
 Append `?sort=packed16` to the demo URL to switch from the default float32 mode.
 
