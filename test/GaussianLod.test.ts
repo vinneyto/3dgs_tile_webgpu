@@ -3,12 +3,15 @@ import {
   Object3D,
   PerspectiveCamera,
   Ray,
+  Raycaster,
   StorageBufferAttribute,
   Vector3,
 } from "three/webgpu";
 
+import { GaussianCloud } from "../src/GaussianCloud";
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLod } from "../src/GaussianLod";
+import type { GaussianStore } from "../src/GaussianStore";
 import {
   DistanceAwareRadialLodPackingStrategy,
   MaximumLodPackingStrategy,
@@ -168,6 +171,71 @@ describe("GaussianLod", () => {
     expect(actual.map(({ distance }) => distance)).toEqual(
       expected.map(({ distance }) => distance),
     );
+  });
+
+  it("picks the Gaussian that crosses accumulated alpha instead of transparent dust", () => {
+    const octree = GaussianOctree.build(
+      gaussianData(
+        [
+          [0, 0, 1],
+          [0, 0, 0.5],
+          [0, 0, 0],
+        ],
+        [0.1, 0.1, 0.1],
+        [0.01, 0.35, 0.35],
+      ),
+    );
+    const lod = GaussianLod.build(octree);
+    const packing = new MaximumLodPackingStrategy().pack({
+      lod,
+      maxGaussians: 3,
+    });
+    const cloud = new GaussianCloud(
+      {} as GaussianStore,
+      0,
+      3,
+      "test",
+      lod,
+      packing,
+    );
+    cloud.updateMatrixWorld(true);
+    const intersections: Parameters<GaussianCloud["raycast"]>[1] = [];
+
+    cloud.raycast(
+      new Raycaster(new Vector3(0, 0, 2), new Vector3(0, 0, -1)),
+      intersections,
+    );
+
+    expect(intersections).toHaveLength(1);
+    expect(intersections[0]!.index).toBe(2);
+  });
+
+  it("does not pick a ray whose accumulated alpha stays below the threshold", () => {
+    const octree = GaussianOctree.build(
+      gaussianData([[0, 0, 0]], [0.1], [0.1]),
+    );
+    const lod = GaussianLod.build(octree);
+    const packing = new MaximumLodPackingStrategy().pack({
+      lod,
+      maxGaussians: 1,
+    });
+    const cloud = new GaussianCloud(
+      {} as GaussianStore,
+      0,
+      1,
+      "test",
+      lod,
+      packing,
+    );
+    cloud.updateMatrixWorld(true);
+    const intersections: Parameters<GaussianCloud["raycast"]>[1] = [];
+
+    cloud.raycast(
+      new Raycaster(new Vector3(0, 0, 2), new Vector3(0, 0, -1)),
+      intersections,
+    );
+
+    expect(intersections).toHaveLength(0);
   });
 
   it("packs maximum detail and respects a radial object budget", () => {
@@ -679,6 +747,7 @@ function packingAtLevel(lod: GaussianLod, level: number) {
 function gaussianData(
   points: readonly (readonly number[])[],
   scaleValues: readonly number[] = points.map(() => 0.1),
+  opacityValues: readonly number[] = points.map(() => 1),
 ): GaussianData {
   const means = new Float32Array(points.length * 4);
   const scalesOpacity = new Float32Array(points.length * 4);
@@ -688,7 +757,7 @@ function gaussianData(
     const point = points[index]!;
     const scale = scaleValues[index]!;
     means.set([point[0]!, point[1]!, point[2]!, 0], index * 4);
-    scalesOpacity.set([scale, scale, scale, 1], index * 4);
+    scalesOpacity.set([scale, scale, scale, opacityValues[index]!], index * 4);
     rotations[index * 4 + 3] = 1;
     shCoefficients.set([index, index, index, 0], index * 4);
   }

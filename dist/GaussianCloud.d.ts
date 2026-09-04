@@ -8,6 +8,8 @@ export declare class GaussianCloud extends Object3D {
     readonly objectId: number;
     readonly lod: GaussianLod | null;
     raycastMode: GaussianRaycastMode;
+    /** Accumulated alpha required for a pointer hit. Must be in (0, 1). */
+    raycastAlphaThreshold: number;
     private readonly ownerStore;
     private packing;
     private packedGaussianCount;

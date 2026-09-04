@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  DepthTexture,
   PerspectiveCamera,
   StorageBufferAttribute,
   StorageTexture,
   type WebGPURenderer,
   WGSLNodeBuilder,
 } from "three/webgpu";
-import { context, vec3 } from "three/tsl";
+import {
+  context,
+  perspectiveDepthToViewZ,
+  texture,
+  uniform,
+  vec3,
+} from "three/tsl";
 
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLodColorHelper } from "../src/GaussianLodColorHelper";
@@ -18,8 +25,10 @@ import {
   gaussianProjectedArea,
   rasterGaussianColor,
   rasterGaussianOpacity,
+  rasterPixelCoordinate,
   rasterPower,
   rasterUV,
+  rasterViewDepth,
 } from "../src/nodes/GaussianContextNodes";
 import { FrameUniforms } from "../src/pipeline/FrameUniforms";
 import { ObjectFrameState } from "../src/pipeline/ObjectFrameState";
@@ -152,6 +161,25 @@ describe("generated Gaussian WGSL", () => {
     expect(rasterSource).toContain("0.25");
     expect(rasterSource).toContain("vec3<f32>");
     expect(chunkSource).toContain("0.25");
+  });
+
+  it("builds raster discard against an external scene depth texture", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    const sceneDepth = texture(new DepthTexture(16, 16)).load(
+      rasterPixelCoordinate,
+    );
+    nodes.rasterDiscardNode = perspectiveDepthToViewZ(
+      sceneDepth,
+      uniform(0.01),
+      uniform(10_000),
+    )
+      .negate()
+      .lessThan(rasterViewDepth);
+
+    const { rasterSource, chunkSource } = buildPipeline(nodes);
+
+    expect(rasterSource).toContain("textureLoad");
+    expect(chunkSource).toContain("textureLoad");
   });
 
   it("omits subpixel sample culling when disabled", () => {

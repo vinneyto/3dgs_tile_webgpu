@@ -1,4 +1,4 @@
-import { Box3, Ray, Vector3 } from "three/webgpu";
+import { Box3, Quaternion, Ray, Vector3 } from "three/webgpu";
 
 import type { GaussianData } from "./GaussianData";
 
@@ -22,6 +22,96 @@ export interface GaussianOctreeRaycastHit {
   readonly gaussianIndex: number;
   readonly distance: number;
   readonly point: Vector3;
+}
+
+const RAYCAST_ALPHA_CUTOFF = 1 / 255;
+const RAYCAST_ALPHA_MAX = 0.99;
+const MIN_GAUSSIAN_SCALE = 1e-12;
+
+/**
+ * Return the Gaussian that makes front-to-back accumulated alpha cross the
+ * requested threshold. Candidate hits must be ordered nearest first.
+ */
+export function alphaCompositeRaycastHit(
+  ray: Ray,
+  data: GaussianData,
+  hits: readonly GaussianOctreeRaycastHit[],
+  alphaThreshold: number,
+): GaussianOctreeRaycastHit | null {
+  if (!(alphaThreshold > 0 && alphaThreshold < 1)) {
+    throw new RangeError(
+      "Gaussian raycast alphaThreshold must be between 0 and 1",
+    );
+  }
+
+  const means = data.means.array as Float32Array;
+  const scalesOpacity = data.scalesOpacity.array as Float32Array;
+  const rotations = data.rotations.array as Float32Array;
+  const relativeOrigin = new Vector3();
+  const scaledDirection = new Vector3();
+  const closest = new Vector3();
+  const inverseRotation = new Quaternion();
+  let transmittance = 1;
+
+  for (const hit of hits) {
+    const offset = hit.gaussianIndex * 4;
+    const opacity = Math.min(1, Math.max(0, scalesOpacity[offset + 3]!));
+    if (opacity < RAYCAST_ALPHA_CUTOFF) continue;
+
+    inverseRotation
+      .set(
+        -rotations[offset]!,
+        -rotations[offset + 1]!,
+        -rotations[offset + 2]!,
+        rotations[offset + 3]!,
+      )
+      .normalize();
+    relativeOrigin
+      .set(
+        ray.origin.x - means[offset]!,
+        ray.origin.y - means[offset + 1]!,
+        ray.origin.z - means[offset + 2]!,
+      )
+      .applyQuaternion(inverseRotation);
+    scaledDirection.copy(ray.direction).applyQuaternion(inverseRotation);
+
+    const scaleX = Math.max(scalesOpacity[offset]!, MIN_GAUSSIAN_SCALE);
+    const scaleY = Math.max(scalesOpacity[offset + 1]!, MIN_GAUSSIAN_SCALE);
+    const scaleZ = Math.max(scalesOpacity[offset + 2]!, MIN_GAUSSIAN_SCALE);
+    relativeOrigin.set(
+      relativeOrigin.x / scaleX,
+      relativeOrigin.y / scaleY,
+      relativeOrigin.z / scaleZ,
+    );
+    scaledDirection.set(
+      scaledDirection.x / scaleX,
+      scaledDirection.y / scaleY,
+      scaledDirection.z / scaleZ,
+    );
+
+    const directionLengthSquared = scaledDirection.lengthSq();
+    if (directionLengthSquared <= Number.EPSILON) continue;
+    const rayDistance = Math.max(
+      0,
+      -relativeOrigin.dot(scaledDirection) / directionLengthSquared,
+    );
+    closest.copy(relativeOrigin).addScaledVector(scaledDirection, rayDistance);
+    const alpha = Math.min(
+      RAYCAST_ALPHA_MAX,
+      opacity * Math.exp(-0.5 * closest.lengthSq()),
+    );
+    if (alpha < RAYCAST_ALPHA_CUTOFF) continue;
+
+    transmittance *= 1 - alpha;
+    if (1 - transmittance < alphaThreshold) continue;
+    const point = ray.at(rayDistance, new Vector3());
+    return {
+      gaussianIndex: hit.gaussianIndex,
+      distance: ray.origin.distanceTo(point),
+      point,
+    };
+  }
+  return null;
 }
 
 /** One adaptive octree cell. Source indices are stored only for leaves. */

@@ -14,3 +14,16 @@ export function compositePremultipliedOver(
     overlayColor.a.add(baseColor.a.mul(inverseOverlayAlpha)),
   );
 }
+
+/** Composite an overlay only where its pass depth is in front of the base. */
+export function compositeDepthTestedPremultipliedOver(
+  base: Node<"vec4">,
+  overlay: Node<"vec4">,
+  baseViewZ: Node<"float">,
+  overlayViewZ: Node<"float">,
+): Node<"vec4"> {
+  const visibleOverlay = overlayViewZ
+    .greaterThanEqual(baseViewZ)
+    .select(vec4(overlay), vec4(0));
+  return compositePremultipliedOver(base, visibleOverlay);
+}

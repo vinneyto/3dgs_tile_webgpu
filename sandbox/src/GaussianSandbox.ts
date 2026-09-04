@@ -1,14 +1,27 @@
 import {
+  DirectionalLight,
+  Group,
+  HemisphereLight,
+  Layers,
+  Mesh,
+  MeshBasicMaterial,
+  MeshStandardMaterial,
+  PassNode,
   PerspectiveCamera,
+  Raycaster,
   RenderPipeline,
   Scene,
+  SphereGeometry,
+  Vector2,
   WebGPURenderer,
 } from "three/webgpu";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { pass as scenePass } from "three/tsl";
+import { pass as scenePass, perspectiveDepthToViewZ, uniform } from "three/tsl";
 import {
   CanonicalGaussianPlyLoader,
   gaussianPass,
+  rasterPixelCoordinate,
+  rasterViewDepth,
   type GaussianCloud,
   type GaussianPass,
   GaussianStore,
@@ -20,7 +33,10 @@ import {
   type CloudBounds,
 } from "./cloudData";
 import { CloudStatus } from "./CloudStatus";
-import { compositePremultipliedOver } from "./compositePremultipliedOver";
+import {
+  compositeDepthTestedPremultipliedOver,
+  compositePremultipliedOver,
+} from "./compositePremultipliedOver";
 import { DebugPanel } from "./DebugPanel";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 import { readSandboxOptions, type SandboxOptions } from "./SandboxOptions";
@@ -30,15 +46,58 @@ export class GaussianSandbox {
   private readonly loader = new CanonicalGaussianPlyLoader();
   private readonly scene = new Scene();
   private readonly controls: OrbitControls;
+  private readonly hoverRaycaster = new Raycaster();
+  private readonly hoverPointer = new Vector2();
+  private readonly sceneLayers = new Layers();
+  private readonly overlayLayers = new Layers();
+  private readonly hoverMarkerGeometry = new SphereGeometry(1, 24, 16);
+  private readonly hoverMarkerOpaque = new Mesh(
+    this.hoverMarkerGeometry,
+    new MeshStandardMaterial({
+      color: 0xff8a4c,
+      emissive: 0x8a2f12,
+      emissiveIntensity: 0.75,
+      metalness: 0.05,
+      roughness: 0.28,
+    }),
+  );
+  private readonly hoverMarkerOverlay = new Mesh(
+    this.hoverMarkerGeometry,
+    new MeshBasicMaterial({
+      color: 0xffb08a,
+      transparent: true,
+      opacity: 0.3,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
+  private readonly hoverMarker = new Group();
   private readonly debugPanel: DebugPanel;
   private readonly spatialDebug = new SpatialDebugHelpers();
   private readonly cloudStatus: CloudStatus;
   private pipeline: RenderPipeline | null = null;
   private pass: GaussianPass | null = null;
   private store: GaussianStore | null = null;
-  private helperPass: ReturnType<typeof scenePass> | null = null;
+  private opaquePass: PassNode | null = null;
+  private transparentPass: PassNode | null = null;
+  private overlayPass: PassNode | null = null;
+  private cloud: GaussianCloud | null = null;
+  private controlsActive = false;
   private disposed = false;
   private readonly handleResize = () => this.resize();
+  private readonly handleControlsStart = () => {
+    this.controlsActive = true;
+    this.hoverMarker.visible = false;
+  };
+  private readonly handleControlsEnd = () => {
+    this.controlsActive = false;
+  };
+  private readonly handlePointerMove = (event: PointerEvent) =>
+    this.updateHoverMarker(event);
+  private readonly handlePointerLeave = () => {
+    this.hoverMarker.visible = false;
+  };
 
   private constructor(
     private readonly renderer: WebGPURenderer,
@@ -51,6 +110,26 @@ export class GaussianSandbox {
   ) {
     this.controls = new OrbitControls(camera, renderer.domElement);
     this.controls.enableDamping = true;
+    this.controls.addEventListener("start", this.handleControlsStart);
+    this.controls.addEventListener("end", this.handleControlsEnd);
+    renderer.domElement.addEventListener("pointermove", this.handlePointerMove);
+    renderer.domElement.addEventListener(
+      "pointerleave",
+      this.handlePointerLeave,
+    );
+    this.hoverMarker.visible = false;
+    this.hoverMarkerOpaque.renderOrder = 1;
+    this.hoverMarkerOverlay.renderOrder = 2;
+    this.hoverMarkerOverlay.layers.set(1);
+    this.overlayLayers.set(1);
+    this.hoverMarker.add(this.hoverMarkerOpaque, this.hoverMarkerOverlay);
+    const markerKeyLight = new DirectionalLight(0xffffff, 2.5);
+    markerKeyLight.position.set(1, 2, 3);
+    this.scene.add(
+      new HemisphereLight(0xdde8ff, 0x182033, 1.7),
+      markerKeyLight,
+      this.hoverMarker,
+    );
     this.cloudStatus = new CloudStatus(status);
     this.debugPanel = new DebugPanel(
       renderer,
@@ -132,9 +211,22 @@ export class GaussianSandbox {
     this.disposed = true;
     this.renderer.setAnimationLoop(null);
     removeEventListener("resize", this.handleResize);
+    this.controls.removeEventListener("start", this.handleControlsStart);
+    this.controls.removeEventListener("end", this.handleControlsEnd);
+    this.renderer.domElement.removeEventListener(
+      "pointermove",
+      this.handlePointerMove,
+    );
+    this.renderer.domElement.removeEventListener(
+      "pointerleave",
+      this.handlePointerLeave,
+    );
     this.clearCloud();
     this.debugPanel.dispose();
     this.controls.dispose();
+    this.hoverMarkerGeometry.dispose();
+    this.hoverMarkerOpaque.material.dispose();
+    this.hoverMarkerOverlay.material.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -195,8 +287,10 @@ export class GaussianSandbox {
     const data = cloud.lod!.octree.data;
     const bounds = measureCloud(data);
     this.store = store;
+    this.cloud = cloud;
     this.scene.add(cloud);
     this.frameCloud(bounds);
+    this.hoverMarker.scale.setScalar(Math.max(bounds.radius * 0.012, 0.005));
 
     this.pass = gaussianPass(
       this.renderer,
@@ -204,16 +298,46 @@ export class GaussianSandbox {
       store,
       this.options.pass,
     );
+    this.opaquePass = scenePass(this.scene, this.camera);
+    this.opaquePass.transparent = false;
+    this.opaquePass.opaque = true;
+    this.opaquePass.setLayers(this.sceneLayers);
+    const opaqueDepth = this.opaquePass
+      .getTextureNode("depth")
+      .load(rasterPixelCoordinate);
+    const opaqueViewDepth = perspectiveDepthToViewZ(
+      opaqueDepth,
+      uniform(this.camera.near),
+      uniform(this.camera.far),
+    ).negate();
+    this.pass.rasterDiscardNode = opaqueViewDepth.lessThan(rasterViewDepth);
+    this.transparentPass = scenePass(this.scene, this.camera);
+    this.transparentPass.transparent = true;
+    this.transparentPass.opaque = false;
+    this.transparentPass.setLayers(this.sceneLayers);
+    this.overlayPass = scenePass(this.scene, this.camera);
+    this.overlayPass.transparent = true;
+    this.overlayPass.opaque = false;
+    this.overlayPass.setLayers(this.overlayLayers);
     this.spatialDebug.attach(cloud, this.pass);
     this.debugPanel.setPass(this.pass, {
       cloud,
       onPack: () => this.cloudStatus.packed(source, data.count, cloud, store),
     });
     this.pipeline = new RenderPipeline(this.renderer);
-    this.helperPass = scenePass(this.scene, this.camera);
-    this.pipeline.outputNode = compositePremultipliedOver(
+    const opaqueWithGaussians = compositePremultipliedOver(
+      this.opaquePass,
       this.pass,
-      this.helperPass,
+    );
+    const withTransparentScene = compositeDepthTestedPremultipliedOver(
+      opaqueWithGaussians,
+      this.transparentPass,
+      this.opaquePass.getViewZNode(),
+      this.transparentPass.getViewZNode(),
+    );
+    this.pipeline.outputNode = compositePremultipliedOver(
+      withTransparentScene,
+      this.overlayPass,
     );
     this.cloudStatus.preparing(source, data.count);
   }
@@ -222,11 +346,17 @@ export class GaussianSandbox {
     this.debugPanel.setPass(null);
     this.spatialDebug.clear();
     this.pass?.dispose();
-    this.helperPass?.dispose();
+    this.overlayPass?.dispose();
+    this.transparentPass?.dispose();
+    this.opaquePass?.dispose();
     this.pipeline?.dispose();
     this.store?.dispose();
+    this.cloud = null;
+    this.hoverMarker.visible = false;
     this.pass = null;
-    this.helperPass = null;
+    this.overlayPass = null;
+    this.transparentPass = null;
+    this.opaquePass = null;
     this.pipeline = null;
     this.store = null;
   }
@@ -243,6 +373,30 @@ export class GaussianSandbox {
     this.camera.updateProjectionMatrix();
     this.controls.target.set(bounds.centerX, bounds.centerY, bounds.centerZ);
     this.controls.update();
+  }
+
+  private updateHoverMarker(event: PointerEvent): void {
+    const cloud = this.cloud;
+    if (this.controlsActive || cloud === null) {
+      this.hoverMarker.visible = false;
+      return;
+    }
+
+    const bounds = this.renderer.domElement.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return;
+    this.hoverPointer.set(
+      ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+      -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
+    );
+    this.hoverRaycaster.setFromCamera(this.hoverPointer, this.camera);
+    cloud.updateWorldMatrix(true, false);
+    const hit = this.hoverRaycaster.intersectObject(cloud, false)[0];
+    if (hit === undefined) {
+      this.hoverMarker.visible = false;
+      return;
+    }
+    this.hoverMarker.position.copy(hit.point);
+    this.hoverMarker.visible = true;
   }
 
   private resize(): void {

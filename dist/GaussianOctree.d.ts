@@ -19,6 +19,11 @@ export interface GaussianOctreeRaycastHit {
     readonly distance: number;
     readonly point: Vector3;
 }
+/**
+ * Return the Gaussian that makes front-to-back accumulated alpha cross the
+ * requested threshold. Candidate hits must be ordered nearest first.
+ */
+export declare function alphaCompositeRaycastHit(ray: Ray, data: GaussianData, hits: readonly GaussianOctreeRaycastHit[], alphaThreshold: number): GaussianOctreeRaycastHit | null;
 /** One adaptive octree cell. Source indices are stored only for leaves. */
 export declare class GaussianOctreeNode {
     readonly id: number;
