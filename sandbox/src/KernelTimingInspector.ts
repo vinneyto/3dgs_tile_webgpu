@@ -42,8 +42,8 @@ interface ResolvedInspectorFrame {
 interface TimestampBackend {
   trackTimestamp: boolean;
   timestampQueryPool?: {
-    compute?: TimestampPool;
-    render?: TimestampPool;
+    compute?: TimestampPool | null;
+    render?: TimestampPool | null;
   };
   hasTimestampQuery(uid: string): boolean;
   getTimestamp(uid: string): number;
@@ -223,12 +223,10 @@ function setTimestampTracking(
 ): void {
   const backend = timestampBackend(renderer);
   backend.trackTimestamp = enabled;
-  if (backend.timestampQueryPool?.compute !== undefined) {
-    backend.timestampQueryPool.compute.trackTimestamp = enabled;
-  }
-  if (backend.timestampQueryPool?.render !== undefined) {
-    backend.timestampQueryPool.render.trackTimestamp = enabled;
-  }
+  const computePool = backend.timestampQueryPool?.compute;
+  const renderPool = backend.timestampQueryPool?.render;
+  if (computePool != null) computePool.trackTimestamp = enabled;
+  if (renderPool != null) renderPool.trackTimestamp = enabled;
 }
 
 function computeGroupName(group: ComputeNode | ComputeNode[]): string {
