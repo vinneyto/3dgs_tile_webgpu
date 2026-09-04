@@ -3,6 +3,7 @@ import {
   HemisphereLight,
   Mesh,
   MeshStandardMaterial,
+  PassNode,
   PerspectiveCamera,
   Raycaster,
   RenderPipeline,
@@ -12,10 +13,12 @@ import {
   WebGPURenderer,
 } from "three/webgpu";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { pass as scenePass } from "three/tsl";
+import { pass as scenePass, perspectiveDepthToViewZ, uniform } from "three/tsl";
 import {
   CanonicalGaussianPlyLoader,
   gaussianPass,
+  rasterPixelCoordinate,
+  rasterViewDepth,
   type GaussianCloud,
   type GaussianPass,
   GaussianStore,
@@ -29,6 +32,7 @@ import {
 import { CloudStatus } from "./CloudStatus";
 import { compositePremultipliedOver } from "./compositePremultipliedOver";
 import { DebugPanel } from "./DebugPanel";
+import { DepthTestedTransparentPass } from "./DepthTestedTransparentPass";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 import { readSandboxOptions, type SandboxOptions } from "./SandboxOptions";
 import { SpatialDebugHelpers } from "./SpatialDebugHelpers";
@@ -39,6 +43,7 @@ export class GaussianSandbox {
   private readonly controls: OrbitControls;
   private readonly hoverRaycaster = new Raycaster();
   private readonly hoverPointer = new Vector2();
+  private readonly drawingBufferSize = new Vector2();
   private readonly hoverMarker = new Mesh(
     new SphereGeometry(1, 24, 16),
     new MeshStandardMaterial({
@@ -54,7 +59,8 @@ export class GaussianSandbox {
   private pipeline: RenderPipeline | null = null;
   private pass: GaussianPass | null = null;
   private store: GaussianStore | null = null;
-  private helperPass: ReturnType<typeof scenePass> | null = null;
+  private opaquePass: PassNode | null = null;
+  private transparentPass: DepthTestedTransparentPass | null = null;
   private cloud: GaussianCloud | null = null;
   private controlsActive = false;
   private disposed = false;
@@ -264,16 +270,37 @@ export class GaussianSandbox {
       store,
       this.options.pass,
     );
+    this.opaquePass = scenePass(this.scene, this.camera);
+    this.opaquePass.transparent = false;
+    this.opaquePass.opaque = true;
+    const opaqueDepth = this.opaquePass
+      .getTextureNode("depth")
+      .load(rasterPixelCoordinate);
+    const opaqueViewDepth = perspectiveDepthToViewZ(
+      opaqueDepth,
+      uniform(this.camera.near),
+      uniform(this.camera.far),
+    ).negate();
+    this.pass.rasterDiscardNode = opaqueViewDepth.lessThan(rasterViewDepth);
+    this.transparentPass = new DepthTestedTransparentPass(
+      this.scene,
+      this.camera,
+      this.opaquePass.renderTarget.depthTexture!,
+    );
+    this.prepareScenePassDepth();
     this.spatialDebug.attach(cloud, this.pass);
     this.debugPanel.setPass(this.pass, {
       cloud,
       onPack: () => this.cloudStatus.packed(source, data.count, cloud, store),
     });
     this.pipeline = new RenderPipeline(this.renderer);
-    this.helperPass = scenePass(this.scene, this.camera);
-    this.pipeline.outputNode = compositePremultipliedOver(
+    const opaqueWithGaussians = compositePremultipliedOver(
+      this.opaquePass,
       this.pass,
-      this.helperPass,
+    );
+    this.pipeline.outputNode = compositePremultipliedOver(
+      opaqueWithGaussians,
+      this.transparentPass,
     );
     this.cloudStatus.preparing(source, data.count);
   }
@@ -282,13 +309,15 @@ export class GaussianSandbox {
     this.debugPanel.setPass(null);
     this.spatialDebug.clear();
     this.pass?.dispose();
-    this.helperPass?.dispose();
+    this.transparentPass?.dispose();
+    this.opaquePass?.dispose();
     this.pipeline?.dispose();
     this.store?.dispose();
     this.cloud = null;
     this.hoverMarker.visible = false;
     this.pass = null;
-    this.helperPass = null;
+    this.transparentPass = null;
+    this.opaquePass = null;
     this.pipeline = null;
     this.store = null;
   }
@@ -337,5 +366,17 @@ export class GaussianSandbox {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    this.prepareScenePassDepth();
+  }
+
+  private prepareScenePassDepth(): void {
+    if (this.opaquePass === null || this.transparentPass === null) return;
+    this.renderer.getDrawingBufferSize(this.drawingBufferSize);
+    this.opaquePass.setSize(this.drawingBufferSize.x, this.drawingBufferSize.y);
+    this.transparentPass.prepareDepth(
+      this.renderer,
+      this.drawingBufferSize.x,
+      this.drawingBufferSize.y,
+    );
   }
 }
