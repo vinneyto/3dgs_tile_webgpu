@@ -1,7 +1,9 @@
 import {
   DirectionalLight,
+  Group,
   HemisphereLight,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
   PassNode,
   PerspectiveCamera,
@@ -44,15 +46,29 @@ export class GaussianSandbox {
   private readonly hoverRaycaster = new Raycaster();
   private readonly hoverPointer = new Vector2();
   private readonly drawingBufferSize = new Vector2();
-  private readonly hoverMarker = new Mesh(
-    new SphereGeometry(1, 24, 16),
+  private readonly hoverMarkerGeometry = new SphereGeometry(1, 24, 16);
+  private readonly hoverMarkerOpaque = new Mesh(
+    this.hoverMarkerGeometry,
     new MeshStandardMaterial({
       color: 0xff8a4c,
-      emissive: 0x351207,
+      emissive: 0x8a2f12,
+      emissiveIntensity: 0.75,
       metalness: 0.05,
       roughness: 0.28,
     }),
   );
+  private readonly hoverMarkerOverlay = new Mesh(
+    this.hoverMarkerGeometry,
+    new MeshBasicMaterial({
+      color: 0xffb08a,
+      transparent: true,
+      opacity: 0.3,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    }),
+  );
+  private readonly hoverMarker = new Group();
   private readonly debugPanel: DebugPanel;
   private readonly spatialDebug = new SpatialDebugHelpers();
   private readonly cloudStatus: CloudStatus;
@@ -97,10 +113,14 @@ export class GaussianSandbox {
       this.handlePointerLeave,
     );
     this.hoverMarker.visible = false;
-    this.hoverMarker.renderOrder = 1;
+    this.hoverMarkerOpaque.renderOrder = 1;
+    this.hoverMarkerOverlay.renderOrder = 2;
+    this.hoverMarker.add(this.hoverMarkerOpaque, this.hoverMarkerOverlay);
+    const markerKeyLight = new DirectionalLight(0xffffff, 2.5);
+    markerKeyLight.position.set(1, 2, 3);
     this.scene.add(
       new HemisphereLight(0xdde8ff, 0x182033, 1.7),
-      new DirectionalLight(0xffffff, 2.5),
+      markerKeyLight,
       this.hoverMarker,
     );
     this.cloudStatus = new CloudStatus(status);
@@ -197,8 +217,9 @@ export class GaussianSandbox {
     this.clearCloud();
     this.debugPanel.dispose();
     this.controls.dispose();
-    this.hoverMarker.geometry.dispose();
-    this.hoverMarker.material.dispose();
+    this.hoverMarkerGeometry.dispose();
+    this.hoverMarkerOpaque.material.dispose();
+    this.hoverMarkerOverlay.material.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
