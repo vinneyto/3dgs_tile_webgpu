@@ -455,6 +455,11 @@ the compact active cell/level cut (excluding clipped cells) used both to fill th
 `GaussianCloud.raycastMode = "rendered"`, to keep raycasts synchronized with the
 rendered LOD. Set the mode to `"full"` to raycast the complete source octree.
 
+Pointer hits use front-to-back alpha compositing instead of selecting the first
+intersected splat sphere. The default `cloud.raycastAlphaThreshold = 0.5`
+ignores isolated transparent Gaussians and selects the Gaussian that makes the
+accumulated alpha cross 50%. Set another value in `(0, 1)` to tune picking.
+
 Both spatial structures have local-space Three.js debug helpers. Attach them as
 children of the cloud so they inherit its position, rotation and scale:
 

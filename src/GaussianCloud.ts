@@ -8,6 +8,7 @@ import {
 
 import type { GaussianStore } from "./GaussianStore";
 import type { GaussianLod, GaussianLodPacking } from "./GaussianLod";
+import { alphaCompositeRaycastHit } from "./GaussianOctree";
 
 export type GaussianRaycastMode = "rendered" | "full";
 
@@ -18,6 +19,8 @@ export class GaussianCloud extends Object3D {
   readonly lod: GaussianLod | null;
 
   raycastMode: GaussianRaycastMode = "rendered";
+  /** Accumulated alpha required for a pointer hit. Must be in (0, 1). */
+  raycastAlphaThreshold = 0.5;
 
   private readonly ownerStore: GaussianStore;
   private packing: GaussianLodPacking | null;
@@ -88,16 +91,23 @@ export class GaussianCloud extends Object3D {
       this.raycastMode === "full"
         ? this.lod.octree.raycast(localRay)
         : this.lod.raycast(localRay, this.packing);
-    for (const hit of hits) {
+    const hit = alphaCompositeRaycastHit(
+      localRay,
+      this.lod.octree.data,
+      hits,
+      this.raycastAlphaThreshold,
+    );
+    if (hit !== null) {
       const point = hit.point.clone().applyMatrix4(this.matrixWorld);
       const distance = raycaster.ray.origin.distanceTo(point);
-      if (distance < raycaster.near || distance > raycaster.far) continue;
-      intersections.push({
-        distance,
-        point,
-        object: this,
-        index: hit.gaussianIndex,
-      });
+      if (distance >= raycaster.near && distance <= raycaster.far) {
+        intersections.push({
+          distance,
+          point,
+          object: this,
+          index: hit.gaussianIndex,
+        });
+      }
     }
   }
 
