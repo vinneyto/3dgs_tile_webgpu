@@ -1,6 +1,6 @@
-import { StorageBufferAttribute as Pe, Object3D as ps, Matrix4 as Re, Ray as Fs, Vector3 as C, Box3 as kt, LineSegments as Vs, BufferGeometry as qs, Float32BufferAttribute as Ks, LineBasicMaterial as Ys, BoxGeometry as Xs, MeshBasicMaterial as Hs, DoubleSide as Zs, InstancedMesh as Js, Color as Qs, IndirectStorageBufferAttribute as ei, Vector4 as ti, Scene as fs, PassNode as Wt, HalfFloatType as Ft, SRGBColorSpace as si, StorageTexture as Vt, NoColorSpace as ii, RedFormat as ri, FloatType as ai, NearestFilter as qt, PerspectiveCamera as ni, Vector2 as oi } from "three/webgpu";
-import { property as P, bool as me, exp as gs, storage as m, uint as g, vec3 as et, mix as li, float as V, wgslFn as $, instanceIndex as ne, workgroupArray as W, workgroupId as Y, invocationLocalIndex as _e, uniform as Te, uvec2 as Ve, Fn as bt, If as B, Return as he, vec4 as Q, mat4 as Kt, normalize as ci, sqrt as Se, clamp as ve, log as ui, ceil as Yt, vec2 as be, ivec2 as We, int as Xt, floor as vt, subgroupIndex as nt, invocationSubgroupIndex as ot, subgroupSize as lt, storageTexture as _t, select as Ne, Loop as Ae, Continue as ct, max as Ht, Break as Ze, workgroupBarrier as Zt, textureStore as Jt, colorSpaceToWorking as di } from "three/tsl";
-class ms {
+import { StorageBufferAttribute as Re, Object3D as fs, Matrix4 as Pe, Ray as qs, Vector3 as C, Box3 as kt, LineSegments as Ks, BufferGeometry as Ys, Float32BufferAttribute as Xs, LineBasicMaterial as Hs, BoxGeometry as Zs, MeshBasicMaterial as Js, DoubleSide as Qs, InstancedMesh as er, Color as tr, IndirectStorageBufferAttribute as sr, Vector4 as rr, Scene as gs, PassNode as Wt, HalfFloatType as Ft, SRGBColorSpace as ir, StorageTexture as Vt, NoColorSpace as ar, RedFormat as nr, FloatType as or, NearestFilter as qt, PerspectiveCamera as lr, Vector2 as cr } from "three/webgpu";
+import { property as R, bool as me, exp as ms, storage as m, uint as g, vec3 as et, mix as ur, float as V, wgslFn as M, instanceIndex as ne, workgroupArray as W, workgroupId as Y, invocationLocalIndex as ye, uniform as Ee, uvec2 as Ve, Fn as vt, If as B, Return as he, vec4 as Q, mat4 as Kt, normalize as dr, sqrt as Se, clamp as be, log as hr, ceil as Yt, vec2 as ve, ivec2 as We, int as Xt, floor as bt, subgroupIndex as nt, invocationSubgroupIndex as ot, subgroupSize as lt, storageTexture as yt, select as Ne, Loop as Te, Continue as ct, max as Ht, Break as Ze, workgroupBarrier as Zt, textureStore as Jt, colorSpaceToWorking as pr } from "three/tsl";
+class vs {
   count;
   shDegree;
   shCoefficientCount;
@@ -63,8 +63,8 @@ class ms {
       );
   }
 }
-const hi = 16, bs = 4;
-function pi(r, e, t) {
+const fr = 16, bs = 4;
+function gr(r, e, t) {
   const s = Math.max(Math.abs(r), Math.abs(e), Math.abs(t));
   if (!Number.isFinite(s))
     throw new RangeError("SH coefficients must be finite");
@@ -72,7 +72,7 @@ function pi(r, e, t) {
   const a = Math.min(127, Math.max(-126, Math.ceil(Math.log2(s)))), i = 127 / 2 ** a, o = ut(r, i), n = ut(e, i), l = ut(t, i), c = a + 127;
   return (o | n << 8 | l << 16 | c << 24) >>> 0;
 }
-function ta(r) {
+function ia(r) {
   const e = 2 ** ((r >>> 24) - 127) / 127;
   return [
     dt(r) * e,
@@ -80,8 +80,8 @@ function ta(r) {
     dt(r >>> 16) * e
   ];
 }
-function vs(r) {
-  return r === "rgb8e8" ? bs : hi;
+function ys(r) {
+  return r === "rgb8e8" ? bs : fr;
 }
 function ut(r, e) {
   return Math.min(127, Math.max(-127, Math.round(r * e))) & 255;
@@ -107,7 +107,7 @@ const Qt = {
   uint32: 4,
   float32: 4,
   float64: 8
-}, fi = [
+}, mr = [
   "x",
   "y",
   "z",
@@ -123,7 +123,7 @@ const Qt = {
   "f_dc_1",
   "f_dc_2"
 ];
-class gi {
+class vr {
   async load(e) {
     const t = await fetch(e);
     if (!t.ok)
@@ -133,13 +133,13 @@ class gi {
     return this.parse(await t.arrayBuffer());
   }
   parse(e) {
-    const t = mi(e), s = new Map(
-      t.properties.map((p, b) => [p.name, b])
+    const t = br(e), s = new Map(
+      t.properties.map((p, v) => [p.name, v])
     );
-    for (const p of fi)
+    for (const p of mr)
       if (!s.has(p))
         throw new Error(`Not a canonical 3DGS PLY: missing property ${p}`);
-    const a = t.properties.map((p) => p.name.match(/^f_rest_(\d+)$/)?.[1]).filter((p) => p !== void 0).map(Number).sort((p, b) => p - b);
+    const a = t.properties.map((p) => p.name.match(/^f_rest_(\d+)$/)?.[1]).filter((p) => p !== void 0).map(Number).sort((p, v) => p - v);
     for (let p = 0; p < a.length; p++)
       if (a[p] !== p)
         throw new Error("f_rest_* properties must be contiguous from f_rest_0");
@@ -150,44 +150,44 @@ class gi {
       throw new Error(
         "PLY must contain one, four, nine, or sixteen SH coefficients per channel"
       );
-    const l = bi(e, t), c = (p) => s.get(p), u = a.map(
+    const l = yr(e, t), c = (p) => s.get(p), u = a.map(
       (p) => c(`f_rest_${p}`)
-    ), h = t.vertexCount, d = new Float32Array(h * 4), f = new Float32Array(h * 4), _ = new Float32Array(h * 4), y = new Float32Array(h * o * 4);
+    ), h = t.vertexCount, d = new Float32Array(h * 4), f = new Float32Array(h * 4), y = new Float32Array(h * 4), _ = new Float32Array(h * o * 4);
     for (let p = 0; p < h; p++) {
-      const b = p * 4;
-      d[b] = l(p, c("x")), d[b + 1] = l(p, c("y")), d[b + 2] = l(p, c("z")), f[b] = Math.max(
+      const v = p * 4;
+      d[v] = l(p, c("x")), d[v + 1] = l(p, c("y")), d[v + 2] = l(p, c("z")), f[v] = Math.max(
         Math.exp(l(p, c("scale_0"))),
         1e-6
-      ), f[b + 1] = Math.max(
+      ), f[v + 1] = Math.max(
         Math.exp(l(p, c("scale_1"))),
         1e-6
-      ), f[b + 2] = Math.max(
+      ), f[v + 2] = Math.max(
         Math.exp(l(p, c("scale_2"))),
         1e-6
       );
       const N = l(p, c("opacity"));
-      f[b + 3] = 1 / (1 + Math.exp(-N));
-      const R = l(p, c("rot_0")), S = l(p, c("rot_1")), x = l(p, c("rot_2")), k = l(p, c("rot_3")), G = Math.hypot(S, x, k, R);
-      G > 1e-12 ? (_[b] = S / G, _[b + 1] = x / G, _[b + 2] = k / G, _[b + 3] = R / G) : _[b + 3] = 1;
-      const E = p * o * 4;
-      y[E] = l(p, c("f_dc_0")), y[E + 1] = l(p, c("f_dc_1")), y[E + 2] = l(p, c("f_dc_2"));
+      f[v + 3] = 1 / (1 + Math.exp(-N));
+      const P = l(p, c("rot_0")), S = l(p, c("rot_1")), x = l(p, c("rot_2")), k = l(p, c("rot_3")), G = Math.hypot(S, x, k, P);
+      G > 1e-12 ? (y[v] = S / G, y[v + 1] = x / G, y[v + 2] = k / G, y[v + 3] = P / G) : y[v + 3] = 1;
+      const A = p * o * 4;
+      _[A] = l(p, c("f_dc_0")), _[A + 1] = l(p, c("f_dc_1")), _[A + 2] = l(p, c("f_dc_2"));
       for (let w = 1; w < o; w++) {
-        const I = E + w * 4, j = w - 1;
-        for (let M = 0; M < 3; M++) {
-          const A = u[M * i + j];
-          y[I + M] = l(
+        const I = A + w * 4, j = w - 1;
+        for (let $ = 0; $ < 3; $++) {
+          const T = u[$ * i + j];
+          _[I + $] = l(
             p,
-            A
+            T
           );
         }
       }
     }
-    return new ms(
+    return new vs(
       {
         means: Je("ply.means", d),
         scalesOpacity: Je("ply.scales-opacity", f),
-        rotations: Je("ply.rotations-xyzw", _),
-        shCoefficients: Je("ply.sh-coefficients", y)
+        rotations: Je("ply.rotations-xyzw", y),
+        shCoefficients: Je("ply.sh-coefficients", _)
       },
       {
         count: h,
@@ -198,21 +198,21 @@ class gi {
   }
 }
 function Je(r, e) {
-  const t = new Pe(e, 4);
+  const t = new Re(e, 4);
   return t.name = r, t;
 }
-function mi(r) {
+function br(r) {
   const e = new Uint8Array(r), t = new TextEncoder().encode("end_header");
   let s = -1;
-  for (let _ = 0; _ <= e.length - t.length; _++) {
-    let y = !0;
+  for (let y = 0; y <= e.length - t.length; y++) {
+    let _ = !0;
     for (let p = 0; p < t.length; p++)
-      if (e[_ + p] !== t[p]) {
-        y = !1;
+      if (e[y + p] !== t[p]) {
+        _ = !1;
         break;
       }
-    if (y) {
-      s = _;
+    if (_) {
+      s = y;
       break;
     }
   }
@@ -225,38 +225,38 @@ function mi(r) {
   if (o[0]?.trim() !== "ply") throw new Error("Invalid PLY signature");
   let n = null, l = "", c = -1, u = 0;
   const h = [], d = [];
-  for (const _ of o) {
-    const y = _.trim().split(/\s+/);
-    if (y[0] === "format") {
-      if (y[1] !== "ascii" && y[1] !== "binary_little_endian" && y[1] !== "binary_big_endian")
-        throw new Error(`Unsupported PLY format: ${y[1] ?? "unknown"}`);
-      n = y[1];
-    } else if (y[0] === "element") {
-      l = y[1] ?? "";
-      const p = Number(y[2]);
+  for (const y of o) {
+    const _ = y.trim().split(/\s+/);
+    if (_[0] === "format") {
+      if (_[1] !== "ascii" && _[1] !== "binary_little_endian" && _[1] !== "binary_big_endian")
+        throw new Error(`Unsupported PLY format: ${_[1] ?? "unknown"}`);
+      n = _[1];
+    } else if (_[0] === "element") {
+      l = _[1] ?? "";
+      const p = Number(_[2]);
       if (!Number.isInteger(p) || p < 0)
         throw new Error(`Invalid element count for ${l}`);
       d.push({ name: l, count: p }), l === "vertex" && (c = p);
-    } else if (y[0] === "property" && l === "vertex") {
-      if (y[1] === "list")
+    } else if (_[0] === "property" && l === "vertex") {
+      if (_[1] === "list")
         throw new Error(
           "List properties are not supported in the vertex element"
         );
-      const p = y[1], b = y[2];
-      if (!(p in Qt) || b === void 0)
-        throw new Error(`Unsupported vertex property: ${_}`);
-      h.push({ name: b, type: p, byteOffset: u }), u += Qt[p];
+      const p = _[1], v = _[2];
+      if (!(p in Qt) || v === void 0)
+        throw new Error(`Unsupported vertex property: ${y}`);
+      h.push({ name: v, type: p, byteOffset: u }), u += Qt[p];
     }
   }
   if (n === null) throw new Error("Invalid PLY: format is missing");
   if (c <= 0) throw new Error("PLY must contain at least one vertex");
   if (d.find(
-    (_) => _.count > 0
+    (y) => y.count > 0
   )?.name !== "vertex")
     throw new Error("The canonical 3DGS vertex element must be first");
   return { format: n, vertexCount: c, properties: h, vertexStride: u, dataOffset: a };
 }
-function bi(r, e) {
+function yr(r, e) {
   if (e.format === "ascii") {
     const i = new TextDecoder().decode(
       new Uint8Array(r, e.dataOffset)
@@ -280,10 +280,10 @@ function bi(r, e) {
   const s = new DataView(r), a = e.format === "binary_little_endian";
   return (i, o) => {
     const n = e.properties[o], l = e.dataOffset + i * e.vertexStride + n.byteOffset;
-    return vi(s, l, n.type, a);
+    return _r(s, l, n.type, a);
   };
 }
-function vi(r, e, t, s) {
+function _r(r, e, t, s) {
   switch (t) {
     case "char":
     case "int8":
@@ -311,7 +311,7 @@ function vi(r, e, t, s) {
       return r.getFloat64(e, s);
   }
 }
-class es extends ps {
+class es extends fs {
   isGaussianCloud = !0;
   objectId;
   lod;
@@ -351,7 +351,7 @@ class es extends ps {
   /** Raycast either the packed/rendered LOD or the complete source octree. */
   raycast(e, t) {
     if (this.lod === null || this.packing === null) return;
-    const s = new Re().copy(this.matrixWorld).invert(), a = new Fs().copy(e.ray).applyMatrix4(s), i = this.raycastMode === "full" ? this.lod.octree.raycast(a) : this.lod.raycast(a, this.packing);
+    const s = new Pe().copy(this.matrixWorld).invert(), a = new qs().copy(e.ray).applyMatrix4(s), i = this.raycastMode === "full" ? this.lod.octree.raycast(a) : this.lod.raycast(a, this.packing);
     for (const o of i) {
       const n = o.point.clone().applyMatrix4(this.matrixWorld), l = e.ray.origin.distanceTo(n);
       l < e.near || l > e.far || t.push({
@@ -367,7 +367,7 @@ class es extends ps {
     this.ownerStore.remove(this);
   }
 }
-class _i {
+class xr {
   constructor(e, t, s, a, i, o, n, l) {
     this.id = e, this.depth = t, this.bounds = s, this.count = a, this.maxSplatRadius = i, this.raycastBounds = l, this.children = o, this.gaussianIndices = n;
   }
@@ -385,15 +385,15 @@ class _i {
 }
 class St {
   constructor(e, t, s, a) {
-    this.data = e, this.leafCapacity = t, this.maxDepth = s, this.ownsData = a, this.bounds = yi(e), this.rootBounds = xi(this.bounds);
+    this.data = e, this.leafCapacity = t, this.maxDepth = s, this.ownsData = a, this.bounds = wr(e), this.rootBounds = kr(this.bounds);
     const i = e.means.array, o = e.scalesOpacity.array, n = [], l = [], c = Array.from({ length: e.count }, (h, d) => d), u = (h, d, f) => {
-      const _ = n.length;
+      const y = n.length;
       n.push(null);
-      const y = h.length > t && f < s && d.max.x - d.min.x > Number.EPSILON, p = [];
-      if (y) {
-        const R = d.getCenter(new C()), S = Array.from({ length: 8 }, () => []);
+      const _ = h.length > t && f < s && d.max.x - d.min.x > Number.EPSILON, p = [];
+      if (_) {
+        const P = d.getCenter(new C()), S = Array.from({ length: 8 }, () => []);
         for (const x of h) {
-          const k = x * 4, G = (i[k] >= R.x ? 1 : 0) | (i[k + 1] >= R.y ? 2 : 0) | (i[k + 2] >= R.z ? 4 : 0);
+          const k = x * 4, G = (i[k] >= P.x ? 1 : 0) | (i[k + 1] >= P.y ? 2 : 0) | (i[k + 2] >= P.z ? 4 : 0);
           S[G].push(x);
         }
         for (let x = 0; x < 8; x++) {
@@ -401,42 +401,42 @@ class St {
           k.length !== 0 && p.push(
             u(
               k,
-              wi(d, R, x),
+              Sr(d, P, x),
               f + 1
             )
           );
         }
       }
-      let b = 0;
+      let v = 0;
       if (p.length > 0)
-        for (const R of p)
-          b = Math.max(
-            b,
-            n[R].maxSplatRadius
+        for (const P of p)
+          v = Math.max(
+            v,
+            n[P].maxSplatRadius
           );
       else {
-        for (const R of h) {
-          const S = R * 4;
-          b = Math.max(
-            b,
+        for (const P of h) {
+          const S = P * 4;
+          v = Math.max(
+            v,
             o[S],
             o[S + 1],
             o[S + 2]
           );
         }
-        l.push(_);
+        l.push(y);
       }
-      const N = d.clone().expandByScalar(b * 3);
-      return n[_] = new _i(
-        _,
+      const N = d.clone().expandByScalar(v * 3);
+      return n[y] = new xr(
+        y,
         f,
         d,
         h.length,
-        b,
+        v,
         p,
         p.length === 0 ? Uint32Array.from(h) : null,
         N
-      ), _;
+      ), y;
     };
     u(c, this.rootBounds.clone(), 0), this.nodes = n, this.leafNodeIds = Uint32Array.from(l);
   }
@@ -513,7 +513,7 @@ class St {
     if (this.disposed) throw new Error("GaussianOctree has been disposed");
   }
 }
-function yi(r) {
+function wr(r) {
   const e = r.means.array, t = new kt(), s = new C();
   for (let a = 0; a < r.count; a++) {
     const i = a * 4;
@@ -521,7 +521,7 @@ function yi(r) {
   }
   return t;
 }
-function xi(r) {
+function kr(r) {
   const e = r.getCenter(new C()), t = r.getSize(new C()), s = Math.max(t.x, t.y, t.z, 1e-6) * 0.5;
   return new kt(
     new C(
@@ -536,7 +536,7 @@ function xi(r) {
     )
   );
 }
-function wi(r, e, t) {
+function Sr(r, e, t) {
   return new kt(
     new C(
       t & 1 ? e.x : r.min.x,
@@ -550,14 +550,14 @@ function wi(r, e, t) {
     )
   );
 }
-class sa extends Vs {
+class aa extends Ks {
   constructor(e, t = {}) {
     const s = t.minDepth ?? 0, a = t.maxDepth ?? 1 / 0, i = e.nodes.filter(
       (h) => h.depth >= s && h.depth <= a && (t.leavesOnly !== !0 || h.isLeaf)
     ), o = new Float32Array(i.length * 12 * 2 * 3);
     let n = 0;
     for (const h of i) {
-      const { min: d, max: f } = h.bounds, _ = [
+      const { min: d, max: f } = h.bounds, y = [
         [d.x, d.y, d.z],
         [f.x, d.y, d.z],
         [f.x, f.y, d.z],
@@ -567,12 +567,12 @@ class sa extends Vs {
         [f.x, f.y, f.z],
         [d.x, f.y, f.z]
       ];
-      for (const [y, p] of ki)
-        o.set(_[y], n), o.set(_[p], n + 3), n += 6;
+      for (const [_, p] of Cr)
+        o.set(y[_], n), o.set(y[p], n + 3), n += 6;
     }
-    const l = new qs();
-    l.setAttribute("position", new Ks(o, 3)), l.computeBoundingSphere();
-    const c = t.opacity ?? 0.55, u = new Ys({
+    const l = new Ys();
+    l.setAttribute("position", new Xs(o, 3)), l.computeBoundingSphere();
+    const c = t.opacity ?? 0.55, u = new Hs({
       color: t.color ?? 7710719,
       opacity: c,
       transparent: c < 1,
@@ -589,7 +589,7 @@ class sa extends Vs {
     this.removeFromParent(), this.geometry.dispose(), this.material.dispose();
   }
 }
-const ki = [
+const Cr = [
   [0, 1],
   [1, 2],
   [2, 3],
@@ -611,15 +611,15 @@ class ts {
   sortedGaussianIndices;
   levelCounts;
 }
-const Si = [
+const Lr = [
   { retention: 0.2 },
   { retention: 0.5 },
   { retention: 1 }
 ];
 class Ct {
   constructor(e, t) {
-    this.octree = e, this.levels = Ci(t.levels ?? Si), this.ownsOctree = t.ownsOctree ?? !1;
-    const s = t.importance ?? Li, a = new Float64Array(e.data.count);
+    this.octree = e, this.levels = Nr(t.levels ?? Lr), this.ownsOctree = t.ownsOctree ?? !1;
+    const s = t.importance ?? Rr, a = new Float64Array(e.data.count);
     for (let i = 0; i < a.length; i++) {
       const o = s(i, e);
       a[i] = Number.isFinite(o) ? o : -1 / 0;
@@ -711,19 +711,19 @@ class Ct {
       throw new RangeError("GaussianLodPacking arrays must have equal lengths");
     const o = this.octree.data.means.array, n = this.octree.data.scalesOpacity.array, l = new C(), c = new C(), u = [], h = /* @__PURE__ */ new Set();
     for (let d = 0; d < t.nodeIds.length; d++) {
-      const f = t.nodeIds[d], _ = this.getLeafNode(f);
+      const f = t.nodeIds[d], y = this.getLeafNode(f);
       if (h.has(f))
         throw new Error(
           `GaussianLodPacking contains duplicate leaf node ${f}`
         );
       h.add(f);
-      const y = t.lodLevels[d], p = _.levelCounts[y];
+      const _ = t.lodLevels[d], p = y.levelCounts[_];
       if (p === void 0)
-        throw new RangeError(`GaussianLod level ${y} does not exist`);
-      const b = this.octree.nodes[f], N = Math.max(0, a - 3) * b.maxSplatRadius, R = N === 0 ? b.raycastBounds : b.raycastBounds.clone().expandByScalar(N);
-      if (e.intersectsBox(R))
+        throw new RangeError(`GaussianLod level ${_} does not exist`);
+      const v = this.octree.nodes[f], N = Math.max(0, a - 3) * v.maxSplatRadius, P = N === 0 ? v.raycastBounds : v.raycastBounds.clone().expandByScalar(N);
+      if (e.intersectsBox(P))
         for (let S = 0; S < p; S++) {
-          const x = _.sortedGaussianIndices[S], k = x * 4;
+          const x = y.sortedGaussianIndices[S], k = x * 4;
           l.set(o[k], o[k + 1], o[k + 2]);
           const G = Math.max(
             n[k],
@@ -754,7 +754,7 @@ class Ct {
     return t;
   }
 }
-function Ci(r) {
+function Nr(r) {
   if (r.length === 0 || r.length > 256)
     throw new RangeError("GaussianLod requires between 1 and 256 levels");
   let e = 0;
@@ -769,20 +769,20 @@ function Ci(r) {
     throw new RangeError("GaussianLod finest retention must be 1");
   return Object.freeze(t);
 }
-function Li(r, e) {
+function Rr(r, e) {
   const t = e.data.scalesOpacity.array, s = r * 4, a = [t[s], t[s + 1], t[s + 2]];
   return a.sort((i, o) => o - i), t[s + 3] * a[0] * a[1];
 }
-const Ni = [
+const Pr = [
   16731501,
   16758531,
   3725718,
   5032432,
   10182117
 ];
-class ia extends ps {
+class na extends fs {
   constructor(e, t, s = {}) {
-    super(), this.lod = e, this.packing = t, this.colors = s.colors !== void 0 && s.colors.length > 0 ? [...s.colors] : Ni, this.opacity = s.opacity ?? 0.14, this.wireframe = s.wireframe ?? !1, this.depthTest = s.depthTest ?? !1, this.name = "Gaussian LOD helper", this.frustumCulled = !1, e.indicesForPacking(t), this.rebuildMeshes(), this.setLevels(
+    super(), this.lod = e, this.packing = t, this.colors = s.colors !== void 0 && s.colors.length > 0 ? [...s.colors] : Pr, this.opacity = s.opacity ?? 0.14, this.wireframe = s.wireframe ?? !1, this.depthTest = s.depthTest ?? !1, this.name = "Gaussian LOD helper", this.frustumCulled = !1, e.indicesForPacking(t), this.rebuildMeshes(), this.setLevels(
       s.levels ?? Array.from({ length: e.levelCount }, (a, i) => i)
     );
   }
@@ -838,20 +838,20 @@ class ia extends ps {
         throw new RangeError(`Gaussian LOD level ${o} does not exist`);
       n.push(this.packing.nodeIds[i]);
     }
-    const t = new C(), s = new C(), a = new Re();
+    const t = new C(), s = new C(), a = new Pe();
     for (let i = 0; i < e.length; i++) {
       const o = e[i];
       if (o.length === 0) continue;
-      const n = new Xs(1, 1, 1), l = new Hs({
+      const n = new Zs(1, 1, 1), l = new Js({
         color: this.colors[i % this.colors.length],
         opacity: this.opacity,
         transparent: this.opacity < 1,
         depthTest: this.depthTest,
         depthWrite: !1,
-        side: Zs,
+        side: Qs,
         toneMapped: !1,
         wireframe: this.wireframe
-      }), c = new Js(n, l, o.length);
+      }), c = new er(n, l, o.length);
       for (let u = 0; u < o.length; u++) {
         const h = this.lod.octree.nodes[o[u]].bounds;
         h.getCenter(t), h.getSize(s), a.makeScale(s.x, s.y, s.z), a.setPosition(t), c.setMatrixAt(u, a);
@@ -865,30 +865,30 @@ class ia extends ps {
     this.levelMeshes.clear();
   }
 }
-const Lt = P("uint", "gaussianIndex"), Nt = P("uint", "gaussianObjectId"), tt = P("vec3", "gaussianPositionLocal"), qe = P("vec3", "gaussianPositionWorld"), st = P("vec3", "gaussianScale"), it = P("vec4", "gaussianRotation"), rt = P("float", "gaussianOpacity"), Pt = P("vec3", "gaussianColor"), Rt = P("mat4", "gaussianObjectMatrix"), Gt = P("bool", "gaussianObjectVisible"), It = P("vec3", "gaussianViewDirection"), $t = P("float", "gaussianViewDepth"), Mt = P(
+const Lt = R("uint", "gaussianIndex"), Nt = R("uint", "gaussianObjectId"), tt = R("vec3", "gaussianPositionLocal"), qe = R("vec3", "gaussianPositionWorld"), st = R("vec3", "gaussianScale"), rt = R("vec4", "gaussianRotation"), it = R("float", "gaussianOpacity"), Rt = R("vec3", "gaussianColor"), Pt = R("mat4", "gaussianObjectMatrix"), Gt = R("bool", "gaussianObjectVisible"), It = R("vec3", "gaussianViewDirection"), Mt = R("float", "gaussianViewDepth"), $t = R(
   "vec2",
   "gaussianScreenPosition"
-), _s = P(
+), _s = R(
   "vec2",
   "gaussianScreenBoundsMin"
-), ys = P(
+), xs = R(
   "vec2",
   "gaussianScreenBoundsMax"
-), Ot = P(
+), Ot = R(
   "vec2",
   "gaussianProjectedSigma"
-), Bt = P("float", "gaussianProjectedArea"), zt = P("uint", "rasterGaussianIndex"), xs = P("uint", "rasterObjectId"), ws = P("uvec2", "rasterPixelCoordinate"), ks = P("vec2", "rasterScreenPosition"), Ss = P("vec2", "rasterScreenUV"), Cs = P("vec2", "rasterGaussianCenter"), Ls = P("vec2", "rasterPixelDelta"), Ns = P("vec2", "rasterGaussianCoord"), Ps = P("vec2", "rasterUV"), Rs = P("float", "rasterViewDepth"), Et = P("vec3", "rasterGaussianColor"), Tt = P("float", "rasterGaussianOpacity"), At = P("float", "rasterPower"), Gs = P("float", "rasterWeight");
-function Pi() {
+), Bt = R("float", "gaussianProjectedArea"), zt = R("uint", "rasterGaussianIndex"), ws = R("uint", "rasterObjectId"), ks = R("uvec2", "rasterPixelCoordinate"), Ss = R("vec2", "rasterScreenPosition"), Cs = R("vec2", "rasterScreenUV"), Ls = R("vec2", "rasterGaussianCenter"), Ns = R("vec2", "rasterPixelDelta"), Rs = R("vec2", "rasterGaussianCoord"), Ps = R("vec2", "rasterUV"), Gs = R("float", "rasterViewDepth"), At = R("vec3", "rasterGaussianColor"), Et = R("float", "rasterGaussianOpacity"), Tt = R("float", "rasterPower"), Is = R("float", "rasterWeight");
+function Gr() {
   return {
     gaussianPositionLocalNode: tt,
     gaussianPositionWorldNode: qe,
     gaussianScaleNode: st,
-    gaussianRotationNode: it,
-    gaussianOpacityNode: rt,
-    gaussianColorNode: Pt,
+    gaussianRotationNode: rt,
+    gaussianOpacityNode: it,
+    gaussianColorNode: Rt,
     gaussianVisibilityNode: me(!0),
-    rasterColorNode: Et,
-    rasterAlphaNode: Tt.mul(gs(At)),
+    rasterColorNode: At,
+    rasterAlphaNode: Et.mul(ms(Tt)),
     rasterDiscardNode: me(!1)
   };
 }
@@ -898,35 +898,35 @@ const Fe = /* @__PURE__ */ new Set([
   tt,
   qe,
   st,
-  it,
   rt,
-  Pt,
+  it,
   Rt,
+  Pt,
   Gt,
   It,
-  $t,
   Mt,
+  $t,
   _s,
-  ys,
+  xs,
   Ot,
   Bt
 ]), Dt = /* @__PURE__ */ new Set([
   zt,
-  xs,
   ws,
   ks,
   Ss,
   Cs,
   Ls,
   Ns,
-  Ps,
   Rs,
+  Ps,
+  Gs,
+  At,
   Et,
   Tt,
-  At,
-  Gs
+  Is
 ]);
-function Is(r, e, t) {
+function Ms(r, e, t) {
   r.traverse((s) => {
     if ((Fe.has(s) || Dt.has(s)) && !e.has(s))
       throw new Error(
@@ -942,12 +942,12 @@ function De(r, e, t) {
       );
   });
 }
-const Ri = [
+const Ir = [
   15228264,
   15906891,
   4900235
 ];
-class ra {
+class oa {
   constructor(e, t = {}) {
     if (this.pass = e, t.colors !== void 0 && t.colors.length === 0)
       throw new RangeError("Gaussian LOD color palette must not be empty");
@@ -956,7 +956,7 @@ class ra {
       throw new RangeError(
         "Gaussian LOD tint strength must be between 0 and 1"
       );
-    this.colors = [...t.colors ?? Ri], this.tintStrength = s, this.lodLevelAttribute = e.gaussianStore.enablePackedLodLevelAttribute(), this.unsubscribeDebug = e.subscribeDebug(() => this.update()), this.enabled = t.enabled ?? !0;
+    this.colors = [...t.colors ?? Ir], this.tintStrength = s, this.lodLevelAttribute = e.gaussianStore.enablePackedLodLevelAttribute(), this.unsubscribeDebug = e.subscribeDebug(() => this.update()), this.enabled = t.enabled ?? !0;
   }
   pass;
   isGaussianLodColorHelper = !0;
@@ -990,7 +990,7 @@ class ra {
   }
   rebuildColorNode() {
     const e = this.lodLevelAttribute.bufferAttribute, t = m(e, "uint", e.count).toReadOnly().element(zt).mod(g(this.colors.length)), s = this.colors.map((o) => {
-      const n = new Qs(o).getRGB(
+      const n = new tr(o).getRGB(
         { r: 0, g: 0, b: 0 },
         this.pass.colorSpace
       );
@@ -999,7 +999,7 @@ class ra {
     let a = s[s.length - 1];
     for (let o = s.length - 2; o >= 0; o--)
       a = t.equal(g(o)).select(s[o], a);
-    const i = li(
+    const i = ur(
       this.baseColorNode,
       a,
       V(this.tintStrength)
@@ -1015,7 +1015,7 @@ function Ge(r) {
   if (!Number.isInteger(r) || r < 0)
     throw new RangeError("Gaussian LOD budget must be a non-negative integer");
 }
-class aa {
+class la {
   setFromCamera(e, t) {
     return this;
   }
@@ -1042,7 +1042,7 @@ function Ut(r, e) {
     (n, l) => n.radius - l.radius || n.nodeId - l.nodeId
   ), o;
 }
-class na {
+class ca {
   cameraCenter = new C();
   center;
   lodLevel;
@@ -1062,7 +1062,7 @@ class na {
     );
   }
   pack({ lod: e, maxGaussians: t }) {
-    if (Ge(t), t === 0) return Gi();
+    if (Ge(t), t === 0) return Mr();
     const s = this.lodLevel === "finest" ? e.finestLevel : this.lodLevel;
     if (s >= e.levelCount)
       throw new RangeError(`Gaussian LOD level ${s} does not exist`);
@@ -1081,19 +1081,19 @@ class na {
     };
   }
 }
-function Gi() {
+function Mr() {
   return {
     nodeIds: new Uint32Array(),
     lodLevels: new Uint8Array(),
     gaussianCount: 0
   };
 }
-class Ii {
+class $r {
   cameraCenter = new C();
   center;
   budgetShares;
   constructor(e = {}) {
-    this.center = e.center instanceof C ? e.center.clone() : e.center ?? "bounds-center", this.budgetShares = $i(
+    this.center = e.center instanceof C ? e.center.clone() : e.center ?? "bounds-center", this.budgetShares = Or(
       e.budgetShares ?? [0.8, 0.1, 0.1]
     );
   }
@@ -1106,7 +1106,7 @@ class Ii {
     );
   }
   pack({ lod: e, maxGaussians: t }) {
-    if (Ge(t), t === 0) return Mi();
+    if (Ge(t), t === 0) return Br();
     const s = e.octree.data.count;
     if (s <= t) {
       const h = e.octree.leafNodeIds.slice(), d = new Uint8Array(h.length);
@@ -1121,11 +1121,11 @@ class Ii {
     for (let h = 0; h < i.length; h++) {
       const d = this.budgetShares[h];
       if (u += d, d === 0) continue;
-      const f = h === i.length - 1 ? t : Math.floor(t * u), _ = i[h];
+      const f = h === i.length - 1 ? t : Math.floor(t * u), y = i[h];
       for (; c < a.length; ) {
-        const y = a[c], p = e.nodes[y.nodeId].levelCounts[_];
+        const _ = a[c], p = e.nodes[_.nodeId].levelCounts[y];
         if (l + p > f) break;
-        o.push(y.nodeId), n.push(_), l += p, c++;
+        o.push(_.nodeId), n.push(y), l += p, c++;
       }
     }
     return {
@@ -1135,7 +1135,7 @@ class Ii {
     };
   }
 }
-function $i(r) {
+function Or(r) {
   let e = 0;
   for (const t of r) {
     if (!(t >= 0 && t <= 1))
@@ -1146,14 +1146,14 @@ function $i(r) {
     throw new RangeError("Tiered radial LOD budget shares must sum to 1");
   return Object.freeze([...r]);
 }
-function Mi() {
+function Br() {
   return {
     nodeIds: new Uint32Array(),
     lodLevels: new Uint8Array(),
     gaussianCount: 0
   };
 }
-class oa {
+class ua {
   cameraCenter = new C();
   center;
   levelDistance;
@@ -1172,7 +1172,7 @@ class oa {
     );
   }
   pack({ lod: e, maxGaussians: t }) {
-    if (Ge(t), t === 0) return Oi();
+    if (Ge(t), t === 0) return zr();
     const s = Ut(e, this.center), a = s.map(
       ({ radius: n }) => Math.max(0, e.finestLevel - Math.floor(n / this.levelDistance))
     );
@@ -1202,14 +1202,14 @@ class oa {
     };
   }
 }
-function Oi() {
+function zr() {
   return {
     nodeIds: new Uint32Array(),
     lodLevels: new Uint8Array(),
     gaussianCount: 0
   };
 }
-function Bi(r) {
+function Ar(r) {
   const e = new Uint32Array(r.octree.leafNodeIds), t = new Float64Array(e.length * 3), s = new Uint32Array(e.length * r.levelCount);
   for (let n = 0; n < e.length; n++) {
     const l = e[n], c = r.octree.nodes[l].bounds, u = n * 3;
@@ -1229,8 +1229,30 @@ function Bi(r) {
     )
   };
 }
-const zi = 2;
-class Ei {
+const $s = `(function(){"use strict";function R(e){return{radii:new Float64Array(e),levels:new Uint8Array(e),order:Array.from({length:e},(n,r)=>r)}}function M(e,n,r,o,l){const s=e.leafNodeIds.length;C(s,r,o,l),x(e,n,l);const d=e.levelCount-1;let i=0;for(let t=0;t<s;t++){const u=l.order[t],h=Math.max(0,d-Math.floor(l.radii[u]/n.levelDistance));l.levels[t]=h,i+=e.levelCounts[u*e.levelCount+h]}for(let t=s-1;t>=0&&i>n.maxGaussians;t--){const u=l.order[t];for(;l.levels[t]>0&&i>n.maxGaussians;){const h=l.levels[t],f=u*e.levelCount;i-=e.levelCounts[f+h]-e.levelCounts[f+h-1],l.levels[t]=h-1}}let a=s;for(;a>0&&i>n.maxGaussians;){a--;const t=l.order[a];i-=e.levelCounts[t*e.levelCount+l.levels[a]]}for(let t=0;t<a;t++){const u=l.order[t];r[t]=e.leafNodeIds[u],o[t]=l.levels[t]}return{length:a,gaussianCount:i}}function A(e,n,r,o,l){const s=e.leafNodeIds.length;C(s,r,o,l);const d=e.levelCount-1;let i=0;for(let f=0;f<s;f++)i+=e.levelCounts[f*e.levelCount+d];if(i<=n.maxGaussians)return r.set(e.leafNodeIds),o.fill(d,0,s),{length:s,gaussianCount:i};x(e,n,l);const a=[d,Math.max(0,d-1),0];let t=0,u=0,h=0;for(let f=0;f<a.length;f++){const y=n.budgetShares[f];if(h+=y,y===0)continue;const G=f===a.length-1?n.maxGaussians:Math.floor(n.maxGaussians*h),L=a[f];for(;t<s;){const b=l.order[t],m=e.levelCounts[b*e.levelCount+L];if(u+m>G)break;r[t]=e.leafNodeIds[b],o[t]=L,u+=m,t++}}return{length:t,gaussianCount:u}}function D(e,n,r,o,l){return n.strategy==="tiered"?A(e,n,r,o,l):M(e,n,r,o,l)}function x(e,n,r){for(let o=0;o<e.leafNodeIds.length;o++){const l=o*3,s=e.leafCenters[l]-n.centerX,d=e.leafCenters[l+1]-n.centerY,i=e.leafCenters[l+2]-n.centerZ;r.radii[o]=Math.sqrt(s*s+d*d+i*i)/e.halfDiagonal,r.order[o]=o}r.order.sort((o,l)=>r.radii[o]-r.radii[l]||e.leafNodeIds[o]-e.leafNodeIds[l])}function C(e,n,r,o){if(n.length<e||r.length<e||o.radii.length<e||o.levels.length<e||o.order.length<e)throw new RangeError("Radial LOD worker buffers are too small")}const I=globalThis;let c=null,v=null;const g=[];I.onmessage=({data:e})=>{if(e.type==="init"){c=e.data,v=R(e.data.leafNodeIds.length),g.push(...e.buffers);return}if(e.type==="recycle"){g.push(e.buffer);return}if(c===null||v===null)throw new Error("Radial LOD worker was not initialized");const n=g.pop();if(n===void 0)throw new Error("Radial LOD worker exhausted its output pool");const r=new Uint32Array(n.nodeIds),o=new Uint8Array(n.lodLevels),l=performance.now(),s=D(c,e,r,o,v),d={type:"result",revision:e.revision,length:s.length,gaussianCount:s.gaussianCount,planningMs:performance.now()-l,buffer:n};I.postMessage(d,[n.nodeIds,n.lodLevels])}})();
+//# sourceMappingURL=RadialLodWorker-CftnehMz.js.map
+`, ss = typeof self < "u" && self.Blob && new Blob(["(self.URL || self.webkitURL).revokeObjectURL(self.location.href);", $s], { type: "text/javascript;charset=utf-8" });
+function Er(r) {
+  let e;
+  try {
+    if (e = ss && (self.URL || self.webkitURL).createObjectURL(ss), !e) throw "";
+    const t = new Worker(e, {
+      name: r?.name
+    });
+    return t.addEventListener("error", () => {
+      (self.URL || self.webkitURL).revokeObjectURL(e);
+    }), t;
+  } catch {
+    return new Worker(
+      "data:text/javascript;charset=utf-8," + encodeURIComponent($s),
+      {
+        name: r?.name
+      }
+    );
+  }
+}
+const Tr = 2;
+class Dr {
   constructor(e) {
     this.targetStrategy = e;
   }
@@ -1270,17 +1292,12 @@ class Ei {
     if (this.worker !== null) return;
     const e = this.lod;
     if (e === null) throw new Error("Radial LOD worker has no GaussianLod");
-    this.worker = new Worker(new URL(
-      /* @vite-ignore */
-      "" + new URL("assets/RadialLodWorker-CftnehMz.js", import.meta.url).href,
-      import.meta.url
-    ), {
-      type: "module",
+    this.worker = new Er({
       name: "3dgs-radial-lod"
     }), this.worker.addEventListener("message", this.handleMessage), this.worker.addEventListener("error", this.handleError);
-    const t = Bi(e), s = Array.from(
-      { length: zi },
-      () => Ti(t.leafNodeIds.length)
+    const t = Ar(e), s = Array.from(
+      { length: Tr },
+      () => jr(t.leafNodeIds.length)
     ), a = {
       type: "init",
       data: t,
@@ -1336,7 +1353,7 @@ class Ei {
     const { message: t } = e;
     let s = !1;
     return {
-      packing: Ai(t),
+      packing: Ur(t),
       maxGaussians: e.maxGaussians,
       planningMs: t.planningMs,
       roundTripMs: e.roundTripMs,
@@ -1376,21 +1393,21 @@ class Ei {
       throw new Error("RadialLodWorkerPlanner has been disposed");
   }
 }
-function Ti(r) {
+function jr(r) {
   return {
     nodeIds: new ArrayBuffer(r * Uint32Array.BYTES_PER_ELEMENT),
     lodLevels: new ArrayBuffer(r * Uint8Array.BYTES_PER_ELEMENT)
   };
 }
-function Ai(r) {
+function Ur(r) {
   return {
     nodeIds: new Uint32Array(r.buffer.nodeIds, 0, r.length),
     lodLevels: new Uint8Array(r.buffer.lodLevels, 0, r.length),
     gaussianCount: r.gaussianCount
   };
 }
-const Di = 1024 * 1024, ji = 16, Ui = 1.25;
-class $s {
+const Wr = 1024 * 1024, Fr = 16, Vr = 1.25;
+class Os {
   targetStrategy;
   targetPlanner;
   maxUploadBytesPerPack;
@@ -1410,7 +1427,7 @@ class $s {
   latestTargetPlanningMs = 0;
   latestTargetRoundTripMs = 0;
   constructor(e, t = {}) {
-    if (this.targetStrategy = e, this.targetPlanner = t.targetPlanner ?? null, this.maxUploadBytesPerPack = t.maxUploadBytesPerPack ?? Di, this.maxChangedCellsPerPack = t.maxChangedCellsPerPack ?? ji, !(this.maxUploadBytesPerPack > 0) || !Number.isFinite(this.maxUploadBytesPerPack))
+    if (this.targetStrategy = e, this.targetPlanner = t.targetPlanner ?? null, this.maxUploadBytesPerPack = t.maxUploadBytesPerPack ?? Wr, this.maxChangedCellsPerPack = t.maxChangedCellsPerPack ?? Fr, !(this.maxUploadBytesPerPack > 0) || !Number.isFinite(this.maxUploadBytesPerPack))
       throw new RangeError(
         "Streaming LOD maxUploadBytesPerPack must be finite and positive"
       );
@@ -1493,7 +1510,7 @@ class $s {
   }
   buildTarget(e) {
     const t = this.targetStrategy.pack(e);
-    return rs(e.lod, t, e.maxGaussians), this.targetAvailable = !0, this.targetBudget = e.maxGaussians, this.targetDirty = !1, t;
+    return as(e.lod, t, e.maxGaussians), this.targetAvailable = !0, this.targetBudget = e.maxGaussians, this.targetDirty = !1, t;
   }
   refreshTarget(e) {
     if (this.targetPlanner === null) {
@@ -1507,7 +1524,7 @@ class $s {
     const t = this.targetPlanner.takeLatest();
     if (t !== null)
       try {
-        rs(e.lod, t.packing, t.maxGaussians), this.targetAvailable = !0, this.targetBudget = t.maxGaussians, this.changes = this.planChanges(e.lod, t.packing), this.changeCursor = 0, this.latestTargetPlanningMs = t.planningMs, this.latestTargetRoundTripMs = t.roundTripMs;
+        as(e.lod, t.packing, t.maxGaussians), this.targetAvailable = !0, this.targetBudget = t.maxGaussians, this.changes = this.planChanges(e.lod, t.packing), this.changeCursor = 0, this.latestTargetPlanningMs = t.planningMs, this.latestTargetRoundTripMs = t.roundTripMs;
       } finally {
         t.release();
       }
@@ -1565,8 +1582,8 @@ class $s {
     };
   }
 }
-function ss(r) {
-  return r instanceof $s;
+function rs(r) {
+  return r instanceof Os;
 }
 function is(r, e, t, s) {
   const a = r.nodes[e], i = t === null ? 0 : a.levelCounts[t], o = s === null ? 0 : a.levelCounts[s], n = Math.max(0, o - i), l = Math.max(0, i - o), c = t !== null && s !== null && t !== s ? Math.min(i, o) : 0, u = 48 + r.octree.data.shCoefficientCount * bs + 4;
@@ -1575,11 +1592,11 @@ function is(r, e, t, s) {
     lodLevel: s,
     gaussianDelta: o - i,
     estimatedUploadBytes: Math.ceil(
-      (n * u + l * 16 + c * 4) * Ui
+      (n * u + l * 16 + c * 4) * Vr
     )
   };
 }
-function rs(r, e, t) {
+function as(r, e, t) {
   if (e.gaussianCount > t)
     throw new RangeError(
       `Streaming LOD target exceeded its allocation of ${t} Gaussians`
@@ -1603,12 +1620,12 @@ function rs(r, e, t) {
       `GaussianLodPacking declares ${e.gaussianCount} Gaussians but selects ${a}`
     );
 }
-class Wi {
+class qr {
   allocate({ remainingGaussians: e }) {
     return e;
   }
 }
-class la {
+class da {
   fraction;
   constructor(e) {
     if (!(e > 0 && e <= 1))
@@ -1643,8 +1660,8 @@ function je(r, e, t) {
   const c = [];
   let u = { ...s[0] };
   for (let h = 1; h < s.length; h++) {
-    const d = s[h], f = u.start + u.count, _ = d.start - f;
-    _ <= e && l + _ <= n ? (u.count = d.start + d.count - u.start, l += _) : (c.push(u), u = { ...d });
+    const d = s[h], f = u.start + u.count, y = d.start - f;
+    y <= e && l + y <= n ? (u.count = d.start + d.count - u.start, l += y) : (c.push(u), u = { ...d });
   }
   return c.push(u), c;
 }
@@ -1653,7 +1670,7 @@ function Ue(r) {
   for (const t of r) e += t.count;
   return e;
 }
-function ie(r, e, t) {
+function re(r, e, t) {
   if (e.length !== 0) {
     for (const s of e)
       r.addUpdateRange(
@@ -1663,14 +1680,14 @@ function ie(r, e, t) {
     r.needsUpdate = !0;
   }
 }
-const Ms = /* @__PURE__ */ Symbol(
+const Bs = /* @__PURE__ */ Symbol(
   "replaceGaussianStoreAttribute"
-), Os = /* @__PURE__ */ Symbol(
+), zs = /* @__PURE__ */ Symbol(
   "updateGaussianStoreAttribute"
-), Bs = /* @__PURE__ */ Symbol(
+), As = /* @__PURE__ */ Symbol(
   "disposeGaussianStoreAttribute"
 );
-class Fi {
+class Kr {
   format;
   name;
   packedBuffer = null;
@@ -1697,15 +1714,15 @@ class Fi {
   get array() {
     return this.bufferAttribute.array;
   }
-  [Ms](e) {
+  [Bs](e) {
     this.assertUsable();
-    const t = this.packedBuffer, s = new Pe(e, 1);
+    const t = this.packedBuffer, s = new Re(e, 1);
     s.name = `3dgs.store.attribute.${this.name}`, this.packedBuffer = s, t?.dispose();
   }
-  [Os](e) {
-    ie(this.bufferAttribute, e, 1);
+  [zs](e) {
+    re(this.bufferAttribute, e, 1);
   }
-  [Bs]() {
+  [As]() {
     this.disposed || (this.disposed = !0, this.packedBuffer?.dispose(), this.packedBuffer = null);
   }
   assertUsable() {
@@ -1713,12 +1730,12 @@ class Fi {
       throw new Error(`GaussianStore attribute ${this.name} has been disposed`);
   }
 }
-const zs = /* @__PURE__ */ Symbol(
+const Es = /* @__PURE__ */ Symbol(
   "enableGaussianStoreAttribute"
-), Es = /* @__PURE__ */ Symbol(
+), Ts = /* @__PURE__ */ Symbol(
   "disposeGaussianStoreAttributes"
 );
-class Vi {
+class Yr {
   attributes = /* @__PURE__ */ new Map();
   get size() {
     return this.attributes.size;
@@ -1735,7 +1752,7 @@ class Vi {
   [Symbol.iterator]() {
     return this.values();
   }
-  [zs](e, t) {
+  [Es](e, t) {
     const s = this.attributes.get(e);
     if (s !== void 0) {
       if (s.format !== t)
@@ -1744,16 +1761,16 @@ class Vi {
         );
       return s;
     }
-    const a = new Fi(e, t);
+    const a = new Kr(e, t);
     return this.attributes.set(e, a), a;
   }
-  [Es]() {
+  [Ts]() {
     for (const e of this.attributes.values())
-      e[Bs]();
+      e[As]();
     this.attributes.clear();
   }
 }
-class qi {
+class Xr {
   constructor(e) {
     this.attribute = e;
   }
@@ -1761,7 +1778,7 @@ class qi {
   writtenSlots = [];
   freshBuffer = !1;
   allocate(e) {
-    this.writtenSlots.length = 0, this.attribute[Ms](new Uint32Array(e)), this.freshBuffer = !0;
+    this.writtenSlots.length = 0, this.attribute[Bs](new Uint32Array(e)), this.freshBuffer = !0;
   }
   backfill(e) {
     const t = this.attribute.array;
@@ -1778,7 +1795,7 @@ class qi {
   }
   commit() {
     const e = this.writtenSlots.length, t = je(this.writtenSlots, 16, 0.25), s = Ue(t);
-    return this.freshBuffer || this.attribute[Os](t), this.writtenSlots.length = 0, this.freshBuffer = !1, {
+    return this.freshBuffer || this.attribute[zs](t), this.writtenSlots.length = 0, this.freshBuffer = !1, {
       writtenSlots: e,
       uploadedSlots: s,
       estimatedUploadBytes: s * Uint32Array.BYTES_PER_ELEMENT,
@@ -1786,8 +1803,8 @@ class qi {
     };
   }
 }
-const Ki = 16777216;
-class ca {
+const Hr = 16777216;
+class ha {
   loader;
   budgetingStrategy;
   defaultPackingStrategy;
@@ -1795,7 +1812,7 @@ class ca {
   maxGaussiansOption;
   packedShFormat = "rgb8e8";
   /** Optional attributes indexed by the same gaussianIndex as the packed data. */
-  attributes = new Vi();
+  attributes = new Yr();
   attributePackers = [];
   entries = [];
   cloudList = [];
@@ -1816,7 +1833,7 @@ class ca {
   /** Changes only after a successful pack() replaces the shared layout. */
   layoutVersion = 0;
   constructor(e = {}) {
-    this.loader = e.loader ?? new gi(), this.budgetingStrategy = e.budgetingStrategy ?? new Wi(), this.defaultPackingStrategy = e.defaultPackingStrategy ?? null, this.defaultStreamingLod = { ...e.defaultStreamingLod }, this.maxGaussiansOption = Hi(
+    this.loader = e.loader ?? new vr(), this.budgetingStrategy = e.budgetingStrategy ?? new qr(), this.defaultPackingStrategy = e.defaultPackingStrategy ?? null, this.defaultStreamingLod = { ...e.defaultStreamingLod }, this.maxGaussiansOption = Qr(
       e.maxGaussians ?? "auto"
     );
   }
@@ -1854,10 +1871,10 @@ class ca {
     this.assertUsable();
     const e = this.attributes.get("lodLevel");
     if (e !== void 0) return e;
-    const t = this.attributes[zs](
+    const t = this.attributes[Es](
       "lodLevel",
       "u32"
-    ), s = new qi(t);
+    ), s = new Xr(t);
     return this.attributePackers.push(s), this.packedData !== null && (s.allocate(this.packedData.count), s.backfill({ cells: this.collectPackedLayoutCells() }), s.commit()), t;
   }
   async load(e, t = {}) {
@@ -1872,7 +1889,7 @@ class ca {
         ...t.lod,
         ownsOctree: !0
       }), this.addLod(i, {
-        name: t.name ?? Xi(e),
+        name: t.name ?? Jr(e),
         priority: t.priority,
         packingStrategy: t.packingStrategy,
         ownsLod: !0
@@ -1920,7 +1937,7 @@ class ca {
       e,
       null,
       a
-    ), o = t.packingStrategy ?? this.defaultPackingStrategy ?? Zi(this.defaultStreamingLod);
+    ), o = t.packingStrategy ?? this.defaultPackingStrategy ?? ei(this.defaultStreamingLod);
     return this.entries.push({
       cloud: i,
       count: 0,
@@ -1944,15 +1961,15 @@ class ca {
     const t = this.entries.findIndex((a) => a.cloud === e);
     if (t < 0) return;
     const [s] = this.entries.splice(t, 1);
-    this.cloudList.splice(this.cloudList.indexOf(e), 1), s?.source !== null && s?.ownsSource === !0 && s.source.dispose(), s?.lod !== null && s?.ownsLod === !0 && s.lod.dispose(), s?.ownsPackingStrategy === !0 && as(s.packingStrategy), e.removeFromParent(), this.invalidatePacking();
+    this.cloudList.splice(this.cloudList.indexOf(e), 1), s?.source !== null && s?.ownsSource === !0 && s.source.dispose(), s?.lod !== null && s?.ownsLod === !0 && s.lod.dispose(), s?.ownsPackingStrategy === !0 && ns(s.packingStrategy), e.removeFromParent(), this.invalidatePacking();
   }
   /** Resolve all registered clouds and materialize one packed buffer set. */
   pack({ limits: e }) {
     if (this.assertUsable(), this.entries.length === 0)
       throw new Error("GaussianStore must contain at least one GaussianCloud");
-    const t = er(e, this.shDegree), s = this.maxGaussiansOption === "auto" ? t : Math.min(t, this.maxGaussiansOption), a = performance.now(), i = this.planPackings(s), o = performance.now() - a, n = Math.min(
+    const t = ri(e, this.shDegree), s = this.maxGaussiansOption === "auto" ? t : Math.min(t, this.maxGaussiansOption), a = performance.now(), i = this.planPackings(s), o = performance.now() - a, n = Math.min(
       s,
-      this.entries.reduce((f, _) => f + _.sourceGaussianCount, 0)
+      this.entries.reduce((f, y) => f + y.sourceGaussianCount, 0)
     ), l = this.packedData, c = l !== null && l.count === n && l.shDegree === this.shDegree && l.shFormat === this.packedShFormat && this.packedObjectCapacity === this.objectCapacity, u = performance.now(), h = c ? this.updatePackedData(i, l) : this.buildPackedData(i, n), d = performance.now() - u;
     for (const f of i)
       f.entry.count = f.count, f.entry.packing = f.packing, f.entry.allocatedBudget = f.allocatedBudget, f.entry.packingDirty = !1, f.entry.cloud.updatePacking(f.count, f.packing);
@@ -1973,7 +1990,7 @@ class ca {
     if (t.lod === null || t.packing === null || t.allocatedBudget === null)
       throw new Error("GaussianCloud is not an initialized LOD entry");
     const s = t.packingStrategy;
-    if (!ss(s))
+    if (!rs(s))
       throw new Error(
         "GaussianCloud must use StreamingLodPackingStrategy for incremental LOD batches"
       );
@@ -1990,30 +2007,30 @@ class ca {
     d.length = 0;
     const f = /* @__PURE__ */ new Map();
     for (const w of i.transitions) {
-      const I = l.get(w.nodeId), j = w.lodLevel === null ? 0 : t.lod.nodes[w.nodeId].levelCounts[w.lodLevel], M = Math.min(
+      const I = l.get(w.nodeId), j = w.lodLevel === null ? 0 : t.lod.nodes[w.nodeId].levelCounts[w.lodLevel], $ = Math.min(
         I?.slots.length ?? 0,
         j
       );
       if (f.set(w.nodeId, {
         previousCell: I,
-        retainedCount: M
+        retainedCount: $
       }), I !== void 0)
-        for (let A = M; A < I.slots.length; A++) {
-          const O = I.slots[A];
+        for (let T = $; T < I.slots.length; T++) {
+          const O = I.slots[T];
           h.push(O), d.push(O);
         }
     }
-    const _ = this.scratchWrittenSlots;
-    _.length = 0;
+    const y = this.scratchWrittenSlots;
+    y.length = 0;
     for (const w of i.transitions) {
-      const I = f.get(w.nodeId), { previousCell: j, retainedCount: M } = I;
+      const I = f.get(w.nodeId), { previousCell: j, retainedCount: $ } = I;
       if (w.lodLevel === null) {
         u.delete(w.nodeId);
         continue;
       }
-      const A = t.lod.nodes[w.nodeId].levelCounts[w.lodLevel], O = j?.slots, U = O !== void 0 && O.length === A ? O : new Uint32Array(A);
-      U !== O && O !== void 0 && M > 0 && U.set(O.subarray(0, M));
-      for (let q = M; q < A; q++) {
+      const T = t.lod.nodes[w.nodeId].levelCounts[w.lodLevel], O = j?.slots, U = O !== void 0 && O.length === T ? O : new Uint32Array(T);
+      U !== O && O !== void 0 && $ > 0 && U.set(O.subarray(0, $));
+      for (let q = $; q < T; q++) {
         const ee = h.pop();
         if (ee === void 0)
           throw new Error("GaussianStore slot allocator exhausted capacity");
@@ -2026,43 +2043,43 @@ class ca {
           n.rotations.array,
           n.shCoefficients.array,
           n.shCoefficientCount
-        ), U[q] = ee, _.push(ee);
+        ), U[q] = ee, y.push(ee);
       }
-      const ye = {
+      const _e = {
         lodLevel: w.lodLevel,
         slots: U
       };
       for (const q of this.attributePackers)
-        q.updateCell({ previousCell: j, cell: ye, retainedCount: M });
-      u.set(w.nodeId, ye);
+        q.updateCell({ previousCell: j, cell: _e, retainedCount: $ });
+      u.set(w.nodeId, _e);
     }
-    const y = this.nextSlotMarkGeneration(n.count);
-    for (const w of _) this.slotMarks[w] = y;
+    const _ = this.nextSlotMarkGeneration(n.count);
+    for (const w of y) this.slotMarks[w] = _;
     const p = this.scratchClearedSlots;
     p.length = 0;
     for (const w of d)
-      this.slotMarks[w] !== y && p.push(w);
-    const b = n.scalesOpacity.array;
-    for (const w of p) b[w * 4 + 3] = 0;
-    const N = je(_, 4, 0.15), R = je(p, 16, 0.25);
-    ie(n.means, N, 4), ie(n.scalesOpacity, N, 4), ie(n.scalesOpacity, R, 4), ie(n.rotations, N, 4), ie(
+      this.slotMarks[w] !== _ && p.push(w);
+    const v = n.scalesOpacity.array;
+    for (const w of p) v[w * 4 + 3] = 0;
+    const N = je(y, 4, 0.15), P = je(p, 16, 0.25);
+    re(n.means, N, 4), re(n.scalesOpacity, N, 4), re(n.scalesOpacity, P, 4), re(n.rotations, N, 4), re(
       n.shCoefficients,
       N,
       n.shCoefficientCount * n.shCoefficients.itemSize
     );
-    const S = this.commitAttributePackers(), x = this.count - t.count + i.packing.gaussianCount, k = Ue(N), G = Ue(R), E = performance.now() - c;
+    const S = this.commitAttributePackers(), x = this.count - t.count + i.packing.gaussianCount, k = Ue(N), G = Ue(P), A = performance.now() - c;
     return t.count = i.packing.gaussianCount, t.packing = i.packing, t.packingDirty = !1, t.cloud.updatePacking(t.count, t.packing), this.cellSlotsByEntry.set(t, u), this.freeSlots = h, this.latestPackStats = {
       fullRebuild: !1,
       slotCapacity: n.count,
       activeGaussians: x,
-      reusedSlots: x - _.length,
-      writtenSlots: _.length,
+      reusedSlots: x - y.length,
+      writtenSlots: y.length,
       clearedSlots: p.length,
       estimatedUploadBytes: k * pt(n) + G * 16 + S.estimatedUploadBytes,
       writtenSlotRanges: N,
-      clearedSlotRanges: R,
+      clearedSlotRanges: P,
       planningMs: o,
-      slotUpdateMs: E
+      slotUpdateMs: A
     }, { applied: !0, pending: i.pending };
   }
   planPackings(e) {
@@ -2082,7 +2099,7 @@ class ca {
           sourceGaussianCount: i.sourceGaussianCount
         }
       });
-      if (Ji(n, o), i.lod === null) {
+      if (ti(n, o), i.lod === null) {
         if (i.sourceGaussianCount > n)
           throw new RangeError(
             `${i.cloud.name} requires ${i.sourceGaussianCount} Gaussians but its Store allocation is ${n}`
@@ -2104,7 +2121,7 @@ class ca {
         throw new RangeError(
           `${l.constructor.name} exceeded its allocation of ${n} Gaussians`
         );
-      Qi(i.lod, u), s.push({
+      si(i.lod, u), s.push({
         entry: i,
         count: u.gaussianCount,
         packing: u,
@@ -2144,7 +2161,7 @@ class ca {
     const o = [];
     for (const n of this.entries) {
       const l = n.packingStrategy;
-      if (n.lod === null || l === null || !ss(l))
+      if (n.lod === null || l === null || !rs(l))
         continue;
       n.cloud.updateWorldMatrix(!0, !1), e.getWorldPosition(t), n.cloud.worldToLocal(t);
       const c = n.lod.octree.rootBounds.getSize(new C()).length() * 0.5, u = Math.max(0.05, c * 0.025);
@@ -2176,17 +2193,17 @@ class ca {
     if (!this.disposed) {
       this.disposed = !0;
       for (const e of this.entries)
-        e.source !== null && e.ownsSource && e.source.dispose(), e.lod !== null && e.ownsLod && e.lod.dispose(), e.ownsPackingStrategy && as(e.packingStrategy), e.cloud.removeFromParent();
-      this.entries.length = 0, this.cloudList.length = 0, this.packedData?.dispose(), this.packedData = null, this.attributes[Es](), this.attributePackers.length = 0;
+        e.source !== null && e.ownsSource && e.source.dispose(), e.lod !== null && e.ownsLod && e.lod.dispose(), e.ownsPackingStrategy && ns(e.packingStrategy), e.cloud.removeFromParent();
+      this.entries.length = 0, this.cloudList.length = 0, this.packedData?.dispose(), this.packedData = null, this.attributes[Ts](), this.attributePackers.length = 0;
     }
   }
   buildPackedData(e, t) {
     const s = this.shDegree, a = (s + 1) ** 2, i = new Float32Array(t * 4), o = new Float32Array(t * 4), n = new Float32Array(t * 4), l = new Uint32Array(t * a), c = /* @__PURE__ */ new Map();
     let u = 0;
-    for (const y of e) {
-      const { entry: p } = y, b = /* @__PURE__ */ new Map();
-      for (const N of this.plannedCells(y)) {
-        const R = new Uint32Array(N.count);
+    for (const _ of e) {
+      const { entry: p } = _, v = /* @__PURE__ */ new Map();
+      for (const N of this.plannedCells(_)) {
+        const P = new Uint32Array(N.count);
         for (let S = 0; S < N.count; S++) {
           const x = this.cellSourceIndex(p, N.nodeId, S);
           this.copySourceToSlot(
@@ -2198,19 +2215,19 @@ class ca {
             n,
             l,
             a
-          ), R[S] = u++;
+          ), P[S] = u++;
         }
-        b.set(N.nodeId, {
+        v.set(N.nodeId, {
           lodLevel: N.lodLevel,
-          slots: R
+          slots: P
         });
       }
-      c.set(p, b);
+      c.set(p, v);
     }
     const h = Array.from(
       { length: t - u },
-      (y, p) => t - 1 - p
-    ), d = new ms(
+      (_, p) => t - 1 - p
+    ), d = new vs(
       {
         means: Qe("3dgs.store.means-object", i),
         scalesOpacity: Qe("3dgs.store.scales-opacity", o),
@@ -2228,9 +2245,9 @@ class ca {
         ownsBuffers: !0
       }
     ), f = this.collectPackedLayoutCells(c);
-    for (const y of this.attributePackers)
-      y.allocate(t), y.backfill({ cells: f });
-    const _ = this.commitAttributePackers();
+    for (const _ of this.attributePackers)
+      _.allocate(t), _.backfill({ cells: f });
+    const y = this.commitAttributePackers();
     return {
       data: d,
       cellSlotsByEntry: c,
@@ -2242,7 +2259,7 @@ class ca {
         reusedSlots: 0,
         writtenSlots: u,
         clearedSlots: 0,
-        estimatedUploadBytes: u * pt(d) + _.estimatedUploadBytes,
+        estimatedUploadBytes: u * pt(d) + y.estimatedUploadBytes,
         writtenSlotRanges: u === 0 ? [] : [{ start: 0, count: u }],
         clearedSlotRanges: [],
         planningMs: 0,
@@ -2265,14 +2282,14 @@ class ca {
     for (const [x, k] of this.cellSlotsByEntry) {
       const G = s.get(x);
       if (!(G === void 0 && a.has(x)))
-        for (const [E, w] of k) {
+        for (const [A, w] of k) {
           const I = w.slots, j = Math.min(
             I.length,
-            G?.get(E)?.count ?? 0
+            G?.get(A)?.count ?? 0
           );
-          for (let M = j; M < I.length; M++) {
-            const A = I[M];
-            o.push(A), n.push(A);
+          for (let $ = j; $ < I.length; $++) {
+            const T = I[$];
+            o.push(T), n.push(T);
           }
         }
     }
@@ -2286,35 +2303,35 @@ class ca {
         continue;
       }
       const G = /* @__PURE__ */ new Map();
-      for (const E of s.get(x.entry)?.values() ?? []) {
-        const w = k?.get(E.nodeId), I = w?.slots, j = Math.min(I?.length ?? 0, E.count), M = I !== void 0 && I.length === E.count ? I : new Uint32Array(E.count);
-        M !== I && I !== void 0 && j > 0 && M.set(I.subarray(0, j)), u += j;
-        for (let O = j; O < E.count; O++) {
+      for (const A of s.get(x.entry)?.values() ?? []) {
+        const w = k?.get(A.nodeId), I = w?.slots, j = Math.min(I?.length ?? 0, A.count), $ = I !== void 0 && I.length === A.count ? I : new Uint32Array(A.count);
+        $ !== I && I !== void 0 && j > 0 && $.set(I.subarray(0, j)), u += j;
+        for (let O = j; O < A.count; O++) {
           const U = o.pop();
           if (U === void 0)
             throw new Error("GaussianStore slot allocator exhausted capacity");
           this.copySourceToSlot(
             x.entry,
-            this.cellSourceIndex(x.entry, E.nodeId, O),
+            this.cellSourceIndex(x.entry, A.nodeId, O),
             U,
             t.means.array,
             t.scalesOpacity.array,
             t.rotations.array,
             t.shCoefficients.array,
             t.shCoefficientCount
-          ), M[O] = U, c.push(U);
+          ), $[O] = U, c.push(U);
         }
-        const A = {
-          lodLevel: E.lodLevel,
-          slots: M
+        const T = {
+          lodLevel: A.lodLevel,
+          slots: $
         };
         for (const O of this.attributePackers)
           O.updateCell({
             previousCell: w,
-            cell: A,
+            cell: T,
             retainedCount: j
           });
-        G.set(E.nodeId, A);
+        G.set(A.nodeId, T);
       }
       l.set(x.entry, G);
     }
@@ -2326,13 +2343,13 @@ class ca {
       this.slotMarks[x] !== h && d.push(x);
     const f = t.scalesOpacity.array;
     for (const x of d) f[x * 4 + 3] = 0;
-    const _ = c.length, y = d.length, p = je(c, 4, 0.15), b = je(d, 16, 0.25);
-    ie(t.means, p, 4), ie(t.scalesOpacity, p, 4), ie(t.scalesOpacity, b, 4), ie(t.rotations, p, 4), ie(
+    const y = c.length, _ = d.length, p = je(c, 4, 0.15), v = je(d, 16, 0.25);
+    re(t.means, p, 4), re(t.scalesOpacity, p, 4), re(t.scalesOpacity, v, 4), re(t.rotations, p, 4), re(
       t.shCoefficients,
       p,
       t.shCoefficientCount * t.shCoefficients.itemSize
     );
-    const N = this.commitAttributePackers(), R = Ue(p), S = Ue(b);
+    const N = this.commitAttributePackers(), P = Ue(p), S = Ue(v);
     return {
       data: t,
       cellSlotsByEntry: l,
@@ -2342,11 +2359,11 @@ class ca {
         slotCapacity: t.count,
         activeGaussians: i,
         reusedSlots: u,
-        writtenSlots: _,
-        clearedSlots: y,
-        estimatedUploadBytes: R * pt(t) + S * 16 + N.estimatedUploadBytes,
+        writtenSlots: y,
+        clearedSlots: _,
+        estimatedUploadBytes: P * pt(t) + S * 16 + N.estimatedUploadBytes,
         writtenSlotRanges: p,
-        clearedSlotRanges: b,
+        clearedSlotRanges: v,
         planningMs: 0,
         slotUpdateMs: 0
       }
@@ -2392,7 +2409,7 @@ class ca {
       t,
       o,
       s
-    ), a[s * 4 + 3] = e.cloud.objectId, Yi(
+    ), a[s * 4 + 3] = e.cloud.objectId, Zr(
       c,
       t,
       n,
@@ -2407,7 +2424,7 @@ class ca {
   }
   allocateObjectId() {
     const e = this.nextObjectId++;
-    if (e >= Ki)
+    if (e >= Hr)
       throw new RangeError(
         "GaussianStore exhausted object IDs exactly representable in means.w"
       );
@@ -2421,7 +2438,7 @@ class ca {
   }
 }
 function Qe(r, e, t = 4) {
-  const s = new Pe(e, t);
+  const s = new Re(e, t);
   return s.name = r, s;
 }
 function ht(r, e, t, s) {
@@ -2430,7 +2447,7 @@ function ht(r, e, t, s) {
     s * 4
   );
 }
-function Yi(r, e, t, s, a) {
+function Zr(r, e, t, s, a) {
   const i = r.shCoefficientCount, o = Math.min(
     i,
     a
@@ -2453,7 +2470,7 @@ function Yi(r, e, t, s, a) {
   const l = r.shCoefficients.array, c = e * i * 4;
   for (let u = 0; u < o; u++) {
     const h = c + u * 4;
-    t[n + u] = pi(
+    t[n + u] = gr(
       l[h],
       l[h + 1],
       l[h + 2]
@@ -2461,9 +2478,9 @@ function Yi(r, e, t, s, a) {
   }
 }
 function pt(r) {
-  return 48 + r.shCoefficientCount * vs(r.shFormat);
+  return 48 + r.shCoefficientCount * ys(r.shFormat);
 }
-function Xi(r) {
+function Jr(r) {
   const e = r.split(/[?#]/, 1)[0] ?? r;
   return e.slice(e.lastIndexOf("/") + 1) || "GaussianCloud";
 }
@@ -2474,30 +2491,30 @@ function ft(r) {
     );
   return r;
 }
-function Hi(r) {
+function Qr(r) {
   if (r !== "auto" && (!Number.isSafeInteger(r) || r <= 0))
     throw new RangeError(
       'GaussianStore maxGaussians must be "auto" or a positive safe integer'
     );
   return r;
 }
-function Zi(r) {
-  const e = new Ii();
-  return new $s(e, {
+function ei(r) {
+  const e = new $r();
+  return new Os(e, {
     ...r,
-    targetPlanner: new Ei(e)
+    targetPlanner: new Dr(e)
   });
 }
-function as(r) {
+function ns(r) {
   r !== null && "dispose" in r && typeof r.dispose == "function" && r.dispose();
 }
-function Ji(r, e) {
+function ti(r, e) {
   if (!Number.isSafeInteger(r) || r < 0 || r > e)
     throw new RangeError(
       `GaussianStore budget allocation must be an integer in [0, ${e}]`
     );
 }
-function Qi(r, e) {
+function si(r, e) {
   if (e.nodeIds.length !== e.lodLevels.length)
     throw new RangeError("GaussianLodPacking arrays must have equal lengths");
   const t = /* @__PURE__ */ new Set();
@@ -2521,24 +2538,24 @@ function Qi(r, e) {
       `GaussianLodPacking declares ${e.gaussianCount} Gaussians but selects ${s}`
     );
 }
-function er(r, e) {
-  const t = ns(
+function ri(r, e) {
+  const t = os(
     r.maxStorageBufferBindingSize,
     "maxStorageBufferBindingSize"
-  ), s = ns(r.maxBufferSize, "maxBufferSize"), a = Math.max(
+  ), s = os(r.maxBufferSize, "maxBufferSize"), a = Math.max(
     16,
-    (e + 1) ** 2 * vs("rgb8e8")
+    (e + 1) ** 2 * ys("rgb8e8")
   );
   return Math.floor(Math.min(t, s) / a);
 }
-function ns(r, e) {
+function os(r, e) {
   if (!Number.isSafeInteger(r) || r <= 0)
     throw new RangeError(
       `GPUDevice limit ${e} must be a positive safe integer`
     );
   return r;
 }
-const z = 16, v = 256, tr = 8192, D = 512, yt = 4, L = 1 << yt, re = 4, le = v * re, X = le, ae = 32, sr = (
+const z = 16, b = 256, ii = 8192, D = 512, _t = 4, L = 1 << _t, ie = 4, le = b * ie, X = le, ae = 32, ai = (
   /* wgsl */
   `
 fn count_raster_chunks(
@@ -2564,7 +2581,7 @@ fn count_raster_chunks(
   return 0u;
 }
 `
-), ir = (
+), ni = (
   /* wgsl */
   `
 fn prepare_raster_chunk_dispatch(
@@ -2584,7 +2601,7 @@ fn prepare_raster_chunk_dispatch(
   return 0u;
 }
 `
-), rr = (
+), oi = (
   /* wgsl */
   `
 fn emit_raster_chunk_tasks(
@@ -2607,22 +2624,22 @@ fn emit_raster_chunk_tasks(
 }
 `
 );
-function Ts(r, e) {
+function Ds(r, e) {
   return Math.max(1, Math.ceil(2 * r / e));
 }
-function ar(r, e) {
+function li(r, e) {
   if (r !== null) {
-    if (!Number.isInteger(r) || r < v || r % v !== 0)
+    if (!Number.isInteger(r) || r < b || r % b !== 0)
       throw new RangeError(
-        `rasterChunkSize must be a multiple of ${v} and at least ${v}`
+        `rasterChunkSize must be a multiple of ${b} and at least ${b}`
       );
-    if (Ts(e, r) > 65535)
+    if (Ds(e, r) > 65535)
       throw new RangeError(
         "rasterChunkSize creates more than 65,535 worst-case chunk tasks"
       );
   }
 }
-const nr = (
+const ci = (
   /* wgsl */
   `
 fn prepare_visible_dispatch(
@@ -2644,7 +2661,7 @@ fn prepare_visible_dispatch(
   (*radix_block_dispatch)[0] = vec4<u32>(radix_blocks, 1u, 1u, 0u);
   (*radix_reduce_dispatch)[0] = vec4<u32>(reduce_chunks, ${L}u, 1u, 0u);
   (*linear_dispatch)[0] = vec4<u32>(
-    (count + ${v - 1}u) / ${v}u,
+    (count + ${b - 1}u) / ${b}u,
     1u, 1u, 0u
   );
   (*state)[0] = vec4<u32>(count, count, radix_blocks, 0u);
@@ -2652,7 +2669,7 @@ fn prepare_visible_dispatch(
 }
 `
 );
-function or(r) {
+function ui(r) {
   return (
     /* wgsl */
     `
@@ -2676,7 +2693,7 @@ fn compact_visible_${r}(
 `
   );
 }
-const lr = (
+const di = (
   /* wgsl */
   `
 fn gather_depth_ordered_tile_counts(
@@ -2698,19 +2715,19 @@ class ce {
   createFloat(e, t, s = 4) {
     return this.track(
       e,
-      new Pe(new Float32Array(t * s), s)
+      new Re(new Float32Array(t * s), s)
     );
   }
   createUint(e, t, s = 1) {
     return this.track(
       e,
-      new Pe(new Uint32Array(t * s), s)
+      new Re(new Uint32Array(t * s), s)
     );
   }
   createIndirect(e) {
     return this.track(
       e,
-      new ei(new Uint32Array(4), 4)
+      new sr(new Uint32Array(4), 4)
     );
   }
   dispose() {
@@ -2721,14 +2738,14 @@ class ce {
     return t.name = e, this.attributes.push(t), t;
   }
 }
-class cr {
+class hi {
   constructor(e, t, s, a, i) {
     this.renderer = e, this.visibleDispatch = i, this.tileCounts = this.attributes.createUint(
       "3dgs.depth-ordered-tile-counts",
       t
     );
-    const o = $(
-      lr
+    const o = M(
+      di
     );
     this.computeNode = o({
       rank: ne,
@@ -2744,7 +2761,7 @@ class cr {
         t
       ).toReadOnly(),
       ordered_tile_counts: m(this.tileCounts, "uint", t)
-    }).computeKernel([v]).setName("3DGS gather depth-ordered tile counts WGSL");
+    }).computeKernel([b]).setName("3DGS gather depth-ordered tile counts WGSL");
   }
   renderer;
   visibleDispatch;
@@ -2758,7 +2775,7 @@ class cr {
     this.computeNode.dispose(), this.attributes.dispose();
   }
 }
-function As(r) {
+function js(r) {
   return (
     /* wgsl */
     `
@@ -2773,9 +2790,9 @@ fn ${r.functionName}(
 ) -> u32 {
   let base = group_id * ${D}u;
   let first = base + lane;
-  let second = first + ${v}u;
+  let second = first + ${b}u;
   (*scratch)[lane] = ${r.readValue("first")};
-  (*scratch)[lane + ${v}u] = ${r.readValue("second")};
+  (*scratch)[lane + ${b}u] = ${r.readValue("second")};
   workgroupBarrier();
 
   var offset = 1u;
@@ -2813,21 +2830,21 @@ fn ${r.functionName}(
   }
 
   if (first < length) { (*output_values)[first] = (*scratch)[lane]; }
-  if (second < length) { (*output_values)[second] = (*scratch)[lane + ${v}u]; }
+  if (second < length) { (*output_values)[second] = (*scratch)[lane + ${b}u]; }
   return 0u;
 }
 `
   );
 }
-const ur = As({
+const pi = js({
   functionName: "scan_blocks",
   inputType: "u32",
   readValue: (r) => `select(0u, (*input_values)[${r}], ${r} < length)`
-}), dr = As({
+}), fi = js({
   functionName: "scan_visibility_blocks",
   inputType: "vec4<f32>",
   readValue: (r) => `select(0u, 1u, ${r} < length && (*input_values)[${r}].w > 0.0)`
-}), hr = (
+}), gi = (
   /* wgsl */
   `
 fn add_scan_offsets(
@@ -2849,32 +2866,32 @@ class xt {
   levels = [];
   constructor(e, t, s = "intersections", a = "uint") {
     this.output = this.attributes.createUint(`3dgs.${s}-offsets`, t);
-    const i = $(ur), o = $(
-      dr
-    ), n = $(hr);
+    const i = M(pi), o = M(
+      fi
+    ), n = M(gi);
     let l = e, c = this.output, u = t;
     for (; ; ) {
       const h = Math.ceil(u / D), d = this.attributes.createUint(
         `3dgs.${s}-scan-sums-${this.levels.length}`,
         h
-      ), f = W("uint", D), _ = this.levels.length === 0 && a === "projectedVisibility", y = (_ ? o : i)({
-        lane: _e,
+      ), f = W("uint", D), y = this.levels.length === 0 && a === "projectedVisibility", _ = (y ? o : i)({
+        lane: ye,
         group_id: Y.x,
         length: g(u),
         input_values: m(
           l,
-          _ ? "vec4" : "uint",
+          y ? "vec4" : "uint",
           u
         ).toReadOnly(),
         output_values: m(c, "uint", u),
         block_sums: m(d, "uint", h),
         scratch: f
-      }).computeKernel([v]).setName(`3DGS ${s} scan WGSL level ${this.levels.length}`);
+      }).computeKernel([b]).setName(`3DGS ${s} scan WGSL level ${this.levels.length}`);
       if (this.levels.push({
         length: u,
         blockCount: h,
         output: c,
-        scanNode: y
+        scanNode: _
       }), h <= 1) break;
       l = d, u = h, c = this.attributes.createUint(
         `3dgs.${s}-scan-offsets-${this.levels.length}`,
@@ -2892,7 +2909,7 @@ class xt {
           "uint",
           f.length
         ).toReadOnly()
-      }).compute(d.length, [v]).setName(`3DGS ${s} add scan offsets WGSL ${h}`);
+      }).compute(d.length, [b]).setName(`3DGS ${s} add scan offsets WGSL ${h}`);
     }
   }
   encode(e) {
@@ -2907,22 +2924,22 @@ class xt {
     this.attributes.dispose();
   }
 }
-class pr {
+class mi {
   constructor(e, t) {
     this.camera = e, this.background = t;
   }
   camera;
   background;
-  projection = Te(new Re());
-  view = Te(new Re());
-  viewport = Te(new ti());
-  tilesX = Te(1, "uint");
-  tilesY = Te(1, "uint");
+  projection = Ee(new Pe());
+  view = Ee(new Pe());
+  viewport = Ee(new rr());
+  tilesX = Ee(1, "uint");
+  tilesY = Ee(1, "uint");
   update(e, t, s, a) {
     this.camera.updateWorldMatrix(!0, !1), this.projection.value.copy(this.camera.projectionMatrix), this.view.value.copy(this.camera.matrixWorldInverse), this.viewport.value.set(e, t, this.camera.near, this.camera.far), this.tilesX.value = s, this.tilesY.value = a;
   }
 }
-function Ds(r) {
+function Us(r) {
   const { center: e, conic: t, powerThreshold: s, tileX: a, tileY: i, onHit: o } = r;
   return (
     /* wgsl */
@@ -2969,7 +2986,7 @@ function Ds(r) {
       }`
   );
 }
-const fr = (
+const vi = (
   /* wgsl */
   `
 fn prepare_dispatch(
@@ -2994,15 +3011,15 @@ fn prepare_dispatch(
   (*radix_block_dispatch)[0] = vec4<u32>(radix_blocks, 1u, 1u, 0u);
   (*radix_reduce_dispatch)[0] = vec4<u32>(reduce_chunks, ${L}u, 1u, 0u);
   (*linear_dispatch)[0] = vec4<u32>(
-    (count + ${v - 1}u) / ${v}u,
+    (count + ${b - 1}u) / ${b}u,
     1u, 1u, 0u
   );
   (*state)[0] = vec4<u32>(count, total, radix_blocks, select(0u, 1u, total > capacity));
   return 0u;
 }
 `
-), gr = (() => {
-  const r = Ds({
+), bi = (() => {
+  const r = Us({
     center: "center",
     conic: "conic",
     powerThreshold: "power_threshold",
@@ -3077,7 +3094,7 @@ ${r}
 `
   );
 })();
-class mr {
+class yi {
   constructor(e, t, s, a, i, o, n, l, c, u, h) {
     this.renderer = e, this.capacity = s, this.dispatch = {
       state: this.attributes.createUint("3dgs.dispatch-state", 1, 4),
@@ -3104,13 +3121,13 @@ class mr {
       n,
       "uint",
       t
-    ).toReadOnly(), _ = m(
+    ).toReadOnly(), y = m(
       i.state,
       "uvec4",
       1
-    ).toReadOnly(), y = $(fr);
-    this.prepareNode = y({
-      item_count_state: _,
+    ).toReadOnly(), _ = M(vi);
+    this.prepareNode = _({
+      item_count_state: y,
       capacity: g(s),
       tile_counts: d,
       intersection_offsets: f,
@@ -3119,7 +3136,7 @@ class mr {
       radix_reduce_dispatch: m(this.dispatch.radixReduce, "uvec4", 1),
       linear_dispatch: m(this.dispatch.linear, "uvec4", 1)
     }).compute(1).setName("3DGS prepare intersection indirect dispatch WGSL");
-    const p = $(gr);
+    const p = M(bi);
     this.emitNode = p({
       rank: ne,
       tiles: Ve(h.tilesX, h.tilesY),
@@ -3146,9 +3163,9 @@ class mr {
       ).toReadOnly(),
       tile_counts: d,
       intersection_offsets: f,
-      visible_state: _,
+      visible_state: y,
       records: m(this.buffers.recordsA, "uvec2", s)
-    }).computeKernel([v]).setName("3DGS emit depth-ordered intersections WGSL"), this.visibleLinearDispatch = i;
+    }).computeKernel([b]).setName("3DGS emit depth-ordered intersections WGSL"), this.visibleLinearDispatch = i;
   }
   renderer;
   capacity;
@@ -3180,11 +3197,11 @@ class mr {
   }
 }
 const wt = 10;
-class br {
+class _i {
   constructor(e, t, s) {
     this.camera = e, this.store = t, this.frameComponentOffset = s * 4, this.frameComponentCount = t.objectCapacity * wt * 4, this.values = new Float32Array(
       this.frameComponentOffset + this.frameComponentCount
-    ), this.attribute = new Pe(this.values, 4), this.attribute.name = "3dgs.object-frame-state";
+    ), this.attribute = new Re(this.values, 4), this.attribute.name = "3dgs.object-frame-state";
   }
   camera;
   store;
@@ -3192,8 +3209,8 @@ class br {
   values;
   frameComponentOffset;
   frameComponentCount;
-  modelView = new Re();
-  inverseModel = new Re();
+  modelView = new Pe();
+  inverseModel = new Pe();
   cameraWorldPosition = new C();
   cameraLocalPosition = new C();
   update() {
@@ -3213,19 +3230,19 @@ class br {
       e.matrixWorld
     ), this.inverseModel.copy(e.matrixWorld).invert(), this.cameraLocalPosition.copy(this.cameraWorldPosition).applyMatrix4(this.inverseModel);
     const t = this.frameComponentOffset + e.objectId * wt * 4;
-    this.values.set(e.matrixWorld.elements, t), this.values.set(this.modelView.elements, t + 16), this.values[t + 32] = this.cameraLocalPosition.x, this.values[t + 33] = this.cameraLocalPosition.y, this.values[t + 34] = this.cameraLocalPosition.z, this.values[t + 35] = 1, this.values[t + 36] = vr(e, this.camera) ? 1 : 0;
+    this.values.set(e.matrixWorld.elements, t), this.values.set(this.modelView.elements, t + 16), this.values[t + 32] = this.cameraLocalPosition.x, this.values[t + 33] = this.cameraLocalPosition.y, this.values[t + 34] = this.cameraLocalPosition.z, this.values[t + 35] = 1, this.values[t + 36] = xi(e, this.camera) ? 1 : 0;
   }
 }
-function vr(r, e) {
+function xi(r, e) {
   if (!r.layers.test(e.layers)) return !1;
   let t = r, s = r;
   for (; t !== null; ) {
     if (!t.visible) return !1;
     s = t, t = t.parent;
   }
-  return s instanceof fs;
+  return s instanceof gs;
 }
-function _r(r) {
+function wi(r) {
   return (
     /* wgsl */
     `
@@ -3334,7 +3351,7 @@ fn project_gaussian_covariance_${r}(
 `
   );
 }
-function yr(r) {
+function ki(r) {
   const e = r === "rgb8e8" ? "u32" : "vec4<f32>", t = r === "rgb8e8" ? (
     /* wgsl */
     `
@@ -3395,7 +3412,7 @@ ${t}
 `
   );
 }
-const xr = (
+const Si = (
   /* wgsl */
   `
 fn subpixel_has_sample(
@@ -3429,7 +3446,7 @@ fn subpixel_has_sample(
 }
 `
 );
-function wr() {
+function Ci() {
   return (
     /* wgsl */
     `
@@ -3443,7 +3460,7 @@ fn count_contributing_tiles(
   var count = 0u;
   for (var tile_y = tile_min.y; tile_y <= tile_max.y; tile_y++) {
     for (var tile_x = tile_min.x; tile_x <= tile_max.x; tile_x++) {
-${Ds({
+${Us({
       center: "center",
       conic: "conic",
       powerThreshold: "power_threshold",
@@ -3458,27 +3475,27 @@ ${Ds({
 `
   );
 }
-const js = /* @__PURE__ */ new Set([
+const Ws = /* @__PURE__ */ new Set([
   Lt,
   Nt,
   tt,
   st,
-  it,
   rt,
-  Rt,
+  it,
+  Pt,
   Gt
-]), Us = /* @__PURE__ */ new Set([
-  ...js,
+]), Fs = /* @__PURE__ */ new Set([
+  ...Ws,
   qe,
   It
-]), kr = /* @__PURE__ */ new Set([
-  ...Us,
-  $t,
+]), Li = /* @__PURE__ */ new Set([
+  ...Fs,
   Mt,
+  $t,
   Ot,
   Bt
 ]);
-class Sr {
+class Ni {
   constructor(e, t, s, a, i, o = !0) {
     this.data = e, this.frame = t, this.antialiasMode = a, this.subpixelSampleCulling = o, this.projectedMean = s.attribute, this.projectedConic = this.attributes.createFloat(
       "3dgs.projected-conic",
@@ -3511,10 +3528,10 @@ class Sr {
       e.gaussianColorNode,
       e.gaussianVisibilityNode
     ])
-      Is(s, Fe, "projection");
+      Ms(s, Fe, "projection");
     De(
       e.gaussianPositionLocalNode,
-      js,
+      Ws,
       "gaussianPositionLocalNode"
     );
     for (const [s, a] of [
@@ -3522,10 +3539,10 @@ class Sr {
       ["gaussianScaleNode", e.gaussianScaleNode],
       ["gaussianRotationNode", e.gaussianRotationNode]
     ])
-      De(a, Us, s);
+      De(a, Fs, s);
     De(
       e.gaussianOpacityNode,
-      kr,
+      Li,
       "gaussianOpacityNode"
     ), De(
       e.gaussianColorNode,
@@ -3564,15 +3581,15 @@ class Sr {
       this.projectedMean,
       "vec4",
       this.projectedMean.count
-    ), c = m(this.projectedConic, "vec4", t.count), u = m(this.projectedColor, "vec4", t.count), h = m(this.tileCounts, "uint", t.count), d = $(
-      _r(this.antialiasMode)
-    ), f = $(yr(t.shFormat)), _ = $(wr()), y = $(xr);
-    return bt(() => {
-      const b = g(ne);
-      B(b.greaterThanEqual(g(t.count)), () => {
+    ), c = m(this.projectedConic, "vec4", t.count), u = m(this.projectedColor, "vec4", t.count), h = m(this.tileCounts, "uint", t.count), d = M(
+      wi(this.antialiasMode)
+    ), f = M(ki(t.shFormat)), y = M(Ci()), _ = M(Si);
+    return vt(() => {
+      const v = g(ne);
+      B(v.greaterThanEqual(g(t.count)), () => {
         he();
-      }), h.element(b).assign(g(0)), l.element(b).assign(Q(0));
-      const N = a.element(b), R = N.xyz, S = g(N.w), x = i.element(b), k = x.xyz, G = x.w, E = o.element(b), w = g(t.count).add(
+      }), h.element(v).assign(g(0)), l.element(v).assign(Q(0));
+      const N = a.element(v), P = N.xyz, S = g(N.w), x = i.element(v), k = x.xyz, G = x.w, A = o.element(v), w = g(t.count).add(
         S.mul(g(wt))
       ), I = Kt(
         l.element(w),
@@ -3584,35 +3601,35 @@ class Sr {
         l.element(w.add(5)),
         l.element(w.add(6)),
         l.element(w.add(7))
-      ), M = l.element(w.add(8)).xyz, A = l.element(w.add(9)).x.greaterThan(0);
-      B(A.not(), () => {
+      ), $ = l.element(w.add(8)).xyz, T = l.element(w.add(9)).x.greaterThan(0);
+      B(T.not(), () => {
         he();
       });
       const O = /* @__PURE__ */ new Map([
-        [Lt, () => b],
+        [Lt, () => v],
         [Nt, () => S],
-        [tt, () => R],
+        [tt, () => P],
         [st, () => k],
-        [it, () => E],
-        [rt, () => G],
-        [Rt, () => I],
-        [Gt, () => A]
+        [rt, () => A],
+        [it, () => G],
+        [Pt, () => I],
+        [Gt, () => T]
       ]), U = ke(
         e.gaussianPositionLocalNode,
         O
-      ).toVar("gaussianPositionLocalValue"), ye = I.mul(Q(U, 1)).xyz, q = new Map(O);
-      q.set(qe, () => ye);
-      const ee = ci(U.sub(M));
+      ).toVar("gaussianPositionLocalValue"), _e = I.mul(Q(U, 1)).xyz, q = new Map(O);
+      q.set(qe, () => _e);
+      const ee = dr(U.sub($));
       q.set(It, () => ee);
       let Z;
       if (e.gaussianPositionWorldNode === qe)
         Z = j.mul(Q(U, 1));
       else {
-        const Ee = ke(
+        const Ae = ke(
           e.gaussianPositionWorldNode,
           q
         ).toVar("gaussianPositionWorldValue");
-        Z = s.view.mul(Q(Ee, 1));
+        Z = s.view.mul(Q(Ae, 1));
       }
       Z = Z.toVar("gaussianViewPosition");
       const Ie = ke(e.gaussianScaleNode, q).toVar(
@@ -3631,57 +3648,57 @@ class Sr {
       B(te.element(0).w.lessThanEqual(0), () => {
         he();
       });
-      const se = te.element(0).xy, ue = te.element(0).z, xe = te.element(1).xyz, $e = te.element(1).w, we = te.element(2).xyz, H = te.element(2).w, oe = new Map(q);
-      oe.set($t, () => ue), oe.set(Mt, () => se), oe.set(Ot, () => Se(we.xz)), oe.set(
+      const se = te.element(0).xy, ue = te.element(0).z, xe = te.element(1).xyz, Me = te.element(1).w, we = te.element(2).xyz, H = te.element(2).w, oe = new Map(q);
+      oe.set(Mt, () => ue), oe.set($t, () => se), oe.set(Ot, () => Se(we.xz)), oe.set(
         Bt,
-        () => Se($e).mul(Math.PI)
+        () => Se(Me).mul(Math.PI)
       );
       const Ke = ke(
         e.gaussianOpacityNode,
         oe
       ).clamp(0, 1), Ce = this.antialiasMode === "compensated" ? Ke.mul(
-        Se(ve(H.div($e), 0, 1))
+        Se(be(H.div(Me), 0, 1))
       ) : Ke;
       B(Ce.lessThan(V(1 / 255)), () => {
         he();
       });
-      const Le = ui(Ce.mul(255)), Ye = Se(
-        Le.mul(2).mul(ve(we.x, 1e-12, 1e4))
+      const Le = hr(Ce.mul(255)), Ye = Se(
+        Le.mul(2).mul(be(we.x, 1e-12, 1e4))
       ), K = Se(
-        Le.mul(2).mul(ve(we.z, 1e-12, 1e4))
-      ), F = Yt(Ye), T = Yt(K);
-      B(F.lessThanEqual(0).or(T.lessThanEqual(0)), () => {
+        Le.mul(2).mul(be(we.z, 1e-12, 1e4))
+      ), F = Yt(Ye), E = Yt(K);
+      B(F.lessThanEqual(0).or(E.lessThanEqual(0)), () => {
         he();
       });
-      const fe = be(F, T), J = se.sub(fe), de = se.add(fe);
+      const fe = ve(F, E), J = se.sub(fe), de = se.add(fe);
       if (B(
         de.x.lessThan(0).or(de.y.lessThan(0)).or(J.x.greaterThanEqual(s.viewport.x)).or(J.y.greaterThanEqual(s.viewport.y)),
         () => {
           he();
         }
       ), this.subpixelSampleCulling) {
-        const Ee = y({
+        const Ae = _({
           center: se,
           conic: xe,
           power_threshold: Le,
-          extent: be(Ye, K),
+          extent: ve(Ye, K),
           viewport: Ve(s.viewport.xy)
         });
-        B(Ee.not(), () => {
-          l.element(b).assign(Q(se, ue, -1)), he();
+        B(Ae.not(), () => {
+          l.element(v).assign(Q(se, ue, -1)), he();
         });
       }
-      const Me = We(Xt(s.tilesX), Xt(s.tilesY)).sub(1), Xe = We(
-        ve(vt(J.div(V(z))), be(0), be(Me))
+      const $e = We(Xt(s.tilesX), Xt(s.tilesY)).sub(1), Xe = We(
+        be(bt(J.div(V(z))), ve(0), ve($e))
       ), Oe = We(
-        ve(vt(de.div(V(z))), be(0), be(Me))
+        be(bt(de.div(V(z))), ve(0), ve($e))
       ), at = f({
-        gid: b,
+        gid: v,
         sh_degree: g(t.shDegree),
         direction: ee,
         sh_coefficients: n
       }), ge = new Map(oe);
-      ge.set(Pt, () => at), ge.set(_s, () => J), ge.set(ys, () => de);
+      ge.set(Rt, () => at), ge.set(_s, () => J), ge.set(xs, () => de);
       const Be = ke(
         e.gaussianVisibilityNode,
         ge
@@ -3689,7 +3706,7 @@ class Sr {
       B(Be.not(), () => {
         he();
       });
-      const He = _({
+      const He = y({
         center: se,
         conic: xe,
         power_threshold: Le,
@@ -3703,14 +3720,14 @@ class Sr {
         e.gaussianColorNode,
         ge
       ).clamp(0, 1);
-      l.element(b).assign(Q(se, ue, Ce)), c.element(b).assign(Q(xe, F)), u.element(b).assign(Q(ze, T)), h.element(b).assign(He);
-    })().compute(t.count, [v]).setName(`3DGS projection TSL (${this.antialiasMode})`);
+      l.element(v).assign(Q(se, ue, Ce)), c.element(v).assign(Q(xe, F)), u.element(v).assign(Q(ze, E)), h.element(v).assign(He);
+    })().compute(t.count, [b]).setName(`3DGS projection TSL (${this.antialiasMode})`);
   }
 }
 function ke(r, e) {
   return r.context({ overrideNodes: e });
 }
-const Cr = (
+const Ri = (
   /* wgsl */
   `
 fn profile_subpixel_coverage(
@@ -3771,8 +3788,8 @@ fn profile_subpixel_coverage(
   return 0u;
 }
 `
-), Lr = v, Ws = 256, Nr = [2048, 4096, 8192];
-function Pr(r) {
+), Pi = b, Vs = 256, Gi = [2048, 4096, 8192];
+function Ii(r) {
   const e = Math.max(0, r.length - 1);
   if (e === 0)
     return {
@@ -3793,15 +3810,15 @@ function Pr(r) {
   for (let h = 0; h < e; h++) {
     const d = Math.max(0, r[h + 1] - r[h]);
     t[h] = d, s += d, a = Math.max(a, d), d > 256 && i++, d > 512 && o++, d > 1024 && n++, d > 2048 && l++;
-    const f = Math.ceil(d / Ws);
+    const f = Math.ceil(d / Vs);
     c += f, u = Math.max(u, f);
   }
   return t.sort(), {
     max: a,
     mean: s / e,
-    median: Rr(t),
-    p95: ls(t, 0.95),
-    p99: ls(t, 0.99),
+    median: Mi(t),
+    p95: cs(t, 0.95),
+    p99: cs(t, 0.99),
     tilesOver256: i,
     tilesOver512: o,
     tilesOver1024: n,
@@ -3810,7 +3827,7 @@ function Pr(r) {
     maxBatches: u
   };
 }
-function os(r, e) {
+function ls(r, e) {
   if (!Number.isInteger(e) || e <= 0)
     throw new RangeError("tile cap must be a positive integer");
   const t = Math.max(0, r.length - 1);
@@ -3818,7 +3835,7 @@ function os(r, e) {
   for (let c = 0; c < t; c++) {
     const u = Math.max(0, r[c + 1] - r[c]), h = Math.min(u, e), d = u - h;
     s += h, a += d, d > 0 && i++;
-    const f = Math.ceil(h / Ws);
+    const f = Math.ceil(h / Vs);
     o += f, n = Math.max(n, f);
   }
   const l = s + a;
@@ -3832,21 +3849,21 @@ function os(r, e) {
     maxBatches: n
   };
 }
-function Rr(r) {
+function Mi(r) {
   const e = Math.floor(r.length / 2);
   return r.length % 2 !== 0 ? r[e] : (r[e - 1] + r[e]) * 0.5;
 }
-function ls(r, e) {
+function cs(r, e) {
   const t = Math.max(0, Math.ceil(r.length * e) - 1);
   return r[t];
 }
-class Gr {
+class $i {
   constructor(e, t, s, a, i, o) {
     this.renderer = e, this.maxRasterizedSplatsPerTile = o, this.zeroPixelFlags = this.attributes.createUint(
       "3dgs.profile-zero-pixel-subpixel-flags",
       t
     );
-    const n = $(Cr);
+    const n = M(Ri);
     this.computeNode = n({
       index: ne,
       gaussian_count: g(t),
@@ -3862,7 +3879,7 @@ class Gr {
         a.count
       ).toReadOnly(),
       zero_pixel_flags: m(this.zeroPixelFlags, "uint", t)
-    }).compute(t, [Lr]).setName("3DGS profile subpixel coverage WGSL");
+    }).compute(t, [Pi]).setName("3DGS profile subpixel coverage WGSL");
   }
   renderer;
   maxRasterizedSplatsPerTile;
@@ -3881,10 +3898,10 @@ class Gr {
     for (const n of a) i += n;
     const o = new Uint32Array(t);
     return {
-      tileLoads: Pr(o),
-      appliedTileCap: this.maxRasterizedSplatsPerTile === null ? null : os(o, this.maxRasterizedSplatsPerTile),
-      tileCapEstimates: Nr.map(
-        (n) => os(o, n)
+      tileLoads: Ii(o),
+      appliedTileCap: this.maxRasterizedSplatsPerTile === null ? null : ls(o, this.maxRasterizedSplatsPerTile),
+      tileCapEstimates: Gi.map(
+        (n) => ls(o, n)
       ),
       zeroPixelSubpixelSplats: i
     };
@@ -3893,7 +3910,7 @@ class Gr {
     this.computeNode.dispose(), this.attributes.dispose();
   }
 }
-function Ir(r) {
+function Oi(r) {
   return (
     /* wgsl */
     `
@@ -3911,11 +3928,11 @@ fn radix_histogram_${r}(
 ) -> u32 {
   let block_start = block_index * ${le}u;
   let count = (*state)[0].x;
-  let subgroup_count = (${v}u + subgroup_size - 1u) / subgroup_size;
+  let subgroup_count = (${b}u + subgroup_size - 1u) / subgroup_size;
   for (var digit = 0u; digit < ${L}u; digit++) {
     var local_count = 0u;
-    for (var item = 0u; item < ${re}u; item++) {
-      let position = block_start + item * ${v}u + lane;
+    for (var item = 0u; item < ${ie}u; item++) {
+      let position = block_start + item * ${b}u + lane;
       if (position < count) {
         let key = (*records)[position].x;
         local_count += select(0u, 1u, ((key >> ${r}u) & ${L - 1}u) == digit);
@@ -3939,7 +3956,7 @@ fn radix_histogram_${r}(
 `
   );
 }
-const $r = (
+const Bi = (
   /* wgsl */
   `
 fn reduce_radix_histograms(
@@ -3958,11 +3975,11 @@ fn reduce_radix_histograms(
   let chunk = group_id.x;
   let digit = group_id.y;
   let block_count = (*state)[0].z;
-  let subgroup_count = (${v}u + subgroup_size - 1u) / subgroup_size;
+  let subgroup_count = (${b}u + subgroup_size - 1u) / subgroup_size;
   let chunk_start = chunk * ${X}u;
   var local_sum = 0u;
-  for (var item = 0u; item < ${re}u; item++) {
-    let block = chunk_start + item * ${v}u + lane;
+  for (var item = 0u; item < ${ie}u; item++) {
+    let block = chunk_start + item * ${b}u + lane;
     if (block < block_count) {
       local_sum += (*block_histograms)[digit * block_stride + block];
     }
@@ -3980,7 +3997,7 @@ fn reduce_radix_histograms(
   return 0u;
 }
 `
-), Mr = (
+), zi = (
   /* wgsl */
   `
 fn scan_radix_reduced(
@@ -4002,7 +4019,7 @@ fn scan_radix_reduced(
   return 0u;
 }
 `
-), Or = (
+), Ai = (
   /* wgsl */
   `
 fn scan_add_radix_histograms(
@@ -4020,8 +4037,8 @@ fn scan_add_radix_histograms(
   let digit = group_id.y;
   let block_count = (*state)[0].z;
   let chunk_start = chunk * ${X}u;
-  for (var item = 0u; item < ${re}u; item++) {
-    let local = item * ${v}u + lane;
+  for (var item = 0u; item < ${ie}u; item++) {
+    let local = item * ${b}u + lane;
     let block = chunk_start + local;
     var value = 0u;
     if (block < block_count) {
@@ -4034,8 +4051,8 @@ fn scan_add_radix_histograms(
   var offset = 1u;
   var active_count = ${X / 2}u;
   for (var step = 0u; step < 10u; step++) {
-    for (var item = 0u; item < ${re}u; item++) {
-      let worker = item * ${v}u + lane;
+    for (var item = 0u; item < ${ie}u; item++) {
+      let worker = item * ${b}u + lane;
       if (worker < active_count) {
         let left = offset * (2u * worker + 1u) - 1u;
         let right = offset * (2u * worker + 2u) - 1u;
@@ -4052,8 +4069,8 @@ fn scan_add_radix_histograms(
   active_count = 1u;
   offset = ${X / 2}u;
   for (var step = 0u; step < 10u; step++) {
-    for (var item = 0u; item < ${re}u; item++) {
-      let worker = item * ${v}u + lane;
+    for (var item = 0u; item < ${ie}u; item++) {
+      let worker = item * ${b}u + lane;
       if (worker < active_count) {
         let left = offset * (2u * worker + 1u) - 1u;
         let right = offset * (2u * worker + 2u) - 1u;
@@ -4068,8 +4085,8 @@ fn scan_add_radix_histograms(
   }
 
   let global_base = (*reduced)[digit * chunk_stride + chunk];
-  for (var item = 0u; item < ${re}u; item++) {
-    let local = item * ${v}u + lane;
+  for (var item = 0u; item < ${ie}u; item++) {
+    let local = item * ${b}u + lane;
     let block = chunk_start + local;
     if (block < block_count) {
       (*block_prefixes)[digit * block_stride + block] = global_base + (*scratch)[local];
@@ -4079,7 +4096,7 @@ fn scan_add_radix_histograms(
 }
 `
 );
-function Br(r) {
+function Ei(r) {
   return (
     /* wgsl */
     `
@@ -4100,15 +4117,15 @@ fn radix_scatter_${r}(
 ) -> u32 {
   let block_start = block_index * ${le}u;
   let count = (*state)[0].x;
-  let subgroup_count = (${v}u + subgroup_size - 1u) / subgroup_size;
+  let subgroup_count = (${b}u + subgroup_size - 1u) / subgroup_size;
   if (lane < ${L}u) {
     (*block_bases)[lane] = (*block_prefixes)[lane * block_stride + block_index];
     (*local_digit_counts)[lane] = 0u;
   }
   workgroupBarrier();
 
-  for (var item = 0u; item < ${re}u; item++) {
-    let position = block_start + item * ${v}u + lane;
+  for (var item = 0u; item < ${ie}u; item++) {
+    let position = block_start + item * ${b}u + lane;
     let valid = position < count;
     var record = vec2<u32>(0u);
     var digit = 0u;
@@ -4156,7 +4173,7 @@ fn radix_scatter_${r}(
 `
   );
 }
-function zr(r) {
+function Ti(r) {
   return (
     /* wgsl */
     `
@@ -4176,8 +4193,8 @@ fn radix_workgroup_histogram_${r}(
 
   let block_start = block_index * ${le}u;
   let count = (*state)[0].x;
-  for (var item = 0u; item < ${re}u; item++) {
-    let position = block_start + item * ${v}u + lane;
+  for (var item = 0u; item < ${ie}u; item++) {
+    let position = block_start + item * ${b}u + lane;
     if (position < count) {
       let key = (*records)[position].x;
       let digit = (key >> ${r}u) & ${L - 1}u;
@@ -4195,7 +4212,7 @@ fn radix_workgroup_histogram_${r}(
 `
   );
 }
-const Er = (
+const Di = (
   /* wgsl */
   `
 fn reduce_radix_histograms_workgroup(
@@ -4206,15 +4223,15 @@ fn reduce_radix_histograms_workgroup(
   state: ptr<storage, array<vec4<u32>>, read>,
   block_histograms: ptr<storage, array<u32>, read>,
   reduced: ptr<storage, array<u32>, read_write>,
-  scratch: ptr<workgroup, array<u32, ${v}>>
+  scratch: ptr<workgroup, array<u32, ${b}>>
 ) -> u32 {
   let chunk = group_id.x;
   let digit = group_id.y;
   let block_count = (*state)[0].z;
   let chunk_start = chunk * ${X}u;
   var local_sum = 0u;
-  for (var item = 0u; item < ${re}u; item++) {
-    let block = chunk_start + item * ${v}u + lane;
+  for (var item = 0u; item < ${ie}u; item++) {
+    let block = chunk_start + item * ${b}u + lane;
     if (block < block_count) {
       local_sum += (*block_histograms)[digit * block_stride + block];
     }
@@ -4222,7 +4239,7 @@ fn reduce_radix_histograms_workgroup(
   (*scratch)[lane] = local_sum;
   workgroupBarrier();
 
-  var active_count = ${v / 2}u;
+  var active_count = ${b / 2}u;
   for (var step = 0u; step < 8u; step++) {
     if (lane < active_count) {
       (*scratch)[lane] += (*scratch)[lane + active_count];
@@ -4237,7 +4254,7 @@ fn reduce_radix_histograms_workgroup(
 }
 `
 );
-function Tr(r) {
+function ji(r) {
   return (
     /* wgsl */
     `
@@ -4251,20 +4268,20 @@ fn radix_workgroup_scatter_${r}(
   block_prefixes: ptr<storage, array<u32>, read>,
   block_bases: ptr<workgroup, array<u32, ${L}>>,
   local_digit_counts: ptr<workgroup, array<u32, ${L}>>,
-  shared_digits: ptr<workgroup, array<u32, ${v}>>,
-  shared_digit_masks: ptr<workgroup, array<u32, ${L * (v / 32)}>>
+  shared_digits: ptr<workgroup, array<u32, ${b}>>,
+  shared_digit_masks: ptr<workgroup, array<u32, ${L * (b / 32)}>>
 ) -> u32 {
   let block_start = block_index * ${le}u;
   let count = (*state)[0].x;
-  let words_per_digit = ${v / 32}u;
+  let words_per_digit = ${b / 32}u;
   if (lane < ${L}u) {
     (*block_bases)[lane] = (*block_prefixes)[lane * block_stride + block_index];
     (*local_digit_counts)[lane] = 0u;
   }
   workgroupBarrier();
 
-  for (var item = 0u; item < ${re}u; item++) {
-    let position = block_start + item * ${v}u + lane;
+  for (var item = 0u; item < ${ie}u; item++) {
+    let position = block_start + item * ${b}u + lane;
     let valid = position < count;
     var record = vec2<u32>(0u);
     var digit = ${L}u;
@@ -4275,7 +4292,7 @@ fn radix_workgroup_scatter_${r}(
     (*shared_digits)[lane] = digit;
     workgroupBarrier();
 
-    if (lane < ${L * (v / 32)}u) {
+    if (lane < ${L * (b / 32)}u) {
       let mask_digit = lane / words_per_digit;
       let word = lane % words_per_digit;
       let first_lane = word * 32u;
@@ -4326,7 +4343,7 @@ fn radix_workgroup_scatter_${r}(
 `
   );
 }
-class cs {
+class us {
   constructor(e, t, s, a, i, o) {
     this.renderer = e, this.label = t, this.capacity = s, this.buffers = a, this.dispatch = i, this.backend = o, this.maxRadixBlocks = Math.ceil(s / le), this.maxReduceChunks = Math.ceil(this.maxRadixBlocks / X), this.blockHistograms = this.attributes.createUint(
       `3dgs.${t}-radix-histograms`,
@@ -4342,10 +4359,10 @@ class cs {
       this.blockHistograms,
       "uint",
       this.blockHistograms.count
-    ).toReadOnly(), c = $(
-      o === "subgroup" ? $r : Er
+    ).toReadOnly(), c = M(
+      o === "subgroup" ? Bi : Di
     ), u = {
-      lane: _e,
+      lane: ye,
       group_id: Y,
       block_stride: g(this.maxRadixBlocks),
       chunk_stride: g(this.maxReduceChunks),
@@ -4353,18 +4370,18 @@ class cs {
       block_histograms: l,
       reduced: m(this.reduced, "uint", this.reduced.count)
     };
-    o === "subgroup" ? (u.subgroup_index = nt, u.subgroup_lane = ot, u.subgroup_size = lt, u.partials = W("uint", ae)) : u.scratch = W("uint", v), this.reduceNode = c(u).computeKernel([v]).setName(`3DGS ${t} radix reduce WGSL`);
-    const h = $(Mr);
+    o === "subgroup" ? (u.subgroup_index = nt, u.subgroup_lane = ot, u.subgroup_size = lt, u.partials = W("uint", ae)) : u.scratch = W("uint", b), this.reduceNode = c(u).computeKernel([b]).setName(`3DGS ${t} radix reduce WGSL`);
+    const h = M(zi);
     this.scanReducedNode = h({
       chunk_stride: g(this.maxReduceChunks),
       state: n,
       reduced: m(this.reduced, "uint", this.reduced.count)
     }).compute(1).setName(`3DGS ${t} radix global scan WGSL`);
-    const d = $(
-      Or
+    const d = M(
+      Ai
     );
     this.scanAddNode = d({
-      lane: _e,
+      lane: ye,
       group_id: Y,
       block_stride: g(this.maxRadixBlocks),
       chunk_stride: g(this.maxReduceChunks),
@@ -4377,7 +4394,7 @@ class cs {
         this.blockPrefixes.count
       ),
       scratch: W("uint", X)
-    }).computeKernel([v]).setName(`3DGS ${t} radix scan-add WGSL`), this.sortedRecords = a.recordsA;
+    }).computeKernel([b]).setName(`3DGS ${t} radix scan-add WGSL`), this.sortedRecords = a.recordsA;
   }
   renderer;
   label;
@@ -4398,10 +4415,10 @@ class cs {
   passes = [];
   configure(e) {
     this.disposePasses();
-    const t = Math.ceil(Math.max(0, e) / yt);
+    const t = Math.ceil(Math.max(0, e) / _t);
     this.passes = Array.from(
       { length: t },
-      (s, a) => this.createPass(a, a * yt)
+      (s, a) => this.createPass(a, a * _t)
     ), this.sortedRecords = t % 2 === 0 ? this.buffers.recordsA : this.buffers.recordsB;
   }
   get passCount() {
@@ -4419,10 +4436,10 @@ class cs {
       a,
       "uvec2",
       this.capacity
-    ).toReadOnly(), l = $(
-      this.backend === "subgroup" ? Ir(t) : zr(t)
+    ).toReadOnly(), l = M(
+      this.backend === "subgroup" ? Oi(t) : Ti(t)
     ), c = {
-      lane: _e,
+      lane: ye,
       block_index: Y.x,
       block_stride: g(this.maxRadixBlocks),
       state: o,
@@ -4437,10 +4454,10 @@ class cs {
       "uint",
       L * ae
     )) : c.histogram = W("atomic<u32>", L);
-    const u = l(c).computeKernel([v]).setName(`3DGS ${this.label} radix histogram WGSL ${e}`), h = $(
-      this.backend === "subgroup" ? Br(t) : Tr(t)
+    const u = l(c).computeKernel([b]).setName(`3DGS ${this.label} radix histogram WGSL ${e}`), h = M(
+      this.backend === "subgroup" ? Ei(t) : ji(t)
     ), d = {
-      lane: _e,
+      lane: ye,
       block_index: Y.x,
       block_stride: g(this.maxRadixBlocks),
       state: o,
@@ -4457,11 +4474,11 @@ class cs {
     this.backend === "subgroup" ? (d.subgroup_index = nt, d.subgroup_lane = ot, d.subgroup_size = lt, d.partials = W(
       "uint",
       L * ae
-    )) : (d.shared_digits = W("uint", v), d.shared_digit_masks = W(
+    )) : (d.shared_digits = W("uint", b), d.shared_digit_masks = W(
       "uint",
-      L * (v / 32)
+      L * (b / 32)
     ));
-    const f = h(d).computeKernel([v]).setName(`3DGS ${this.label} radix scatter WGSL ${e}`);
+    const f = h(d).computeKernel([b]).setName(`3DGS ${this.label} radix scatter WGSL ${e}`);
     return { histogram: u, scatter: f };
   }
   disposePasses() {
@@ -4470,7 +4487,7 @@ class cs {
     this.passes = [];
   }
 }
-const Ar = (
+const Ui = (
   /* wgsl */
   `
 fn clear_tile_offsets(
@@ -4490,7 +4507,7 @@ fn clear_tile_offsets(
 }
 `
 );
-function Dr(r) {
+function Wi(r) {
   return (
     /* wgsl */
     `
@@ -4513,7 +4530,7 @@ fn find_tile_boundaries_${r}(
 `
   );
 }
-const jr = (
+const Fi = (
   /* wgsl */
   `
 fn suffix_min_blocks(
@@ -4526,7 +4543,7 @@ fn suffix_min_blocks(
 ) -> u32 {
   let base = group_id * ${D}u;
   let first_local = lane;
-  let second_local = lane + ${v}u;
+  let second_local = lane + ${b}u;
   let first_source = base + (${D - 1}u - first_local);
   let second_source = base + (${D - 1}u - second_local);
   var first_value = 0xffffffffu;
@@ -4580,7 +4597,7 @@ fn suffix_min_blocks(
   return 0u;
 }
 `
-), Ur = (
+), Vi = (
   /* wgsl */
   `
 fn add_suffix_block_mins(
@@ -4603,24 +4620,24 @@ fn add_suffix_block_mins(
 }
 `
 );
-class Wr {
+class qi {
   attributes = new ce();
   levels = [];
   constructor(e, t) {
-    const s = $(jr), a = $(Ur);
+    const s = M(Fi), a = M(Vi);
     let i = e, o = t;
     for (; ; ) {
       const n = this.levels.length, l = Math.ceil(o / D), c = this.attributes.createUint(
         `3dgs.tile-offset-mins-${n}`,
         l
       ), u = s({
-        lane: _e,
+        lane: ye,
         group_id: Y.x,
         length: g(o),
         values: m(i, "uint", o),
         block_mins: m(c, "uint", l),
         scratch: W("uint", D)
-      }).computeKernel([v]).setName(`3DGS tile offset suffix scan WGSL ${n}`);
+      }).computeKernel([b]).setName(`3DGS tile offset suffix scan WGSL ${n}`);
       if (this.levels.push({
         length: o,
         blockCount: l,
@@ -4641,7 +4658,7 @@ class Wr {
           "uint",
           c.length
         ).toReadOnly()
-      }).compute(l.length, [v]).setName(`3DGS tile add suffix block mins WGSL ${n}`);
+      }).compute(l.length, [b]).setName(`3DGS tile add suffix block mins WGSL ${n}`);
     }
   }
   encode(e) {
@@ -4656,21 +4673,21 @@ class Wr {
     this.attributes.dispose();
   }
 }
-class Fr {
+class Ki {
   constructor(e, t, s, a, i) {
     this.renderer = e, this.dispatch = i, this.offsets = this.attributes.createUint(
       "3dgs.tile-offsets",
       s + 1
     );
-    const o = m(this.offsets, "uint", s + 1), n = $(Ar);
+    const o = m(this.offsets, "uint", s + 1), n = M(Ui);
     this.clearNode = n({
       index: ne,
       tile_count: g(s),
       state: m(i.state, "uvec4", 1).toReadOnly(),
       offsets: o
-    }).compute(s + 1, [v]).setName("3DGS clear tile offsets WGSL");
-    const l = $(
-      Dr(t)
+    }).compute(s + 1, [b]).setName("3DGS clear tile offsets WGSL");
+    const l = M(
+      Wi(t)
     );
     this.boundariesNode = l({
       index: ne,
@@ -4682,7 +4699,7 @@ class Fr {
         a.count
       ).toReadOnly(),
       offsets: o
-    }).computeKernel([v]).setName(`3DGS find tile boundaries WGSL (${t})`), this.suffixMin = new Wr(this.offsets, s + 1);
+    }).computeKernel([b]).setName(`3DGS find tile boundaries WGSL (${t})`), this.suffixMin = new qi(this.offsets, s + 1);
   }
   renderer;
   dispatch;
@@ -4698,7 +4715,7 @@ class Fr {
     this.clearNode.dispose(), this.boundariesNode.dispose(), this.suffixMin.dispose(), this.attributes.dispose();
   }
 }
-const us = (
+const ds = (
   /* wgsl */
   `
 fn compact_morton_bits_16(value: u32) -> u32 {
@@ -4710,19 +4727,19 @@ fn compact_morton_bits_16(value: u32) -> u32 {
   return result;
 }
 `
-), Vr = (
+), Yi = (
   /* wgsl */
   `
 fn load_shared_active(
-  values: ptr<workgroup, array<u32, ${v}>>
+  values: ptr<workgroup, array<u32, ${b}>>
 ) -> u32 {
   return workgroupUniformLoad(&(*values)[0]);
 }
 `
 );
-class qr {
-  constructor(e, t, s, a, i, o, n, l, c, u, h, d, f, _, y, p, b) {
-    this.renderer = e, this.gaussianCount = t, this.intersectionCapacity = s, this.mode = a, this.meansAttribute = i, this.projectedMeanAttribute = o, this.projectedConicAttribute = n, this.projectedColorAttribute = l, this.sortedRecordsAttribute = c, this.tileOffsetsAttribute = u, this.colorTexture = h, this.depthTexture = d, this.frame = f, this.maxSplatsPerTile = _, this.rasterChunkSize = y, this.tileCount = p, this.chunks = this.createChunkSchedule(), this.rebuild(b);
+class Xi {
+  constructor(e, t, s, a, i, o, n, l, c, u, h, d, f, y, _, p, v) {
+    this.renderer = e, this.gaussianCount = t, this.intersectionCapacity = s, this.mode = a, this.meansAttribute = i, this.projectedMeanAttribute = o, this.projectedConicAttribute = n, this.projectedColorAttribute = l, this.sortedRecordsAttribute = c, this.tileOffsetsAttribute = u, this.colorTexture = h, this.depthTexture = d, this.frame = f, this.maxSplatsPerTile = y, this.rasterChunkSize = _, this.tileCount = p, this.chunks = this.createChunkSchedule(), this.rebuild(v);
   }
   renderer;
   gaussianCount;
@@ -4751,7 +4768,7 @@ class qr {
       e.rasterAlphaNode,
       e.rasterDiscardNode
     ])
-      Is(i, Dt, "raster");
+      Ms(i, Dt, "raster");
     const t = this.createRasterNode(e, "direct"), s = this.chunks === null ? null : this.createRasterNode(e, "chunk"), a = this.chunks === null ? null : this.createCompositeNode();
     this.computeNode?.dispose(), this.chunkComputeNode?.dispose(), this.compositeNode?.dispose(), this.computeNode = t, this.chunkComputeNode = s, this.compositeNode = a;
   }
@@ -4771,7 +4788,7 @@ class qr {
   }
   createChunkSchedule() {
     if (this.rasterChunkSize === null) return null;
-    const e = Ts(
+    const e = Ds(
       this.intersectionCapacity,
       this.rasterChunkSize
     ), t = this.attributes.createUint(
@@ -4787,7 +4804,7 @@ class qr {
       2
     ), i = this.attributes.createIndirect(
       "3dgs.raster-chunk-dispatch"
-    ), o = e * v, n = this.depthTexture === null ? 1 : 2, l = this.attributes.createFloat(
+    ), o = e * b, n = this.depthTexture === null ? 1 : 2, l = this.attributes.createFloat(
       "3dgs.raster-chunk-partials",
       o * n
     ), c = m(
@@ -4802,29 +4819,29 @@ class qr {
       s.output,
       "uint",
       this.tileCount
-    ).toReadOnly(), _ = $(sr)({
+    ).toReadOnly(), y = M(ai)({
       tile: ne,
       tile_count: g(this.tileCount),
       chunk_size: g(this.rasterChunkSize),
       sample_limit: g(this.maxSplatsPerTile ?? 0),
       tile_offsets: c,
       chunk_counts: u
-    }).compute(this.tileCount, [v]).setName("3DGS count exact raster chunks WGSL"), p = $(
-      ir
+    }).compute(this.tileCount, [b]).setName("3DGS count exact raster chunks WGSL"), p = M(
+      ni
     )({
       tile_count: g(this.tileCount),
       task_capacity: g(e),
       chunk_counts: h,
       chunk_offsets: d,
       dispatch: m(i, "uvec4", 1)
-    }).compute(1).setName("3DGS prepare exact raster chunk dispatch WGSL"), N = $(rr)({
+    }).compute(1).setName("3DGS prepare exact raster chunk dispatch WGSL"), N = M(oi)({
       tile: ne,
       tile_count: g(this.tileCount),
       task_capacity: g(e),
       chunk_counts: h,
       chunk_offsets: d,
       tasks: m(a, "uvec2", e)
-    }).compute(this.tileCount, [v]).setName("3DGS emit exact raster chunk tasks WGSL");
+    }).compute(this.tileCount, [b]).setName("3DGS emit exact raster chunk tasks WGSL");
     return {
       counts: t,
       offsets: s,
@@ -4832,7 +4849,7 @@ class qr {
       dispatch: i,
       partialData: l,
       partialStride: n,
-      countNode: _,
+      countNode: y,
       prepareNode: p,
       emitNode: N
     };
@@ -4862,12 +4879,12 @@ class qr {
       this.tileOffsetsAttribute,
       "uint",
       this.tileOffsetsAttribute.count
-    ).toReadOnly(), c = W("vec4", v), u = W("vec4", v), h = W("vec4", v), d = W("uint", v), f = W("uint", v), _ = t === "direct" ? _t(this.colorTexture) : null, y = $(us), p = $(Vr), b = this.chunks, N = t === "chunk" && b !== null ? m(b.tasks, "uvec2", b.tasks.count).toReadOnly() : null, R = t === "chunk" && b !== null ? m(b.partialData, "vec4", b.partialData.count) : null, { frame: S } = this;
-    return bt(() => {
-      const k = g(_e), G = y({ value: k }), E = y({ value: k.shiftRight(1) }), w = g(Y.x), I = (t === "direct" ? Y.y.mul(S.tilesX).add(Y.x) : N.element(w).x).toVar("rasterTile"), j = t === "chunk" ? N.element(w).y : g(0), M = t === "direct" ? Y.x : I.mod(S.tilesX), A = t === "direct" ? Y.y : I.div(S.tilesX), O = Ve(
-        M.mul(g(z)).add(G),
-        A.mul(g(z)).add(E)
-      ).toVar("rasterPixelCoordinateValue"), U = O.x.lessThan(g(S.viewport.x)).and(O.y.lessThan(g(S.viewport.y))).toVar("rasterActivePixel"), ye = l.element(I), q = l.element(I.add(1)), ee = g(q.sub(ye)), Z = ee.toVar("rasterTileSampleCount");
+    ).toReadOnly(), c = W("vec4", b), u = W("vec4", b), h = W("vec4", b), d = W("uint", b), f = W("uint", b), y = t === "direct" ? yt(this.colorTexture) : null, _ = M(ds), p = M(Yi), v = this.chunks, N = t === "chunk" && v !== null ? m(v.tasks, "uvec2", v.tasks.count).toReadOnly() : null, P = t === "chunk" && v !== null ? m(v.partialData, "vec4", v.partialData.count) : null, { frame: S } = this;
+    return vt(() => {
+      const k = g(ye), G = _({ value: k }), A = _({ value: k.shiftRight(1) }), w = g(Y.x), I = (t === "direct" ? Y.y.mul(S.tilesX).add(Y.x) : N.element(w).x).toVar("rasterTile"), j = t === "chunk" ? N.element(w).y : g(0), $ = t === "direct" ? Y.x : I.mod(S.tilesX), T = t === "direct" ? Y.y : I.div(S.tilesX), O = Ve(
+        $.mul(g(z)).add(G),
+        T.mul(g(z)).add(A)
+      ).toVar("rasterPixelCoordinateValue"), U = O.x.lessThan(g(S.viewport.x)).and(O.y.lessThan(g(S.viewport.y))).toVar("rasterActivePixel"), _e = l.element(I), q = l.element(I.add(1)), ee = g(q.sub(_e)), Z = ee.toVar("rasterTileSampleCount");
       if (this.maxSplatsPerTile !== null) {
         const H = g(this.maxSplatsPerTile);
         Z.assign(Ne(ee.lessThan(H), ee, H));
@@ -4889,42 +4906,42 @@ class qr {
           Ne(H.lessThan(Z), H, Z)
         );
       }
-      const te = be(O).add(0.5), se = et(0).toVar("accumulated"), ue = V(1).toVar("transmittance"), xe = V(1).toVar("depth"), $e = me(!1).toVar("depthWritten"), we = me(!1).toVar("done");
-      Ae(
+      const te = ve(O).add(0.5), se = et(0).toVar("accumulated"), ue = V(1).toVar("transmittance"), xe = V(1).toVar("depth"), Me = me(!1).toVar("depthWritten"), we = me(!1).toVar("done");
+      Te(
         {
           start: Ie,
           end: pe,
           type: "uint",
           condition: "<",
-          update: `+= ${v}`
+          update: `+= ${b}`
         },
         ({ i: H }) => {
           const oe = H.add(k);
           B(oe.lessThan(pe), () => {
             let K = oe;
             this.maxSplatsPerTile !== null && (K = g(
-              vt(
+              bt(
                 V(oe).add(0.5).mul(V(ee)).div(V(Z))
               )
             ));
-            const F = ye.add(K).toVar("rasterSourceRecordIndex"), T = n.element(F).y, fe = a.element(T), J = i.element(T);
-            c.element(k).assign(fe), u.element(k).assign(Q(J.xyz, fe.w.mul(255).log())), h.element(k).assign(o.element(T)), d.element(k).assign(T);
+            const F = _e.add(K).toVar("rasterSourceRecordIndex"), E = n.element(F).y, fe = a.element(E), J = i.element(E);
+            c.element(k).assign(fe), u.element(k).assign(Q(J.xyz, fe.w.mul(255).log())), h.element(k).assign(o.element(E)), d.element(k).assign(E);
           }), B(k.equal(0), () => {
             f.element(g(0)).assign(
               Ne(
-                H.add(g(v)).lessThan(pe),
+                H.add(g(b)).lessThan(pe),
                 g(1),
                 g(0)
               )
             );
           });
           const Ke = p({ values: f }).toVar("hasNextBatch"), Ce = g(pe.sub(H)), Le = Ne(
-            Ce.lessThan(g(v)),
+            Ce.lessThan(g(b)),
             Ce,
-            g(v)
+            g(b)
           );
           B(U.and(we.not()), () => {
-            Ae(
+            Te(
               {
                 start: g(0),
                 end: Le,
@@ -4932,50 +4949,50 @@ class qr {
                 condition: "<"
               },
               ({ i: K }) => {
-                const F = c.element(K), T = te.sub(F.xy), fe = u.element(K), J = fe.xyz, de = J.x.mul(T.x.mul(T.x)).add(J.y.mul(2).mul(T.x).mul(T.y)).add(J.z.mul(T.y.mul(T.y))).mul(-0.5);
+                const F = c.element(K), E = te.sub(F.xy), fe = u.element(K), J = fe.xyz, de = J.x.mul(E.x.mul(E.x)).add(J.y.mul(2).mul(E.x).mul(E.y)).add(J.z.mul(E.y.mul(E.y))).mul(-0.5);
                 B(
                   de.greaterThan(0).or(de.lessThan(fe.w.negate())),
                   () => {
                     ct();
                   }
                 );
-                const Me = d.element(K), Xe = Se(Ht(J.x, 1e-12)), Oe = J.y.div(Xe), at = Se(Ht(J.z.sub(Oe.mul(Oe)), 1e-12)), ge = be(
-                  Xe.mul(T.x).add(Oe.mul(T.y)),
-                  at.mul(T.y)
+                const $e = d.element(K), Xe = Se(Ht(J.x, 1e-12)), Oe = J.y.div(Xe), at = Se(Ht(J.z.sub(Oe.mul(Oe)), 1e-12)), ge = ve(
+                  Xe.mul(E.x).add(Oe.mul(E.y)),
+                  at.mul(E.y)
                 ), Be = /* @__PURE__ */ new Map([
-                  [zt, () => Me],
-                  [xs, () => g(s.element(Me).w)],
-                  [ws, () => O],
-                  [ks, () => te],
-                  [Ss, () => te.div(S.viewport.xy)],
-                  [Cs, () => F.xy],
-                  [Ls, () => T],
-                  [Ns, () => ge],
+                  [zt, () => $e],
+                  [ws, () => g(s.element($e).w)],
+                  [ks, () => O],
+                  [Ss, () => te],
+                  [Cs, () => te.div(S.viewport.xy)],
+                  [Ls, () => F.xy],
+                  [Ns, () => E],
+                  [Rs, () => ge],
                   [Ps, () => ge.div(6).add(0.5)],
-                  [Rs, () => F.z],
+                  [Gs, () => F.z],
                   [
-                    Et,
+                    At,
                     () => h.element(K).xyz
                   ],
-                  [Tt, () => F.w],
-                  [At, () => de],
-                  [Gs, () => gs(de)]
+                  [Et, () => F.w],
+                  [Tt, () => de],
+                  [Is, () => ms(de)]
                 ]), He = gt(e.rasterDiscardNode, Be);
                 B(He, () => {
                   ct();
                 });
-                const ze = ve(
+                const ze = be(
                   gt(e.rasterAlphaNode, Be),
                   0,
                   0.99
                 );
                 B(ze.lessThan(V(1 / 255)), () => {
                   ct();
-                }), B($e.not(), () => {
-                  xe.assign(Kr(F.z, S)), $e.assign(me(!0));
+                }), B(Me.not(), () => {
+                  xe.assign(Hi(F.z, S)), Me.assign(me(!0));
                 });
-                const Ee = gt(e.rasterColorNode, Be);
-                se.addAssign(Ee.mul(ue).mul(ze)), ue.mulAssign(V(1).sub(ze)), B(ue.lessThan(1e-4), () => {
+                const Ae = gt(e.rasterColorNode, Be);
+                se.addAssign(Ae.mul(ue).mul(ze)), ue.mulAssign(V(1).sub(ze)), B(ue.lessThan(1e-4), () => {
                   we.assign(me(!0)), Ze();
                 });
               }
@@ -4984,17 +5001,17 @@ class qr {
             Ze();
           }), f.element(k).assign(Ne(U.and(we.not()), g(1), g(0))), Zt(), B(k.lessThan(8), () => {
             const K = k.mul(32), F = g(0).toVar("subgroupActive");
-            Ae(
+            Te(
               { start: g(0), end: g(32), type: "uint", condition: "<" },
-              ({ i: T }) => {
+              ({ i: E }) => {
                 F.bitOrAssign(
-                  f.element(K.add(T))
+                  f.element(K.add(E))
                 );
               }
             ), f.element(k).assign(F);
           }), Zt(), B(k.equal(0), () => {
             const K = g(0).toVar("tileActiveReduction");
-            Ae(
+            Te(
               { start: g(0), end: g(8), type: "uint", condition: "<" },
               ({ i: F }) => {
                 K.bitOrAssign(f.element(g(F)));
@@ -5008,18 +5025,18 @@ class qr {
         }
       ), B(U, () => {
         if (t === "direct")
-          ds(
+          hs(
             se,
             ue,
             xe,
             O,
-            _,
+            y,
             this.depthTexture,
             S
           );
         else {
-          const H = w.mul(g(v)).add(k).mul(g(b.partialStride));
-          R.element(H).assign(Q(se, ue)), this.depthTexture !== null && R.element(H.add(1)).assign(Q(xe, 0, 0, 0));
+          const H = w.mul(g(b)).add(k).mul(g(v.partialStride));
+          P.element(H).assign(Q(se, ue)), this.depthTexture !== null && P.element(H.add(1)).assign(Q(xe, 0, 0, 0));
         }
       });
     })().computeKernel([z, z]).setName(
@@ -5039,15 +5056,15 @@ class qr {
       e.partialData,
       "vec4",
       e.partialData.count
-    ).toReadOnly(), i = _t(this.colorTexture), o = $(us), { frame: n } = this;
-    return bt(() => {
-      const c = g(_e), u = o({ value: c }), h = o({ value: c.shiftRight(1) }), d = Y.y.mul(n.tilesX).add(Y.x), f = t.element(d), _ = Ve(
+    ).toReadOnly(), i = yt(this.colorTexture), o = M(ds), { frame: n } = this;
+    return vt(() => {
+      const c = g(ye), u = o({ value: c }), h = o({ value: c.shiftRight(1) }), d = Y.y.mul(n.tilesX).add(Y.x), f = t.element(d), y = Ve(
         Y.x.mul(g(z)).add(u),
         Y.y.mul(g(z)).add(h)
-      ), y = _.x.lessThan(g(n.viewport.x)).and(_.y.lessThan(g(n.viewport.y)));
-      B(y.and(f.greaterThan(0)), () => {
-        const p = et(0).toVar("chunkCompositeColor"), b = V(1).toVar("chunkCompositeTransmittance"), N = V(1).toVar("chunkCompositeDepth"), R = me(!1).toVar("chunkCompositeDepthWritten"), S = s.element(d);
-        Ae(
+      ), _ = y.x.lessThan(g(n.viewport.x)).and(y.y.lessThan(g(n.viewport.y)));
+      B(_.and(f.greaterThan(0)), () => {
+        const p = et(0).toVar("chunkCompositeColor"), v = V(1).toVar("chunkCompositeTransmittance"), N = V(1).toVar("chunkCompositeDepth"), P = me(!1).toVar("chunkCompositeDepthWritten"), S = s.element(d);
+        Te(
           {
             start: g(0),
             end: f,
@@ -5055,18 +5072,18 @@ class qr {
             condition: "<"
           },
           ({ i: x }) => {
-            const k = S.add(x).mul(g(v)).add(c).mul(g(e.partialStride)), G = a.element(k);
-            p.addAssign(G.xyz.mul(b)), this.depthTexture !== null && B(R.not().and(G.w.lessThan(1)), () => {
-              N.assign(a.element(k.add(1)).x), R.assign(me(!0));
-            }), b.mulAssign(G.w), B(b.lessThan(1e-4), () => {
+            const k = S.add(x).mul(g(b)).add(c).mul(g(e.partialStride)), G = a.element(k);
+            p.addAssign(G.xyz.mul(v)), this.depthTexture !== null && B(P.not().and(G.w.lessThan(1)), () => {
+              N.assign(a.element(k.add(1)).x), P.assign(me(!0));
+            }), v.mulAssign(G.w), B(v.lessThan(1e-4), () => {
               Ze();
             });
           }
-        ), ds(
+        ), hs(
           p,
-          b,
+          v,
           N,
-          _,
+          y,
           i,
           this.depthTexture,
           n
@@ -5075,22 +5092,22 @@ class qr {
     })().computeKernel([z, z]).setName("3DGS exact raster chunk composite TSL");
   }
 }
-function Kr(r, e) {
+function Hi(r, e) {
   const t = r.negate();
-  return ve(
+  return be(
     e.viewport.z.add(t).mul(e.viewport.w).div(e.viewport.w.sub(e.viewport.z).mul(t)),
     0,
     1
   );
 }
-function ds(r, e, t, s, a, i, o) {
-  const n = ve(V(o.background[3]), 0, 1);
+function hs(r, e, t, s, a, i, o) {
+  const n = be(V(o.background[3]), 0, 1);
   r.addAssign(
     et(o.background[0], o.background[1], o.background[2]).mul(e).mul(n)
   );
   const l = V(1).sub(e.mul(V(1).sub(n)));
   Jt(a, We(s), Q(r, l)), i !== null && Jt(
-    _t(i),
+    yt(i),
     We(s),
     Q(t, 0, 0, 1)
   );
@@ -5098,7 +5115,7 @@ function ds(r, e, t, s, a, i, o) {
 function gt(r, e) {
   return r.context({ overrideNodes: e });
 }
-class Yr {
+class Zi {
   constructor(e, t, s, a, i, o) {
     this.renderer = e, this.buffers = {
       recordsA: this.attributes.createUint(
@@ -5125,8 +5142,8 @@ class Yr {
       a,
       "uint",
       s
-    ).toReadOnly(), l = $(
-      nr
+    ).toReadOnly(), l = M(
+      ci
     );
     this.prepareNode = l({
       gaussian_count: g(s),
@@ -5141,8 +5158,8 @@ class Yr {
       radix_reduce_dispatch: m(this.dispatch.radixReduce, "uvec4", 1),
       linear_dispatch: m(this.dispatch.linear, "uvec4", 1)
     }).compute(1).setName("3DGS prepare visible indirect dispatch WGSL");
-    const c = $(
-      or(t)
+    const c = M(
+      ui(t)
     );
     this.compactNode = c({
       gid: ne,
@@ -5155,7 +5172,7 @@ class Yr {
         s
       ).toReadOnly(),
       records: m(this.buffers.recordsA, "uvec2", s)
-    }).compute(s, [v]).setName(`3DGS compact visible Gaussians WGSL (${t})`);
+    }).compute(s, [b]).setName(`3DGS compact visible Gaussians WGSL (${t})`);
   }
   renderer;
   buffers;
@@ -5170,16 +5187,16 @@ class Yr {
     this.prepareNode.dispose(), this.compactNode.dispose(), this.attributes.dispose();
   }
 }
-class Xr {
-  constructor(e, t, s, a, i, o, n, l, c, u, h, d, f, _) {
-    this.renderer = e, this.data = s, this.mode = i, this.capacity = n, this.profileKernels = c, this.maxRasterizedSplatsPerTile = u, this.rasterChunkSize = h, this.subpixelSampleCulling = d, this.radixBackend = f, this.nodes = _, this.frame = new pr(t, l), this.objects = new br(t, a, s.count), this.projection = new Sr(
+class Ji {
+  constructor(e, t, s, a, i, o, n, l, c, u, h, d, f, y) {
+    this.renderer = e, this.data = s, this.mode = i, this.capacity = n, this.profileKernels = c, this.maxRasterizedSplatsPerTile = u, this.rasterChunkSize = h, this.subpixelSampleCulling = d, this.radixBackend = f, this.nodes = y, this.frame = new mi(t, l), this.objects = new _i(t, a, s.count), this.projection = new Ni(
       s,
       this.frame,
       this.objects,
       o,
-      _,
+      y,
       d
-    ), this.profileDiagnostics = c ? new Gr(
+    ), this.profileDiagnostics = c ? new $i(
       e,
       s.count,
       this.projection.projectedMean,
@@ -5191,21 +5208,21 @@ class Xr {
       s.count,
       "visible",
       "projectedVisibility"
-    ), this.visible = new Yr(
+    ), this.visible = new Zi(
       e,
       i,
       s.count,
       this.visibleScan.output,
       this.projection.projectedMean,
       this.frame.viewport
-    ), this.depthSorter = new cs(
+    ), this.depthSorter = new us(
       e,
       "depth",
       s.count,
       this.visible.buffers,
       this.visible.dispatch,
       f
-    ), this.depthSorter.configure(i === "float32" ? 32 : 16), this.orderedTiles = new cr(
+    ), this.depthSorter.configure(i === "float32" ? 32 : 16), this.orderedTiles = new hi(
       e,
       s.count,
       this.projection.tileCounts,
@@ -5215,7 +5232,7 @@ class Xr {
       this.orderedTiles.tileCounts,
       s.count,
       "intersections"
-    ), this.intersections = new mr(
+    ), this.intersections = new yi(
       e,
       s.count,
       n,
@@ -5227,7 +5244,7 @@ class Xr {
       this.projection.projectedConic,
       this.projection.projectedColor,
       this.frame
-    ), this.sorter = new cs(
+    ), this.sorter = new us(
       e,
       "tile",
       n,
@@ -5338,13 +5355,13 @@ class Xr {
       1,
       Math.ceil(Math.log2(Math.max(2, n + 1)))
     );
-    this.sorter.configure(l), this.tileOffsets = new Fr(
+    this.sorter.configure(l), this.tileOffsets = new Ki(
       this.renderer,
       this.mode,
       n,
       this.sorter.sortedRecords,
       this.intersections.dispatch
-    ), this.rasterizer = new qr(
+    ), this.rasterizer = new Xi(
       this.renderer,
       this.data.count,
       this.capacity,
@@ -5365,7 +5382,7 @@ class Xr {
     ), this.width = e, this.height = t, this.tilesX = i, this.tilesY = o, this.frame.update(e, t, i, o), this.tileStageRebuilds++;
   }
 }
-function Hr(r, e) {
+function Qi(r, e) {
   if (r !== "auto" && r !== "subgroup" && r !== "workgroup")
     throw new RangeError(
       'radixBackend must be "auto", "subgroup", or "workgroup"'
@@ -5376,8 +5393,8 @@ function Hr(r, e) {
     );
   return r === "auto" ? e ? "subgroup" : "workgroup" : r;
 }
-const mt = new oi();
-class Zr extends Wt {
+const mt = new cr();
+class ea extends Wt {
   gaussianStore;
   depthSortMode;
   antialiasMode;
@@ -5398,11 +5415,11 @@ class Zr extends Wt {
   workingColorNode = null;
   pipeline = null;
   pipelineLayoutVersion = -1;
-  nodeSlots = Pi();
+  nodeSlots = Gr();
   dirtyStages = 0;
   disposed = !1;
   constructor(e, t, s, a = {}) {
-    super(Wt.COLOR, new fs(), t, {
+    super(Wt.COLOR, new gs(), t, {
       type: Ft,
       depthBuffer: !1,
       stencilBuffer: !1,
@@ -5413,13 +5430,13 @@ class Zr extends Wt {
       throw new RangeError(
         'antialiasMode must be either "compensated" or "classic"'
       );
-    const l = Hr(
+    const l = Qi(
       n,
       e.hasFeature("subgroups")
     ), c = a.intersectionCapacity ?? null;
     if (c !== null && (!Number.isInteger(c) || c <= 0))
       throw new RangeError("intersectionCapacity must be a positive integer");
-    if (c !== null && c > v * 65535)
+    if (c !== null && c > b * 65535)
       throw new RangeError(
         "intersectionCapacity exceeds the one-dimensional indirect dispatch limit"
       );
@@ -5428,11 +5445,11 @@ class Zr extends Wt {
       throw new RangeError(
         "maxRasterizedSplatsPerTile must be a positive integer"
       );
-    const h = a.rasterChunkSize === void 0 ? tr : a.rasterChunkSize;
-    ar(
+    const h = a.rasterChunkSize === void 0 ? ii : a.rasterChunkSize;
+    li(
       h,
-      c ?? v * 65535
-    ), this.name = "GaussianPass", this.ownerRenderer = e, this.gaussianStore = s, this.depthSortMode = i, this.antialiasMode = o, this.requestedIntersectionCapacity = c, this.background = a.background ?? [0, 0, 0, 0], this.outputDepth = a.outputDepth ?? !1, this.colorSpace = a.colorSpace ?? si, this.profileKernels = a.profileKernels ?? !1, this.maxRasterizedSplatsPerTile = u, this.rasterChunkSize = h, this.subpixelSampleCulling = a.subpixelSampleCulling ?? !0, this.radixBackend = l, this.renderTarget.texture.dispose(), this.colorTexture = new Vt(1, 1), this.colorTexture.name = "GaussianPass.output", this.colorTexture.type = Ft, this.colorTexture.colorSpace = ii, this.colorTexture.generateMipmaps = !1, Object.assign(this.colorTexture, { mipmapsAutoUpdate: !1 }), this.colorTexture.isRenderTargetTexture = !0, this.colorTexture.renderTarget = this.renderTarget, this.renderTarget.texture = this.colorTexture, this.outputDepth ? (this.depthTexture = new Vt(1, 1), this.depthTexture.name = "GaussianPass.depth", this.depthTexture.format = ri, this.depthTexture.type = ai, this.depthTexture.minFilter = qt, this.depthTexture.magFilter = qt, this.depthTexture.generateMipmaps = !1, Object.assign(this.depthTexture, { mipmapsAutoUpdate: !1 })) : this.depthTexture = null;
+      c ?? b * 65535
+    ), this.name = "GaussianPass", this.ownerRenderer = e, this.gaussianStore = s, this.depthSortMode = i, this.antialiasMode = o, this.requestedIntersectionCapacity = c, this.background = a.background ?? [0, 0, 0, 0], this.outputDepth = a.outputDepth ?? !1, this.colorSpace = a.colorSpace ?? ir, this.profileKernels = a.profileKernels ?? !1, this.maxRasterizedSplatsPerTile = u, this.rasterChunkSize = h, this.subpixelSampleCulling = a.subpixelSampleCulling ?? !0, this.radixBackend = l, this.renderTarget.texture.dispose(), this.colorTexture = new Vt(1, 1), this.colorTexture.name = "GaussianPass.output", this.colorTexture.type = Ft, this.colorTexture.colorSpace = ar, this.colorTexture.generateMipmaps = !1, Object.assign(this.colorTexture, { mipmapsAutoUpdate: !1 }), this.colorTexture.isRenderTargetTexture = !0, this.colorTexture.renderTarget = this.renderTarget, this.renderTarget.texture = this.colorTexture, this.outputDepth ? (this.depthTexture = new Vt(1, 1), this.depthTexture.name = "GaussianPass.depth", this.depthTexture.format = nr, this.depthTexture.type = or, this.depthTexture.minFilter = qt, this.depthTexture.magFilter = qt, this.depthTexture.generateMipmaps = !1, Object.assign(this.depthTexture, { mipmapsAutoUpdate: !1 })) : this.depthTexture = null;
   }
   /** Resolved after the first render when omitted from GaussianPassOptions. */
   get intersectionCapacity() {
@@ -5454,7 +5471,7 @@ class Zr extends Wt {
   }
   /** Color-managed output in Three.js' linear working color space. */
   getColorNode() {
-    return this.workingColorNode ??= di(
+    return this.workingColorNode ??= pr(
       this.getTextureNode("output"),
       this.colorSpace
     ), this.workingColorNode;
@@ -5543,23 +5560,23 @@ class Zr extends Wt {
       throw new Error(
         "GaussianPass must be rendered by the WebGPURenderer passed to its constructor"
       );
-    if (!(this.camera instanceof ni))
+    if (!(this.camera instanceof lr))
       throw new TypeError(
         "GaussianPass currently requires a PerspectiveCamera"
       );
     t.getDrawingBufferSize(mt);
     const s = Math.max(1, Math.floor(mt.x)), a = Math.max(1, Math.floor(mt.y));
-    (this.renderTarget.width !== s || this.renderTarget.height !== a) && this.setSize(s, a), this.gaussianStore.needsPack && this.gaussianStore.pack({ limits: Jr(t) });
+    (this.renderTarget.width !== s || this.renderTarget.height !== a) && this.setSize(s, a), this.gaussianStore.needsPack && this.gaussianStore.pack({ limits: ta(t) });
     const i = this.gaussianStore.updateLod(this.camera), o = this.gaussianStore.getPackedData();
     if (this.requestedIntersectionCapacity === null && (this.resolvedIntersectionCapacity = Math.min(
-      v * 65535,
+      b * 65535,
       Math.max(1, o.count * 16)
     )), t.initRenderTarget(this.renderTarget), this.pipeline === null || this.pipelineLayoutVersion !== this.gaussianStore.layoutVersion) {
-      if (this.pipeline?.dispose(), o.count > v * 65535)
+      if (this.pipeline?.dispose(), o.count > b * 65535)
         throw new RangeError(
           "Gaussian count exceeds the one-dimensional projection dispatch limit"
         );
-      this.pipeline = new Xr(
+      this.pipeline = new Ji(
         t,
         this.camera,
         o,
@@ -5632,17 +5649,17 @@ class Zr extends Wt {
     this.disposed || (this.disposed = !0, this.pipeline?.dispose(), this.pipeline = null, this.debugListeners.clear(), this.depthTexture?.dispose(), super.dispose());
   }
   setProjectionNode(e, t) {
-    hs(t, e), this.nodeSlots[e] !== t && (this.nodeSlots[e] = t, this.invalidateProjection());
+    ps(t, e), this.nodeSlots[e] !== t && (this.nodeSlots[e] = t, this.invalidateProjection());
   }
   setRasterNode(e, t) {
-    hs(t, e), this.nodeSlots[e] !== t && (this.nodeSlots[e] = t, this.invalidateRasterizer());
+    ps(t, e), this.nodeSlots[e] !== t && (this.nodeSlots[e] = t, this.invalidateRasterizer());
   }
 }
-function hs(r, e) {
+function ps(r, e) {
   if (r?.isNode !== !0)
     throw new TypeError(`GaussianPass.${e} must be a Three.js Node`);
 }
-function Jr(r) {
+function ta(r) {
   const e = r.backend;
   if (e.device === void 0)
     throw new Error(
@@ -5650,69 +5667,69 @@ function Jr(r) {
     );
   return e.device.limits;
 }
-function ua(r, e, t, s) {
-  return new Zr(r, e, t, s);
+function pa(r, e, t, s) {
+  return new ea(r, e, t, s);
 }
 export {
-  gi as CanonicalGaussianPlyLoader,
-  oa as DistanceAwareRadialLodPackingStrategy,
-  hi as FLOAT32_SH_BYTES_PER_COEFFICIENT,
+  vr as CanonicalGaussianPlyLoader,
+  ua as DistanceAwareRadialLodPackingStrategy,
+  fr as FLOAT32_SH_BYTES_PER_COEFFICIENT,
   es as GaussianCloud,
-  ms as GaussianData,
+  vs as GaussianData,
   Ct as GaussianLod,
-  ra as GaussianLodColorHelper,
+  oa as GaussianLodColorHelper,
   ts as GaussianLodNode,
   St as GaussianOctree,
-  _i as GaussianOctreeNode,
-  Zr as GaussianPass,
-  ca as GaussianStore,
-  Vi as GaussianStoreAttributes,
-  Fi as GaussianStorePackedAttribute,
-  ia as LodHelper,
-  aa as MaximumLodPackingStrategy,
-  sa as OctreeHelper,
+  xr as GaussianOctreeNode,
+  ea as GaussianPass,
+  ha as GaussianStore,
+  Yr as GaussianStoreAttributes,
+  Kr as GaussianStorePackedAttribute,
+  na as LodHelper,
+  la as MaximumLodPackingStrategy,
+  aa as OctreeHelper,
   bs as RGB8E8_SH_BYTES_PER_COEFFICIENT,
-  na as RadialLodPackingStrategy,
-  Ei as RadialLodWorkerPlanner,
-  Wi as RemainingCapacityBudgetStrategy,
-  la as SourceFractionBudgetStrategy,
-  $s as StreamingLodPackingStrategy,
-  Ii as TieredRadialLodPackingStrategy,
-  Pt as gaussianColor,
+  ca as RadialLodPackingStrategy,
+  Dr as RadialLodWorkerPlanner,
+  qr as RemainingCapacityBudgetStrategy,
+  da as SourceFractionBudgetStrategy,
+  Os as StreamingLodPackingStrategy,
+  $r as TieredRadialLodPackingStrategy,
+  Rt as gaussianColor,
   Lt as gaussianIndex,
   Nt as gaussianObjectId,
-  Rt as gaussianObjectMatrix,
+  Pt as gaussianObjectMatrix,
   Gt as gaussianObjectVisible,
-  rt as gaussianOpacity,
-  ua as gaussianPass,
+  it as gaussianOpacity,
+  pa as gaussianPass,
   tt as gaussianPositionLocal,
   qe as gaussianPositionWorld,
   Bt as gaussianProjectedArea,
   Ot as gaussianProjectedSigma,
-  it as gaussianRotation,
+  rt as gaussianRotation,
   st as gaussianScale,
-  ys as gaussianScreenBoundsMax,
+  xs as gaussianScreenBoundsMax,
   _s as gaussianScreenBoundsMin,
-  Mt as gaussianScreenPosition,
-  $t as gaussianViewDepth,
+  $t as gaussianScreenPosition,
+  Mt as gaussianViewDepth,
   It as gaussianViewDirection,
-  ss as isStreamingLodPackingStrategy,
-  pi as packShRgb8e8,
-  Cs as rasterGaussianCenter,
-  Et as rasterGaussianColor,
-  Ns as rasterGaussianCoord,
+  rs as isStreamingLodPackingStrategy,
+  gr as packShRgb8e8,
+  Ls as rasterGaussianCenter,
+  At as rasterGaussianColor,
+  Rs as rasterGaussianCoord,
   zt as rasterGaussianIndex,
-  Tt as rasterGaussianOpacity,
-  xs as rasterObjectId,
-  ws as rasterPixelCoordinate,
-  Ls as rasterPixelDelta,
-  At as rasterPower,
-  ks as rasterScreenPosition,
-  Ss as rasterScreenUV,
+  Et as rasterGaussianOpacity,
+  ws as rasterObjectId,
+  ks as rasterPixelCoordinate,
+  Ns as rasterPixelDelta,
+  Tt as rasterPower,
+  Ss as rasterScreenPosition,
+  Cs as rasterScreenUV,
   Ps as rasterUV,
-  Rs as rasterViewDepth,
-  Gs as rasterWeight,
-  vs as shBytesPerCoefficient,
-  ta as unpackShRgb8e8
+  Gs as rasterViewDepth,
+  Is as rasterWeight,
+  ys as shBytesPerCoefficient,
+  ia as unpackShRgb8e8
 };
 //# sourceMappingURL=index.js.map

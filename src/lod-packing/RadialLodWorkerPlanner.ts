@@ -15,6 +15,7 @@ import type {
   StreamingLodPlannedTarget,
   StreamingLodTargetPlanner,
 } from "./StreamingLodPackingStrategy";
+import RadialLodWorker from "./RadialLodWorker?worker&inline";
 
 const OUTPUT_POOL_SIZE = 2;
 
@@ -85,8 +86,7 @@ export class RadialLodWorkerPlanner implements StreamingLodTargetPlanner {
     if (this.worker !== null) return;
     const lod = this.lod;
     if (lod === null) throw new Error("Radial LOD worker has no GaussianLod");
-    this.worker = new Worker(new URL("./RadialLodWorker.ts", import.meta.url), {
-      type: "module",
+    this.worker = new RadialLodWorker({
       name: "3dgs-radial-lod",
     });
     this.worker.addEventListener("message", this.handleMessage);
