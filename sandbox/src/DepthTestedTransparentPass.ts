@@ -1,5 +1,7 @@
 import {
+  Box2,
   PassNode,
+  Vector2,
   type Camera,
   type DepthTexture,
   type NodeFrame,
@@ -10,6 +12,7 @@ import {
 /** Render transparent objects against a copy of an opaque pass's depth. */
 export class DepthTestedTransparentPass extends PassNode {
   private readonly sourceDepth: DepthTexture;
+  private readonly copyRegion = new Box2(new Vector2(), new Vector2());
 
   constructor(scene: Scene, camera: Camera, sourceDepth: DepthTexture) {
     super(PassNode.COLOR, scene, camera);
@@ -46,7 +49,12 @@ export class DepthTestedTransparentPass extends PassNode {
         "DepthTestedTransparentPass requires its own depth texture",
       );
     }
-    renderer.copyTextureToTexture(this.sourceDepth, destinationDepth);
+    this.copyRegion.max.set(this.renderTarget.width, this.renderTarget.height);
+    renderer.copyTextureToTexture(
+      this.sourceDepth,
+      destinationDepth,
+      this.copyRegion,
+    );
     const previousAutoClearDepth = renderer.autoClearDepth;
     renderer.autoClearDepth = false;
     try {
