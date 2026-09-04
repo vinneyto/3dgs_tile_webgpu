@@ -3,6 +3,20 @@ import { describe, expect, it, vi } from "vitest";
 import { KernelTimingInspector } from "../sandbox/src/KernelTimingInspector";
 
 describe("KernelTimingInspector", () => {
+  it("supports timestamp pools that have not been created yet", () => {
+    const inspector = new KernelTimingInspector();
+    const backend = {
+      trackTimestamp: true,
+      timestampQueryPool: { compute: null, render: null },
+    };
+    const renderer = { backend } as never;
+
+    expect(() => inspector.enableControlledSampling(renderer)).not.toThrow();
+    expect(backend.trackTimestamp).toBe(false);
+    expect(inspector.beginFrameSample(renderer)).toBe(true);
+    expect(backend.trackTimestamp).toBe(true);
+  });
+
   it("pauses query allocation until both timestamp pools resolve", async () => {
     const inspector = new KernelTimingInspector();
     let finishCompute!: () => void;
