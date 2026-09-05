@@ -125,6 +125,7 @@ export class TileRasterizer {
     private readonly tileCount: number,
     nodes: GaussianRasterNodeSlots,
     profileKernels = false,
+    private readonly transmittanceThreshold = 1e-4,
   ) {
     this.metrics = profileKernels
       ? this.attributes.createUint("3dgs.raster-work", tileCount * 4)
@@ -583,7 +584,7 @@ export class TileRasterizer {
                 accumulated.addAssign(color.mul(transmittance).mul(alpha));
                 blended?.addAssign(1);
                 transmittance.mulAssign(float(1).sub(alpha));
-                If(transmittance.lessThan(1e-4), () => {
+                If(transmittance.lessThan(this.transmittanceThreshold), () => {
                   done.assign(bool(true));
                   Break();
                 });
@@ -639,7 +640,11 @@ export class TileRasterizer {
               atomicAdd(counters.element(base.add(2)), uint(1));
               atomicAdd(
                 counters.element(base.add(3)),
-                select(transmittance.lessThan(1e-4), uint(1), uint(0)),
+                select(
+                  transmittance.lessThan(this.transmittanceThreshold),
+                  uint(1),
+                  uint(0),
+                ),
               );
             });
           }
@@ -746,7 +751,7 @@ export class TileRasterizer {
               });
             }
             transmittance.mulAssign(partial.w);
-            If(transmittance.lessThan(1e-4), () => {
+            If(transmittance.lessThan(this.transmittanceThreshold), () => {
               Break();
             });
           },
@@ -764,7 +769,11 @@ export class TileRasterizer {
           atomicAdd(counters.element(tile.mul(4).add(2)), uint(1));
           atomicAdd(
             counters.element(tile.mul(4).add(3)),
-            select(transmittance.lessThan(1e-4), uint(1), uint(0)),
+            select(
+              transmittance.lessThan(this.transmittanceThreshold),
+              uint(1),
+              uint(0),
+            ),
           );
         }
       });

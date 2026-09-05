@@ -81,6 +81,7 @@ describe("generated Gaussian WGSL", () => {
       1,
       nodes,
       true,
+      0.001,
     );
 
     const projectionSource = buildCompute(
@@ -107,6 +108,10 @@ describe("generated Gaussian WGSL", () => {
     expect(chunkSource).toContain("atomicAdd");
     const compositeSource = buildCompute(rasterInternals.compositeNode);
     expect(compositeSource).toContain("atomicAdd");
+    for (const source of [rasterSource, chunkSource, compositeSource]) {
+      expect(source).toContain("< 0.001");
+      expect(source).not.toContain("< 0.0001");
+    }
     const countChunksSource = buildCompute(rasterInternals.chunks.countNode);
     const prepareChunksSource = buildCompute(
       rasterInternals.chunks.prepareNode,

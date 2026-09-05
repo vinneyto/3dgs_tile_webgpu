@@ -514,13 +514,22 @@ const depthNode = pass.getTextureNode("depth"); // requires outputDepth: true
 With `?profile=kernels`, the sandbox diagnostics also report actual raster
 work: checked pixel/Gaussian pairs, blended pairs, both averages per pixel,
 the blend/check ratio, and the fraction of pixels with final transmittance
-below `1e-4` (before background composition). The denominator is in-bounds
+below the configured T threshold (before background composition). The denominator is in-bounds
 pixels in nonempty tiles, including pixels not covered by any ellipse.
 Work totals include all independently rasterized chunks; final pixels are
 counted only once. Counters accumulate locally inside the Gaussian loop and
 are atomically added to per-tile totals after traversal. They are disabled
 outside kernel profiling and add profiling overhead when enabled. Readback
 uses the existing 1.5-second diagnostics interval.
+
+The sandbox currently defaults to the early-exit experiment `?rasterT=0.001`.
+Use `?rasterT=0.0001` for the original baseline, with or without profiling.
+The active cutoff is shown in renderer diagnostics and applies to direct raster,
+chunk raster, chunk composition, and saturation counters. Compare identical
+camera poses and resolution. A larger cutoff drops more of the faint tail and
+can change the image; chunk-local termination is independent of preceding chunks.
+The library retains its original default `0.0001`; configure it with
+`GaussianPassOptions.rasterTransmittanceThreshold` (finite, strictly between 0 and 1).
 
 `GaussianPass` exposes projection-domain slots evaluated once per packed
 Gaussian, a pixel-scoped raster slot, and raster-domain slots evaluated during

@@ -5,6 +5,8 @@ export type AntialiasMode = "compensated" | "classic";
 export type RadixBackend = "auto" | "subgroup" | "workgroup";
 export type ResolvedRadixBackend = Exclude<RadixBackend, "auto">;
 export interface GaussianPassOptions {
+    /** Early termination threshold for remaining transmittance; finite and in (0, 1). Default 0.0001. */
+    rasterTransmittanceThreshold?: number;
     /** Exact float32 or quantized 16-bit depth for the visible-Gaussian pre-sort. */
     depthSortMode?: DepthSortMode;
     /** Preserve subpixel Gaussian energy, or retain the original fixed-footprint 3DGS low-pass behavior. */
@@ -74,7 +76,7 @@ export interface GaussianTileCapStats {
 export interface GaussianPassProfileStats {
     /** Actual pixel/Gaussian work, including all independently executed chunks.
      * Pixels counts in-bounds pixels in nonempty tiles, once after composition.
-     * AlphaStopped counts those pixels whose final T is below 1e-4, before background.
+     * AlphaStopped counts those pixels whose final T is below the configured threshold, before background.
      */
     rasterWork?: {
         checked: number;

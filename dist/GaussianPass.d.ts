@@ -12,6 +12,7 @@ export declare class GaussianPass extends PassNode {
     readonly outputDepth: boolean;
     readonly colorSpace: ColorSpace;
     readonly profileKernels: boolean;
+    readonly rasterTransmittanceThreshold: number;
     readonly maxRasterizedSplatsPerTile: number | null;
     readonly rasterChunkSize: number | null;
     readonly subpixelSampleCulling: boolean;

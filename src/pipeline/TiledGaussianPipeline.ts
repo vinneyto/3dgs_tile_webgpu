@@ -67,6 +67,7 @@ export class TiledGaussianPipeline {
     private readonly subpixelSampleCulling: boolean,
     private readonly radixBackend: ResolvedRadixBackend,
     private readonly nodes: GaussianNodeSlots,
+    private readonly rasterTransmittanceThreshold = 1e-4,
   ) {
     this.frame = new FrameUniforms(camera, background);
     this.objects = new ObjectFrameState(camera, store, data.count);
@@ -303,6 +304,7 @@ export class TiledGaussianPipeline {
       tileCount,
       this.nodes,
       this.profileKernels,
+      this.rasterTransmittanceThreshold,
     );
     this.width = width;
     this.height = height;
