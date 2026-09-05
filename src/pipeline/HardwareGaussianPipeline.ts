@@ -13,25 +13,27 @@ import {
 } from "three/webgpu";
 import {
   Fn,
-  If,
-  Discard,
   float,
-  uint,
   vec2,
+  uint,
   vec4,
   uvec2,
-  uvec4,
   storage,
   instanceIndex,
   positionLocal,
   screenCoordinate,
   varying,
-  sqrt,
-  max,
-  log,
   exp,
   colorSpaceToWorking,
+  wgslFn,
 } from "three/tsl";
+import {
+  prepareHardwareDrawWGSL,
+  hardwareVertexWGSL,
+  hardwarePowerWGSL,
+  hardwareCoordinateWGSL,
+  hardwareFragmentWGSL,
+} from "../kernels/hardwareRaster";
 import type { GaussianData } from "../GaussianData";
 import type { GaussianStore } from "../GaussianStore";
 import * as context from "../nodes/GaussianContextNodes";
@@ -116,14 +118,10 @@ export class HardwareGaussianPipeline {
       radixBackend,
     );
     this.depthSorter.configure(mode === "float32" ? 32 : 16);
-    const count = storage(this.visible.dispatch.state, "uvec4", 1)
-      .toReadOnly()
-      .element(0).x;
-    const draw = storage(this.drawArguments, "uvec4", 1);
-    this.prepareDraw = Fn(() => {
-      // drawIndirect: vertexCount, instanceCount, firstVertex, firstInstance.
-      draw.element(0).assign(uvec4(uint(6), count, uint(0), uint(0)));
-    })()
+    this.prepareDraw = wgslFn<Record<string, Node>>(prepareHardwareDrawWGSL)({
+      state: storage(this.visible.dispatch.state, "uvec4", 1).toReadOnly(),
+      draw: storage(this.drawArguments, "uvec4", 1),
+    })
       .compute(1)
       .setName("3DGS prepare hardware indirect draw");
     this.geometry.setAttribute(
@@ -226,58 +224,28 @@ export class HardwareGaussianPipeline {
     material.side = DoubleSide;
     material.forceSinglePass = true;
     material.toneMapped = false;
-    material.vertexNode = Fn(() => {
-      // Principal axes of the covariance, recovered from the inverse conic.
-      const det: any = max(
-        conic.x.mul(conic.z).sub(conic.y.mul(conic.y)),
-        1e-20,
-      );
-      const xx: any = conic.z.div(det);
-      const xy: any = conic.y.negate().div(det);
-      const yy: any = conic.x.div(det);
-      const discriminant: any = sqrt(xx.sub(yy).pow(2).add(xy.pow(2).mul(4)));
-      const lambda: any = max(xx.add(yy).add(discriminant).mul(0.5), 1e-12);
-      const axis: any = vec2(xy, lambda.sub(xx)).toVar("hardwareAxis");
-      If(axis.dot(axis).lessThan(1e-20), () => {
-        axis.assign(vec2(1, 0));
-      });
-      axis.assign(axis.normalize());
-      const cutoff: any = max(log(mean.w.mul(255)).mul(2), 0);
-      const extent1: any = sqrt(lambda.mul(cutoff));
-      const extent2: any = sqrt(
-        max(float(1).div(det.mul(lambda)), 1e-12).mul(cutoff),
-      );
-      const offset: any = axis
-        .mul(positionLocal.x.mul(extent1))
-        .add(vec2(axis.y.negate(), axis.x).mul(positionLocal.y.mul(extent2)));
-      const pixel: any = mean.xy.add(offset);
-      const ndc: any = vec2(
-        pixel.x.div(this.frame.viewport.x).mul(2).sub(1),
-        float(1).sub(pixel.y.div(this.frame.viewport.y).mul(2)),
-      );
-      const clip: any = this.frame.projection.mul(
-        vec4(0, 0, mean.z.negate(), 1),
-      );
-      return vec4(ndc.mul(clip.w), clip.z, clip.w);
-    })();
+    material.vertexNode = wgslFn<Record<string, Node>>(hardwareVertexWGSL)({
+      mean,
+      conic,
+      corner: positionLocal.xy,
+      projection: this.frame.projection,
+      viewport: this.frame.viewport.xy,
+    });
+    const powerKernel = wgslFn<Record<string, Node>>(hardwarePowerWGSL);
+    const coordinateKernel = wgslFn<Record<string, Node>>(
+      hardwareCoordinateWGSL,
+    );
+    const fragmentKernel = wgslFn<Record<string, Node>>(hardwareFragmentWGSL);
     material.fragmentNode = Fn(() => {
-      const pixel: any = screenCoordinate.xy;
-      const delta: any = pixel.sub(mean.xy);
-      const power: any = conic.x
-        .mul(delta.x.pow(2))
-        .add(conic.y.mul(delta.x).mul(delta.y).mul(2))
-        .add(conic.z.mul(delta.y.pow(2)))
-        .mul(-0.5);
-      If(power.lessThan(log(mean.w.mul(255)).negate()), () => {
-        Discard();
-      });
-      const l00: any = sqrt(max(conic.x, 1e-12));
-      const l10: any = conic.y.div(l00);
-      const l11: any = sqrt(max(conic.z.sub(l10.mul(l10)), 1e-12));
-      const coord: any = vec2(
-        l00.mul(delta.x).add(l10.mul(delta.y)),
-        l11.mul(delta.y),
-      );
+      const pixel = screenCoordinate.xy;
+      const delta = pixel.sub(mean.xy);
+      // Materialize even if a custom alpha does not reference rasterPower:
+      // the WGSL function's support discard must still execute.
+      const power = float(
+        powerKernel({ mean, conic, pixel }) as Node<"float">,
+      ).toVar("hardwarePower");
+      power.toStack();
+      const coord = vec2(coordinateKernel({ conic, delta }) as Node<"vec2">);
       const means = storage(
         this.data.means,
         "vec4",
@@ -301,21 +269,19 @@ export class HardwareGaussianPipeline {
       ]);
       const resolve = (node: Node): any =>
         (node as any).context({ overrideNodes: overrides });
-      If(resolve(nodes.rasterDiscardNode), () => {
-        Discard();
-      });
-      const alpha: any = resolve(nodes.rasterAlphaNode).clamp(0, 0.99);
-      If(alpha.lessThan(1 / 255), () => {
-        Discard();
-      });
-      // NodeMaterial premultiplies once, after evaluating this straight color.
-      return vec4(
+      // ColorSpaceNode may widen RGB to RGBA during sRGB conversion. Pass
+      // an explicit vec4 in and take RGB out before combining with custom alpha.
+      const workingColor = vec4(
         colorSpaceToWorking(
-          resolve(nodes.rasterColorNode),
+          vec4(resolve(nodes.rasterColorNode), 1),
           this.colorSpace,
-        ) as any,
-        alpha,
+        ) as unknown as Node<"vec4">,
       );
+      return fragmentKernel({
+        color: workingColor.rgb,
+        alpha: resolve(nodes.rasterAlphaNode),
+        rejected: resolve(nodes.rasterDiscardNode),
+      });
     })();
     return material;
   }

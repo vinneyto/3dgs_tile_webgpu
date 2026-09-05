@@ -541,6 +541,8 @@ background is drawn only in the first stage. Transparent meshes are composed
 after splats; arbitrary mesh/splat transparency intersections are not globally
 sorted. Dispose the pass separately from the Store and caller-owned scene.
 
+Core hardware vertex/fragment mathematics and indirect-draw preparation are
+WGSL functions. TSL binds resources, interpolants and the customizable nodes.
 The vertex shader builds an oriented quad from the projected covariance. Its
 constant depth is the Gaussian center depth, matching the tiled cutoff's
 `mean.z` approximation. The fragment shader evaluates the conic and alpha and

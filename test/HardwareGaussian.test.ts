@@ -5,10 +5,12 @@ import {
   WebGPURenderer,
   WGSLNodeBuilder,
   LinearSRGBColorSpace,
+  SRGBColorSpace,
   WebGPUCoordinateSystem,
   Scene,
   Color,
   type NodeFrame,
+  type ColorSpace,
 } from "three/webgpu";
 import { context, float, vec3 } from "three/tsl";
 import { GaussianData } from "../src/GaussianData";
@@ -22,7 +24,7 @@ import {
 } from "../src/nodes/GaussianContextNodes";
 import { HardwareGaussianPipeline } from "../src/pipeline/HardwareGaussianPipeline";
 
-function fixture() {
+function fixture(colorSpace: ColorSpace = SRGBColorSpace) {
   const attr = (v: number[]) =>
     new StorageBufferAttribute(new Float32Array(v), 4);
   const data = new GaussianData(
@@ -62,7 +64,7 @@ function fixture() {
     "float32",
     "classic",
     "workgroup",
-    LinearSRGBColorSpace,
+    colorSpace,
     nodes,
     true,
     false,
@@ -106,33 +108,43 @@ function shaders(f: ReturnType<typeof fixture>, object: unknown) {
 }
 
 describe("hardware Gaussian backend", () => {
-  it("generates native instanced shaders and GPU draw arguments without tile traversal", () => {
-    const f = fixture();
-    const projection = shaders(
-      f,
-      (f.pipeline.projection as any).computeNode,
-    ).computeShader;
-    expect(projection).toContain("evaluate_gaussian_sh");
-    expect(projection).not.toContain("count_contributing_tiles");
-    const draw = shaders(f, f.pipeline.prepareDraw).computeShader;
-    expect(draw).toContain("vec4<u32>( 6u,");
-    const render = shaders(f, f.pipeline.mesh);
-    expect(render.vertexShader).toMatch(/@builtin\(\s*instance_index\s*\)/);
-    expect(render.vertexShader).toContain("hardwareGaussianId");
-    expect(render.vertexShader).toContain("- 1u");
-    expect(render.fragmentShader).toContain("discard;");
-    expect(render.fragmentShader).not.toContain("textureLoad");
-    expect(render.fragmentShader).not.toContain("var<storage");
-    expect(f.pipeline.geometry.indirect).toBe(f.pipeline.drawArguments);
-    expect(f.pipeline.mesh.material).toMatchObject({
-      transparent: true,
-      depthTest: true,
-      depthWrite: false,
-      premultipliedAlpha: true,
-    });
-    f.pipeline.dispose();
-    f.store.dispose();
-  });
+  it.each([SRGBColorSpace, LinearSRGBColorSpace])(
+    "generates native instanced shaders without TSL errors (%s)",
+    (colorSpace) => {
+      const f = fixture(colorSpace);
+      const projection = shaders(
+        f,
+        (f.pipeline.projection as any).computeNode,
+      ).computeShader;
+      expect(projection).toContain("evaluate_gaussian_sh");
+      expect(projection).not.toContain("count_contributing_tiles");
+      const draw = shaders(f, f.pipeline.prepareDraw).computeShader;
+      expect(draw).toMatch(/vec4<u32>\(\s*6u,/);
+      const errors = vi.spyOn(console, "error");
+      const render = shaders(f, f.pipeline.mesh);
+      expect(errors).not.toHaveBeenCalled();
+      errors.mockRestore();
+      expect(render.vertexShader).toMatch(/@builtin\(\s*instance_index\s*\)/);
+      expect(render.vertexShader).toContain("hardwareGaussianId");
+      expect(render.vertexShader).toContain("- 1u");
+      expect(render.vertexShader).toMatch(/fn hardware_vertex\s*\(/);
+      expect(render.fragmentShader).toMatch(/fn hardware_power\s*\(/);
+      expect(render.fragmentShader).toMatch(/fn hardware_fragment\s*\(/);
+      expect(render.fragmentShader).not.toMatch(/fn hardware_coordinate\s*\(/);
+      expect(render.fragmentShader).toContain("discard;");
+      expect(render.fragmentShader).not.toContain("textureLoad");
+      expect(render.fragmentShader).not.toContain("var<storage");
+      expect(f.pipeline.geometry.indirect).toBe(f.pipeline.drawArguments);
+      expect(f.pipeline.mesh.material).toMatchObject({
+        transparent: true,
+        depthTest: true,
+        depthWrite: false,
+        premultipliedAlpha: true,
+      });
+      f.pipeline.dispose();
+      f.store.dispose();
+    },
+  );
   it("supports raster customization but rejects cached compute-only pixel values", () => {
     const f = fixture();
     f.nodes.rasterColorNode = vec3(
@@ -151,6 +163,19 @@ describe("hardware Gaussian backend", () => {
     f.pipeline.dispose();
     f.store.dispose();
   });
+  it("retains the support discard when custom alpha is constant", () => {
+    const f = fixture();
+    f.nodes.rasterAlphaNode = float(0.5);
+    f.pipeline.rebuildRasterizer(f.nodes);
+    const fragment = shaders(f, f.pipeline.mesh).fragmentShader;
+    expect(fragment).toMatch(/hardwarePower = hardware_power\(/);
+    expect(fragment).toContain(
+      "if (power < -log(mean.w * 255.0)) { discard; }",
+    );
+    f.pipeline.dispose();
+    f.store.dispose();
+  });
+
   it("prepares frames without readback and rebuilds changed raster nodes", () => {
     const f = fixture();
     vi.spyOn(f.renderer, "compute").mockReturnValue(undefined);

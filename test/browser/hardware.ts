@@ -7,7 +7,6 @@ import {
   PlaneGeometry,
   MeshBasicMaterial,
   DataUtils,
-  LinearSRGBColorSpace,
   WebGPUCoordinateSystem,
   type NodeFrame,
 } from "three/webgpu";
@@ -52,7 +51,6 @@ async function run() {
   const pass = new GaussianHardwarePass(renderer, camera, store, {
     scene,
     antialiasMode: "classic",
-    colorSpace: LinearSRGBColorSpace,
     radixBackend: "workgroup",
   });
   const frame = { renderer } as unknown as NodeFrame;
