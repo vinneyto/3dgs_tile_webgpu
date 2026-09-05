@@ -6,7 +6,7 @@ import {
   Mesh,
   PlaneGeometry,
   MeshBasicMaterial,
-  FloatType,
+  DataUtils,
   LinearSRGBColorSpace,
   WebGPUCoordinateSystem,
   type NodeFrame,
@@ -55,7 +55,6 @@ async function run() {
     colorSpace: LinearSRGBColorSpace,
     radixBackend: "workgroup",
   });
-  pass.renderTarget.texture.type = FloatType;
   const frame = { renderer } as unknown as NodeFrame;
   async function sample() {
     pass.updateBefore(frame);
@@ -66,7 +65,7 @@ async function run() {
       1,
       1,
     );
-    return Array.from(pixels as Float32Array);
+    return Array.from(pixels as Uint16Array, DataUtils.fromHalfFloat);
   }
   const blended = await sample();
   const occluder = new Mesh(
