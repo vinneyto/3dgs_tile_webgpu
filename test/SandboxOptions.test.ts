@@ -2,6 +2,20 @@ import { describe, expect, it } from "vitest";
 import { readSandboxOptions } from "../sandbox/src/SandboxOptions";
 
 describe("sandbox raster options", () => {
+  it("enables mipmap LOD by default and accepts explicit quality/legacy controls", () => {
+    const defaults = readSandboxOptions(new URLSearchParams());
+    expect(defaults.mipmapLod).toBe(true);
+    expect(defaults.lodPixelSize).toBe(4);
+    expect(
+      readSandboxOptions(new URLSearchParams("lod=legacy")).mipmapLod,
+    ).toBe(false);
+    expect(
+      readSandboxOptions(new URLSearchParams("lodPixels=2")).lodPixelSize,
+    ).toBe(2);
+    expect(() =>
+      readSandboxOptions(new URLSearchParams("lodPixels=0")),
+    ).toThrow();
+  });
   it("keeps work counters independent of kernel timings", () => {
     expect(
       readSandboxOptions(new URLSearchParams("profile=kernels")).pass

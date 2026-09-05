@@ -132,3 +132,12 @@ export {
   rasterPower,
   rasterWeight,
 } from "./nodes/GaussianContextNodes";
+
+export {
+  GaussianMipmapLod,
+  type GaussianMipmapLodOptions,
+} from "./GaussianMipmapLod";
+export {
+  ScreenSpaceLodPackingStrategy,
+  type ScreenSpaceLodPackingOptions,
+} from "./lod-packing/ScreenSpaceLodPackingStrategy";

@@ -238,6 +238,7 @@ export class GaussianSandbox {
       const cloud = await store.load(url, {
         name: `${url} Gaussian cloud`,
         lod: { levels: SANDBOX_LOD_LEVELS },
+        mipmap: this.options.mipmapLod ? {} : undefined,
       });
       if (this.disposed) {
         store.dispose();
@@ -255,10 +256,11 @@ export class GaussianSandbox {
     const store = this.createStore();
     try {
       const data = this.loader.parse(await file.arrayBuffer());
-      const cloud = addDataWithSandboxLod(
+      const cloud = await addDataWithSandboxLod(
         store,
         data,
         `${file.name} Gaussian cloud`,
+        this.options.mipmapLod,
       );
       if (this.disposed) {
         store.dispose();
@@ -275,6 +277,7 @@ export class GaussianSandbox {
     return new GaussianStore({
       loader: this.loader,
       defaultStreamingLod: this.options.streamingLod,
+      defaultScreenSpaceLod: { pixelSize: this.options.lodPixelSize },
     });
   }
 

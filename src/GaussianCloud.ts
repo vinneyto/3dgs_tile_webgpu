@@ -93,7 +93,7 @@ export class GaussianCloud extends Object3D {
         : this.lod.raycast(localRay, this.packing);
     const hit = alphaCompositeRaycastHit(
       localRay,
-      this.lod.octree.data,
+      this.raycastMode === "full" ? this.lod.octree.data : this.lod.data,
       hits,
       this.raycastAlphaThreshold,
     );
