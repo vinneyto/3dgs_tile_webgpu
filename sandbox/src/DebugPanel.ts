@@ -217,7 +217,7 @@ export class DebugPanel {
           : "GPU timings    ?profile=kernels enables timestamp profiling"
         : timings === null
           ? "GPU timings    waiting for timestamp resolution"
-          : `GPU compute    ${formatMs(timings.computeMs)}  present ${formatMs(timings.renderMs)}`;
+          : `GPU compute    ${formatMs(timings.computeMs)}  render sum ${formatMs(timings.renderMs)}`;
     const pipelineLine =
       debug === null || !debug.initialized
         ? "pipeline       waiting for first frame"
@@ -384,6 +384,13 @@ export class DebugPanel {
       [
         `${profileKernels ? "individual kernels" : "batched groups"} · GPU frame ${timings.frameId}`,
         ...rows,
+        "",
+        "GPU render passes (separate from compute)",
+        ...timings.renderPasses.map(
+          (pass, index) =>
+            `${`${index + 1}. ${pass.name}`.padEnd(42)} ${formatMs(pass.gpuMs)}`,
+        ),
+        "GPU samples resolve asynchronously; FPS is a rolling average.",
         "",
         profileKernels
           ? "?profile=kernels splits the batched prepare/emit group"

@@ -3,6 +3,29 @@ import { describe, expect, it, vi } from "vitest";
 import { KernelTimingInspector } from "../sandbox/src/KernelTimingInspector";
 
 describe("KernelTimingInspector", () => {
+  it("reports the hardware draw separately from other render passes", () => {
+    const inspector = new KernelTimingInspector();
+    inspector.resolveFrame({
+      frameId: 5,
+      computes: [],
+      renders: [
+        { uid: "opaque:f5", name: "Scene", gpu: 0.2 },
+        { uid: "splats:f5", name: "3DGS hardware rasterization", gpu: 6 },
+        { uid: "transparent:f5", name: "Scene", gpu: 0.1 },
+        { uid: "compose:f5", name: "Render Pipeline", gpu: 0.7 },
+      ],
+    });
+    expect(inspector.latest).toMatchObject({
+      computeMs: 0,
+      renderMs: 7,
+      renderPasses: [
+        { name: "Scene", gpuMs: 0.2 },
+        { name: "hardware rasterization", gpuMs: 6 },
+        { name: "Scene", gpuMs: 0.1 },
+        { name: "Render Pipeline", gpuMs: 0.7 },
+      ],
+    });
+  });
   it("supports timestamp pools that have not been created yet", () => {
     const inspector = new KernelTimingInspector();
     const backend = {

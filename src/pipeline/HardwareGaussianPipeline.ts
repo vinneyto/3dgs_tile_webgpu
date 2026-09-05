@@ -135,6 +135,7 @@ export class HardwareGaussianPipeline {
     this.geometry.setIndirect(this.drawArguments);
     this.mesh = new Mesh(this.geometry, this.createMaterial(nodes));
     this.mesh.name = "3DGS hardware splats";
+    this.scene.name = "3DGS hardware rasterization";
     this.mesh.frustumCulled = false;
     this.mesh.layers.enableAll();
     this.scene.add(this.mesh);

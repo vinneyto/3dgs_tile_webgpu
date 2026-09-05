@@ -5945,7 +5945,7 @@ class Aa {
         [-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, -1, 0, 1, 1, 0, -1, 1, 0],
         3
       )
-    ), this.geometry.instanceCount = 1, this.geometry.setIndirect(this.drawArguments), this.mesh = new Tr(this.geometry, this.createMaterial(c)), this.mesh.name = "3DGS hardware splats", this.mesh.frustumCulled = !1, this.mesh.layers.enableAll(), this.scene.add(this.mesh);
+    ), this.geometry.instanceCount = 1, this.geometry.setIndirect(this.drawArguments), this.mesh = new Tr(this.geometry, this.createMaterial(c)), this.mesh.name = "3DGS hardware splats", this.scene.name = "3DGS hardware rasterization", this.mesh.frustumCulled = !1, this.mesh.layers.enableAll(), this.scene.add(this.mesh);
   }
   renderer;
   data;

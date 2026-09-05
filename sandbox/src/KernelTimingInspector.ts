@@ -17,6 +17,7 @@ export interface FrameKernelTimings {
   computeMs: number;
   renderMs: number;
   kernels: KernelTiming[];
+  renderPasses: { name: string; gpuMs: number }[];
 }
 
 interface InspectorComputeStats {
@@ -28,6 +29,7 @@ interface InspectorComputeStats {
 
 interface InspectorRenderStats {
   uid: string;
+  name?: string;
   gpu: number;
 }
 
@@ -99,6 +101,12 @@ export class KernelTimingInspector extends RendererInspector {
       computeMs,
       renderMs: frame.renders.reduce((sum, stats) => sum + stats.gpu, 0),
       kernels: [...kernels.values()],
+      // Keep individual calls, including repeated scene draws. RenderStats
+      // captures the scene name at beginRender, before asynchronous readback.
+      renderPasses: frame.renders.map((stats) => ({
+        name: compactName(stats.name || "render pass"),
+        gpuMs: stats.gpu,
+      })),
     };
   }
 
