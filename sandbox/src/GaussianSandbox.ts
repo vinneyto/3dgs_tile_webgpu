@@ -90,6 +90,7 @@ export class GaussianSandbox {
   private store: GaussianStore | null = null;
   private opaquePass: PassNode | null = null;
   private transparentPass: PassNode | null = null;
+  private sceneOverlayPass: PassNode | null = null;
   private overlayPass: PassNode | null = null;
   private cloud: GaussianCloud | null = null;
   private controlsActive = false;
@@ -313,6 +314,21 @@ export class GaussianSandbox {
         radixBackend: this.options.pass.radixBackend,
       });
       this.pass.setLayers(this.sceneLayers);
+    } else if (!this.options.sceneDepth) {
+      this.pass = gaussianPass(
+        this.renderer,
+        this.camera,
+        store,
+        this.options.pass,
+      );
+      // One regular scene pass: opaque and transparent meshes share native
+      // depth, but the entire result overlays the Gaussian image.
+      this.sceneOverlayPass = scenePass(this.scene, this.camera);
+      this.sceneOverlayPass.opaque = true;
+      this.sceneOverlayPass.transparent = true;
+      const layers = new Layers();
+      layers.mask = this.sceneLayers.mask | this.overlayLayers.mask;
+      this.sceneOverlayPass.setLayers(layers);
     } else {
       this.pass = gaussianPass(
         this.renderer,
@@ -341,10 +357,12 @@ export class GaussianSandbox {
       this.transparentPass.opaque = false;
       this.transparentPass.setLayers(this.sceneLayers);
     }
-    this.overlayPass = scenePass(this.scene, this.camera);
-    this.overlayPass.transparent = true;
-    this.overlayPass.opaque = false;
-    this.overlayPass.setLayers(this.overlayLayers);
+    if (this.sceneOverlayPass === null) {
+      this.overlayPass = scenePass(this.scene, this.camera);
+      this.overlayPass.transparent = true;
+      this.overlayPass.opaque = false;
+      this.overlayPass.setLayers(this.overlayLayers);
+    }
     this.spatialDebug.attach(cloud, this.pass);
     this.debugPanel.setPass(this.pass, {
       cloud,
@@ -362,7 +380,12 @@ export class GaussianSandbox {
       );
       this.pipeline.outputNode = compositePremultipliedOver(
         withBackground,
-        this.overlayPass,
+        this.overlayPass!,
+      );
+    } else if (!this.options.sceneDepth) {
+      this.pipeline.outputNode = compositePremultipliedOver(
+        this.pass,
+        this.sceneOverlayPass!,
       );
     } else {
       const opaqueWithGaussians = compositePremultipliedOver(
@@ -377,7 +400,7 @@ export class GaussianSandbox {
       );
       this.pipeline.outputNode = compositePremultipliedOver(
         withTransparentScene,
-        this.overlayPass,
+        this.overlayPass!,
       );
     }
     this.cloudStatus.preparing(source, data.count);
@@ -388,6 +411,7 @@ export class GaussianSandbox {
     this.spatialDebug.clear();
     this.pass?.dispose();
     this.overlayPass?.dispose();
+    this.sceneOverlayPass?.dispose();
     this.transparentPass?.dispose();
     this.opaquePass?.dispose();
     this.pipeline?.dispose();
@@ -396,6 +420,7 @@ export class GaussianSandbox {
     this.hoverMarker.visible = false;
     this.pass = null;
     this.overlayPass = null;
+    this.sceneOverlayPass = null;
     this.transparentPass = null;
     this.opaquePass = null;
     this.pipeline = null;

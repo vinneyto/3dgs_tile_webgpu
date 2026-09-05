@@ -931,3 +931,14 @@ For correctness comparison on a WebGPU device, run `npm run dev` and open
 paths for partial edge tiles, multiple batches, early alpha termination and
 chunked rendering. Compare performance without `profile=kernels` or
 `rasterStats=1` first; enable kernel profiling separately to locate changes.
+
+### Scene depth composition comparison
+
+For the tiled sandbox, `?ply=mug.ply&renderer=tiled&sceneDepth=0` disables scene-depth
+sampling in the Gaussian rasterizer and depth-based pass composition. It uses one
+regular scene pass (opaque + transparent meshes, including the hover overlay),
+then alpha-composites that scene over the Gaussian pass. Native mesh-to-mesh depth
+testing remains enabled. Omit the flag or use `sceneDepth=1` for depth-integrated
+composition. This flag does not change the hardware backend. Keep the same camera,
+DPR, and raster flags for comparison; this measures the whole composition change,
+not just the cost of a single depth texture read.

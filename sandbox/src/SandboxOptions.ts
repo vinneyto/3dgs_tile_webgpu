@@ -5,6 +5,7 @@ import type {
 } from "../../src/index";
 
 export interface SandboxOptions {
+  readonly sceneDepth: boolean;
   readonly rendererMode: "tiled" | "hardware";
   readonly debugEnabled: boolean;
   readonly profileEnabled: boolean;
@@ -20,6 +21,7 @@ export function readSandboxOptions(
   const profileEnabled = parameters.get("profile") === "kernels";
   const rasterStats = parameters.get("rasterStats") === "1";
   return {
+    sceneDepth: parameters.get("sceneDepth") !== "0",
     rendererMode:
       parameters.get("renderer") === "hardware" ? "hardware" : "tiled",
     debugEnabled: parameters.get("debug") !== "0",
