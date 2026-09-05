@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 import { readSandboxOptions } from "../sandbox/src/SandboxOptions";
 
 describe("sandbox raster options", () => {
+  it("selects hardware rendering explicitly", () => {
+    expect(readSandboxOptions(new URLSearchParams()).rendererMode).toBe(
+      "tiled",
+    );
+    expect(
+      readSandboxOptions(new URLSearchParams("renderer=hardware")).rendererMode,
+    ).toBe("hardware");
+  });
   it("keeps work counters independent of kernel timings", () => {
     expect(
       readSandboxOptions(new URLSearchParams("profile=kernels")).pass

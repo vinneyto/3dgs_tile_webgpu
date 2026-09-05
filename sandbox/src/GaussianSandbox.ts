@@ -1,5 +1,7 @@
 import { rasterDepthNodes } from "./rasterDepthNodes";
 import {
+  Color,
+  SRGBColorSpace,
   DirectionalLight,
   Group,
   HemisphereLight,
@@ -21,6 +23,8 @@ import { pass as scenePass, perspectiveDepthToViewZ, uniform } from "three/tsl";
 import {
   CanonicalGaussianPlyLoader,
   gaussianPass,
+  gaussianHardwarePass,
+  type GaussianHardwarePass,
   rasterPixelCoordinate,
   type GaussianCloud,
   type GaussianPass,
@@ -77,7 +81,7 @@ export class GaussianSandbox {
   private readonly spatialDebug = new SpatialDebugHelpers();
   private readonly cloudStatus: CloudStatus;
   private pipeline: RenderPipeline | null = null;
-  private pass: GaussianPass | null = null;
+  private pass: GaussianPass | GaussianHardwarePass | null = null;
   private store: GaussianStore | null = null;
   private opaquePass: PassNode | null = null;
   private transparentPass: PassNode | null = null;
@@ -292,32 +296,52 @@ export class GaussianSandbox {
     this.frameCloud(bounds);
     this.hoverMarker.scale.setScalar(Math.max(bounds.radius * 0.012, 0.005));
 
-    this.pass = gaussianPass(
-      this.renderer,
-      this.camera,
-      store,
-      this.options.pass,
-    );
-    this.opaquePass = scenePass(this.scene, this.camera);
-    this.opaquePass.transparent = false;
-    this.opaquePass.opaque = true;
-    this.opaquePass.setLayers(this.sceneLayers);
-    const opaqueDepth = this.opaquePass
-      .getTextureNode("depth")
-      .load(rasterPixelCoordinate);
-    const opaqueViewDepth = perspectiveDepthToViewZ(
-      opaqueDepth,
-      uniform(this.camera.near),
-      uniform(this.camera.far),
-    ).negate();
-    Object.assign(
-      this.pass,
-      rasterDepthNodes(opaqueViewDepth, this.pass.depthSortMode),
-    );
-    this.transparentPass = scenePass(this.scene, this.camera);
-    this.transparentPass.transparent = true;
-    this.transparentPass.opaque = false;
-    this.transparentPass.setLayers(this.sceneLayers);
+    if (this.options.rendererMode === "hardware") {
+      const bg = this.options.pass.background!;
+      this.scene.background = new Color().setRGB(
+        bg[0],
+        bg[1],
+        bg[2],
+        SRGBColorSpace,
+      );
+      this.pass = gaussianHardwarePass(this.renderer, this.camera, store, {
+        scene: this.scene,
+        depthSortMode: this.options.pass.depthSortMode,
+        antialiasMode: this.options.pass.antialiasMode,
+        colorSpace: this.options.pass.colorSpace,
+        profileKernels: this.options.pass.profileKernels,
+        subpixelSampleCulling: this.options.pass.subpixelSampleCulling,
+        radixBackend: this.options.pass.radixBackend,
+      });
+      this.pass.setLayers(this.sceneLayers);
+    } else {
+      this.pass = gaussianPass(
+        this.renderer,
+        this.camera,
+        store,
+        this.options.pass,
+      );
+      this.opaquePass = scenePass(this.scene, this.camera);
+      this.opaquePass.transparent = false;
+      this.opaquePass.opaque = true;
+      this.opaquePass.setLayers(this.sceneLayers);
+      const opaqueDepth = this.opaquePass
+        .getTextureNode("depth")
+        .load(rasterPixelCoordinate);
+      const opaqueViewDepth = perspectiveDepthToViewZ(
+        opaqueDepth,
+        uniform(this.camera.near),
+        uniform(this.camera.far),
+      ).negate();
+      Object.assign(
+        this.pass,
+        rasterDepthNodes(opaqueViewDepth, this.pass.depthSortMode),
+      );
+      this.transparentPass = scenePass(this.scene, this.camera);
+      this.transparentPass.transparent = true;
+      this.transparentPass.opaque = false;
+      this.transparentPass.setLayers(this.sceneLayers);
+    }
     this.overlayPass = scenePass(this.scene, this.camera);
     this.overlayPass.transparent = true;
     this.overlayPass.opaque = false;
@@ -328,20 +352,27 @@ export class GaussianSandbox {
       onPack: () => this.cloudStatus.packed(source, data.count, cloud, store),
     });
     this.pipeline = new RenderPipeline(this.renderer);
-    const opaqueWithGaussians = compositePremultipliedOver(
-      this.opaquePass,
-      this.pass,
-    );
-    const withTransparentScene = compositeDepthTestedPremultipliedOver(
-      opaqueWithGaussians,
-      this.transparentPass,
-      this.opaquePass.getViewZNode(),
-      this.transparentPass.getViewZNode(),
-    );
-    this.pipeline.outputNode = compositePremultipliedOver(
-      withTransparentScene,
-      this.overlayPass,
-    );
+    if (this.options.rendererMode === "hardware") {
+      this.pipeline.outputNode = compositePremultipliedOver(
+        this.pass,
+        this.overlayPass,
+      );
+    } else {
+      const opaqueWithGaussians = compositePremultipliedOver(
+        this.opaquePass!,
+        this.pass,
+      );
+      const withTransparentScene = compositeDepthTestedPremultipliedOver(
+        opaqueWithGaussians,
+        this.transparentPass!,
+        this.opaquePass!.getViewZNode(),
+        this.transparentPass!.getViewZNode(),
+      );
+      this.pipeline.outputNode = compositePremultipliedOver(
+        withTransparentScene,
+        this.overlayPass,
+      );
+    }
     this.cloudStatus.preparing(source, data.count);
   }
 

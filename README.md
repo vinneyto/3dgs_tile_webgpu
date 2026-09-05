@@ -509,6 +509,65 @@ const rawColorNode = pass.getTextureNode("output");
 const depthNode = pass.getTextureNode("depth"); // requires outputDepth: true
 ```
 
+## Hardware rasterization (experimental)
+
+`GaussianHardwarePass` is an alternative to the tiled compute rasterizer. It
+reuses GPU projection/SH evaluation, visible compaction and the same radix depth
+sorter. It reads the sorted list backwards and draws six vertices per Gaussian
+with `InstancedBufferGeometry` and a GPU-written indirect instance count. No
+visible-count readback is needed for rendering. Hardware projection omits tile
+intersection counting; intersection emission, tile sorting and chunk rasterization
+are not allocated or executed.
+
+```ts
+import { gaussianHardwarePass } from "3dgs-tile-webgpu";
+
+const hardware = gaussianHardwarePass(renderer, camera, store, {
+  scene, // optional ordinary Three.js scene containing opaque/transparent meshes
+  depthSortMode: "float32",
+  radixBackend: "auto", // same subgroup/workgroup implementation as GaussianPass
+});
+renderPipeline.outputNode = hardware;
+// hardware.getTextureNode("output") is premultiplied working-linear RGBA.
+// hardware.getTextureNode("depth") contains ordinary scene depth, not splat depth.
+```
+
+Initialize `WebGPURenderer` before constructing either Gaussian pass. Each hardware
+pass owns its render target and depth attachment. It renders the supplied scene's
+opaque objects, then splats with `depthTest: true` / `depthWrite: false`, then the
+scene's transparent objects into that same target without copying depth. A
+separate earlier pass's depth texture is **not** automatically inherited. Scene
+background is drawn only in the first stage. Transparent meshes are composed
+after splats; arbitrary mesh/splat transparency intersections are not globally
+sorted. Dispose the pass separately from the Store and caller-owned scene.
+
+The vertex shader builds an oriented quad from the projected covariance. Its
+constant depth is the Gaussian center depth, matching the tiled cutoff's
+`mean.z` approximation. The fragment shader evaluates the conic and alpha and
+uses native premultiplied blending. Projection node slots and `rasterColorNode`,
+`rasterAlphaNode`, `rasterDiscardNode` retain their meanings; the LOD color helper
+works with either pass. `rasterPixelValueNode`, `rasterBreakNode`, raster work
+counters, tile limits and accumulated-transmittance cutoff are not hardware
+options. As with the tiled pass, custom alpha is bounded by the projected
+Gaussian support. Perspective cameras with standard WebGPU depth are supported;
+logarithmic/reversed depth and XR are not supported in this first backend.
+
+In the sandbox, append `&renderer=hardware` to the existing URL. Omit it or use
+`&renderer=tiled` for the compute backend. PLY loading, camera controls, LOD,
+hover marker, overlay and `&profile=kernels` remain available. Tile diagnostics
+are hidden in hardware mode. Compare the same pose, viewport/DPR, LOD, SH and
+antialias settings with profiling disabled. Hardware blends colors in working
+linear space, while the tiled backend currently converts its accumulated color;
+canonical sRGB input can therefore show color differences. No performance gain
+is claimed until measured on the target GPU.
+
+A small GPU regression page is available at
+`http://localhost:5173/test/browser/hardware.html` after `npm run dev`. It checks
+back-to-front blending, an opaque plane between two splats, a zero-visible draw,
+resize and GPU validation errors. Automated unit tests also build the compute,
+vertex and fragment WGSL and verify render-target/state handling. The GPU page
+requires a WebGPU-capable browser; it is separate from `npm test`.
+
 ## Gaussian node customization
 
 Depth cutoff early termination requires exact depth order (`float32`). The sandbox

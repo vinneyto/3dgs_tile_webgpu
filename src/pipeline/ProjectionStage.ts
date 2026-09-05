@@ -103,6 +103,7 @@ export class ProjectionStage {
     private readonly antialiasMode: AntialiasMode,
     nodes: GaussianProjectionNodeSlots,
     private readonly subpixelSampleCulling = true,
+    private readonly countTileIntersections = true,
   ) {
     this.projectedMean = objects.attribute;
     this.projectedConic = this.attributes.createFloat(
@@ -115,7 +116,7 @@ export class ProjectionStage {
     );
     this.tileCounts = this.attributes.createUint(
       "3dgs.tile-counts",
-      data.count,
+      countTileIntersections ? data.count : 1,
     );
     this.rebuild(nodes);
   }
@@ -218,7 +219,7 @@ export class ProjectionStage {
       If(gid.greaterThanEqual(uint(data.count)), () => {
         Return();
       });
-      tileCounts.element(gid).assign(uint(0));
+      if (this.countTileIntersections) tileCounts.element(gid).assign(uint(0));
       projectedMean.element(gid).assign(vec4(0));
 
       const meanObject = means.element(gid);
@@ -368,13 +369,6 @@ export class ProjectionStage {
           Return();
         });
       }
-      const maxTile = ivec2(int(frame.tilesX), int(frame.tilesY)).sub(1);
-      const tileMin = ivec2(
-        clamp(floor(boundsMin.div(float(TILE_SIZE))), vec2(0), vec2(maxTile)),
-      );
-      const tileMax = ivec2(
-        clamp(floor(boundsMax.div(float(TILE_SIZE))), vec2(0), vec2(maxTile)),
-      );
 
       const standardColor = evaluateSh({
         gid,
@@ -393,16 +387,26 @@ export class ProjectionStage {
       If(visible.not(), () => {
         Return();
       });
-      const count = countTiles({
-        center,
-        conic,
-        power_threshold: powerThreshold,
-        tile_min: tileMin,
-        tile_max: tileMax,
-      }) as any;
-      If(count.equal(0), () => {
-        Return();
-      });
+      if (this.countTileIntersections) {
+        const maxTile = ivec2(int(frame.tilesX), int(frame.tilesY)).sub(1);
+        const tileMin = ivec2(
+          clamp(floor(boundsMin.div(float(TILE_SIZE))), vec2(0), vec2(maxTile)),
+        );
+        const tileMax = ivec2(
+          clamp(floor(boundsMax.div(float(TILE_SIZE))), vec2(0), vec2(maxTile)),
+        );
+        const count = countTiles({
+          center,
+          conic,
+          power_threshold: powerThreshold,
+          tile_min: tileMin,
+          tile_max: tileMax,
+        }) as any;
+        If(count.equal(0), () => {
+          Return();
+        });
+        tileCounts.element(gid).assign(count);
+      }
       const color = resolveNode(
         nodes.gaussianColorNode,
         derivedOverrides,
@@ -410,7 +414,6 @@ export class ProjectionStage {
       projectedMean.element(gid).assign(vec4(center, depth, opacity));
       projectedConic.element(gid).assign(vec4(conic, radiusX));
       projectedColor.element(gid).assign(vec4(color, radiusY));
-      tileCounts.element(gid).assign(count);
     });
 
     return kernel()

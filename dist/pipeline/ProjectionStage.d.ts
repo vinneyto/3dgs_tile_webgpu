@@ -9,13 +9,14 @@ export declare class ProjectionStage {
     private readonly frame;
     private readonly antialiasMode;
     private readonly subpixelSampleCulling;
+    private readonly countTileIntersections;
     readonly projectedMean: StorageBufferAttribute;
     readonly projectedConic: StorageBufferAttribute;
     readonly projectedColor: StorageBufferAttribute;
     readonly tileCounts: StorageBufferAttribute;
     private readonly attributes;
     private computeNode;
-    constructor(data: GaussianData, frame: FrameUniforms, objects: ObjectFrameState, antialiasMode: AntialiasMode, nodes: GaussianProjectionNodeSlots, subpixelSampleCulling?: boolean);
+    constructor(data: GaussianData, frame: FrameUniforms, objects: ObjectFrameState, antialiasMode: AntialiasMode, nodes: GaussianProjectionNodeSlots, subpixelSampleCulling?: boolean, countTileIntersections?: boolean);
     rebuild(nodes: GaussianProjectionNodeSlots): void;
     encode(renderer: WebGPURenderer): void;
     dispose(): void;
