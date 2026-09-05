@@ -57,7 +57,7 @@ import {
   type GaussianProjectionNodeSlots,
 } from "../nodes/GaussianContextNodes";
 import { AttributePool } from "./AttributePool";
-import { TILE_SIZE, WORKGROUP_SIZE } from "./constants";
+import { WORKGROUP_SIZE } from "./constants";
 import type { FrameUniforms } from "./FrameUniforms";
 import { OBJECT_FRAME_VEC4S, type ObjectFrameState } from "./ObjectFrameState";
 import type { AntialiasMode } from "./types";
@@ -210,7 +210,7 @@ export class ProjectionStage {
       projectionCovarianceWGSL(this.antialiasMode),
     );
     const evaluateSh = wgslFn<any>(evaluateShWGSL(data.shFormat));
-    const countTiles = wgslFn<any>(countContributingTilesWGSL());
+    const countTiles = wgslFn<any>(countContributingTilesWGSL(frame.tileSize));
     const subpixelHasSample = wgslFn<any>(subpixelHasSampleWGSL);
 
     const kernel = Fn(() => {
@@ -370,10 +370,18 @@ export class ProjectionStage {
       }
       const maxTile = ivec2(int(frame.tilesX), int(frame.tilesY)).sub(1);
       const tileMin = ivec2(
-        clamp(floor(boundsMin.div(float(TILE_SIZE))), vec2(0), vec2(maxTile)),
+        clamp(
+          floor(boundsMin.div(float(frame.tileSize))),
+          vec2(0),
+          vec2(maxTile),
+        ),
       );
       const tileMax = ivec2(
-        clamp(floor(boundsMax.div(float(TILE_SIZE))), vec2(0), vec2(maxTile)),
+        clamp(
+          floor(boundsMax.div(float(frame.tileSize))),
+          vec2(0),
+          vec2(maxTile),
+        ),
       );
 
       const standardColor = evaluateSh({

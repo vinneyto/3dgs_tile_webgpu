@@ -511,6 +511,33 @@ const depthNode = pass.getTextureNode("depth"); // requires outputDepth: true
 
 ## Gaussian node customization
 
+The sandbox enables two independent raster experiments by default:
+
+| URL parameters             | Tile size      | Conservative 4x4 block mask |
+| -------------------------- | -------------- | --------------------------- |
+| `&tileSize=16&blockMask=0` | 16x16 baseline | Off                         |
+| `&tileSize=8&blockMask=0`  | 8x8            | Off                         |
+| `&tileSize=16&blockMask=1` | 16x16          | On                          |
+| `&tileSize=8&blockMask=1`  | 8x8            | On                          |
+
+Keep `rasterT`, camera pose, resolution, and profiling mode identical for A/B
+measurements. Both switches work without `profile=kernels`. Library defaults
+remain `tileSize: 16` and `rasterBlockMask: false` in `GaussianPassOptions`.
+The chosen tile size is shared by projection, intersection emission, raster
+dispatch, chunk storage/composition, and batch estimates. An 8x8 tile uses 64
+invocations and 64-splat batches; sort/scan workgroup sizes remain unchanged.
+Smaller tiles can increase intersections and sort time: check capacity overflow
+and total frame cost, not just raster time.
+
+The mask is computed once per loaded Gaussian/tile batch into workgroup memory.
+It minimizes the conic over each full 4x4 pixel-cell rectangle (interior and all
+four edges), with a conservative rounding margin and fail-open handling of
+ill-conditioned conics. Pixels test one bit after the depth cutoff and before
+ellipse evaluation. Both direct and chunk raster use it. Mask construction has
+a cost and can lose on large splats covering most blocks. `raster checked`
+still counts visited candidates, including mask rejections; the mask saves
+per-candidate arithmetic rather than necessarily reducing that count.
+
 With `?profile=kernels`, the sandbox diagnostics also report actual raster
 work: checked pixel/Gaussian pairs, blended pairs, both averages per pixel,
 the blend/check ratio, and the fraction of pixels with final transmittance
@@ -798,8 +825,8 @@ projection; with culling disabled it is the number of candidates that continue
 through the pipeline. Profiling adds a compute pass, timestamp overhead and two
 diagnostic readbacks, so its FPS is not the final production-performance number.
 
-The tile profile also reports total and worst-tile raster batches (256 splats
-per batch), plus counterfactual dropped-intersection, affected-tile and batch
+The tile profile also reports total and worst-tile estimated raster batches (64
+or 256 splats per batch for 8x8 or 16x16 tiles), plus counterfactual dropped-intersection, affected-tile and batch
 counts for caps of 2048, 4096 and 8192. Exact chunked rasterization is enabled
 by default with `rasterChunkSize: 8192`. Tiles within that limit retain the
 single-workgroup path. Heavier tiles are split into compact indirect tasks;

@@ -43,6 +43,39 @@ const TEST_LIMITS = {
 };
 
 describe("generated Gaussian WGSL", () => {
+  it.each([8, 16] as const)(
+    "builds both coverage-mask modes for %i-pixel tiles",
+    (tileSize) => {
+      for (const blockMask of [false, true]) {
+        const result = buildPipeline(
+          createDefaultGaussianNodeSlots(),
+          true,
+          tileSize,
+          blockMask,
+        );
+        expect(result.projectionSource).toContain(`* ${tileSize}.0`);
+        expect(result.partialCount).toBe(tileSize * tileSize);
+        for (const source of [
+          result.rasterSource,
+          result.chunkSource,
+          result.compositeSource,
+        ]) {
+          expect(source).toContain(
+            `@workgroup_size( ${tileSize}, ${tileSize}, 1 )`,
+          );
+        }
+        for (const source of [result.rasterSource, result.chunkSource]) {
+          expect(source.includes("fn raster_block_mask")).toBe(blockMask);
+          expect(source).toContain(`+= ${tileSize * tileSize} )`);
+          if (blockMask) {
+            expect(source).toContain("mask |= 1u <<");
+            expect(source).toContain(">> 2u");
+            expect(source).not.toContain("/ 4.0");
+          }
+        }
+      }
+    },
+  );
   it("builds projection and raster TSL shells into compute shaders", () => {
     const data = oneGaussian();
     const store = new GaussianStore();
@@ -281,6 +314,8 @@ describe("generated Gaussian WGSL", () => {
 function buildPipeline(
   nodes: ReturnType<typeof createDefaultGaussianNodeSlots>,
   subpixelSampleCulling = true,
+  tileSize: 8 | 16 = 16,
+  blockMask = false,
 ) {
   const data = oneGaussian();
   const store = new GaussianStore();
@@ -288,7 +323,7 @@ function buildPipeline(
   store.pack({ limits: TEST_LIMITS });
   const packed = store.getPackedData();
   const camera = new PerspectiveCamera();
-  const frame = new FrameUniforms(camera, [0, 0, 0, 0]);
+  const frame = new FrameUniforms(camera, [0, 0, 0, 0], tileSize);
   const objects = new ObjectFrameState(camera, store, packed.count);
   const projection = new ProjectionStage(
     packed,
@@ -316,9 +351,20 @@ function buildPipeline(
     8_192,
     1,
     nodes,
+    false,
+    1e-4,
+    blockMask,
   );
 
   return {
+    partialCount: (
+      rasterizer as unknown as {
+        chunks: { partialData: StorageBufferAttribute };
+      }
+    ).chunks.partialData.count,
+    compositeSource: buildCompute(
+      (rasterizer as unknown as { compositeNode: unknown }).compositeNode,
+    ),
     projectionSource: buildCompute(
       (projection as unknown as { computeNode: unknown }).computeNode,
     ),

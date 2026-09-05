@@ -28,7 +28,7 @@ export class ProfileDiagnosticsStage {
     gaussianCount: number,
     projectedMeanAttribute: StorageBufferAttribute,
     projectedConicAttribute: StorageBufferAttribute,
-    frame: FrameUniforms,
+    private readonly frame: FrameUniforms,
     private readonly maxRasterizedSplatsPerTile: number | null,
   ) {
     this.zeroPixelFlags = this.attributes.createUint(
@@ -72,13 +72,17 @@ export class ProfileDiagnosticsStage {
     for (const flag of flags) zeroPixelSubpixelSplats += flag;
     const offsets = new Uint32Array(offsetBuffer);
     return {
-      tileLoads: summarizeTileLoads(offsets),
+      tileLoads: summarizeTileLoads(offsets, this.frame.tileSize ** 2),
       appliedTileCap:
         this.maxRasterizedSplatsPerTile === null
           ? null
-          : estimateTileCap(offsets, this.maxRasterizedSplatsPerTile),
+          : estimateTileCap(
+              offsets,
+              this.maxRasterizedSplatsPerTile,
+              this.frame.tileSize ** 2,
+            ),
       tileCapEstimates: PROFILE_TILE_CAPS.map((cap) =>
-        estimateTileCap(offsets, cap),
+        estimateTileCap(offsets, cap, this.frame.tileSize ** 2),
       ),
       zeroPixelSubpixelSplats,
     };

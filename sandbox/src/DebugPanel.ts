@@ -245,6 +245,8 @@ export class DebugPanel {
       stagesLine,
       subpixelCullLine,
       rasterChunkLine,
+      `raster layout  ${this.pass?.tileSize ?? 16}x${this.pass?.tileSize ?? 16} · block mask ${this.pass?.rasterBlockMask ? "ON" : "OFF"}`,
+      `               ?tileSize=16 baseline · ?blockMask=0 disables mask`,
       `raster cutoff  T < ${this.pass?.rasterTransmittanceThreshold ?? "—"} · ?rasterT=0.0001 baseline`,
       ...profileLines,
       "",

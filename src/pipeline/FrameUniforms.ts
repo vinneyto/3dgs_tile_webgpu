@@ -11,6 +11,7 @@ export class FrameUniforms {
   constructor(
     private readonly camera: PerspectiveCamera,
     readonly background: readonly [number, number, number, number],
+    readonly tileSize: 8 | 16 = 16,
   ) {}
 
   update(width: number, height: number, tilesX: number, tilesY: number): void {

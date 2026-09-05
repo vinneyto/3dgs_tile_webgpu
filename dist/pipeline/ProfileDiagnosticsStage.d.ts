@@ -3,6 +3,7 @@ import type { FrameUniforms } from "./FrameUniforms";
 import type { GaussianPassProfileStats } from "./types";
 export declare class ProfileDiagnosticsStage {
     private readonly renderer;
+    private readonly frame;
     private readonly maxRasterizedSplatsPerTile;
     private readonly attributes;
     private readonly zeroPixelFlags;

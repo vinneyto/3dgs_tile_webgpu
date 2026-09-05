@@ -5,6 +5,10 @@ export type AntialiasMode = "compensated" | "classic";
 export type RadixBackend = "auto" | "subgroup" | "workgroup";
 export type ResolvedRadixBackend = Exclude<RadixBackend, "auto">;
 export interface GaussianPassOptions {
+    /** Raster tile edge. Default 16; 8 is an experimental alternative. */
+    tileSize?: 8 | 16;
+    /** Conservative per-Gaussian coverage mask of 4x4 pixel blocks. Default false. */
+    rasterBlockMask?: boolean;
     /** Early termination threshold for remaining transmittance; finite and in (0, 1). Default 0.0001. */
     rasterTransmittanceThreshold?: number;
     /** Exact float32 or quantized 16-bit depth for the visible-Gaussian pre-sort. */
@@ -59,9 +63,9 @@ export interface GaussianTileLoadStats {
     tilesOver512: number;
     tilesOver1024: number;
     tilesOver2048: number;
-    /** Number of 256-splat outer-loop iterations summed over all tiles. */
+    /** Estimated batches before early exit, using tileSize squared samples per batch. */
     totalBatches: number;
-    /** Longest 256-splat outer loop executed by a single tile. */
+    /** Maximum estimated batch count for a tile before early exit. */
     maxBatches: number;
 }
 export interface GaussianTileCapStats {

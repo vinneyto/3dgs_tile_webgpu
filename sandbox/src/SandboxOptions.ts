@@ -29,6 +29,8 @@ export function readSandboxOptions(
         parameters.get("aa") === "classic" ? "classic" : "compensated",
       background: [0.018, 0.022, 0.032, 1],
       profileKernels: profileEnabled,
+      tileSize: parameters.get("tileSize") === "16" ? 16 : 8,
+      rasterBlockMask: parameters.get("blockMask") !== "0",
       rasterTransmittanceThreshold: readRasterThreshold(parameters),
       maxRasterizedSplatsPerTile: readOptionalLimit(parameters, "tileCap"),
       rasterChunkSize: readOptionalLimit(parameters, "rasterChunk"),
