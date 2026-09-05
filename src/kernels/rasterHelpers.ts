@@ -18,3 +18,30 @@ fn load_shared_active(
   return workgroupUniformLoad(&(*values)[0]);
 }
 `;
+
+/** All workgroup lanes must call this, including finished/out-of-bounds pixels. */
+export const subgroupActiveWGSL = /* wgsl */ `
+fn raster_subgroup_active(
+  active: u32,
+  local_index: u32,
+  subgroup_index: u32,
+  subgroup_lane: u32,
+  subgroup_size: u32,
+  partials: ptr<workgroup, array<u32, ${WORKGROUP_SIZE}>>
+) -> u32 {
+  let any_active = subgroupOr(active);
+  if (subgroup_lane == 0u) {
+    (*partials)[subgroup_index] = any_active;
+  }
+  workgroupBarrier();
+  if (local_index == 0u) {
+    let count = (${WORKGROUP_SIZE}u + subgroup_size - 1u) / subgroup_size;
+    var total = 0u;
+    for (var i = 0u; i < count; i++) {
+      total |= (*partials)[i];
+    }
+    (*partials)[0] = total;
+  }
+  return workgroupUniformLoad(&(*partials)[0]);
+}
+`;

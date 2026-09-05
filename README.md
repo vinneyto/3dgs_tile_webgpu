@@ -915,3 +915,19 @@ passes receive working-linear RGB and `RenderPipeline` performs exactly one disp
   standard perspective-depth texture.
 - Input, intermediate, indirect-dispatch, color, and depth resources are represented by public Three.js
   attributes/textures. No backend/device access is required.
+
+### Tiled subgroup experiment
+
+The sandbox enables subgroup activity reduction when supported. Compare the same
+stationary camera with `?renderer=tiled&rasterSubgroups=1` and
+`?renderer=tiled&rasterSubgroups=0` (use `&` when a PLY query is already present).
+The panel's `raster reduce` line reports the actual path. Library users opt in
+with `GaussianPassOptions.rasterSubgroups: true`; unsupported adapters retain the
+workgroup fallback. Radix selection is independent. Tile size, alpha thresholds,
+depth hooks, and exact chunk composition are unchanged.
+
+For correctness comparison on a WebGPU device, run `npm run dev` and open
+`/test/browser/tiled.html`. This compares all pixels between the two reduction
+paths for partial edge tiles, multiple batches, early alpha termination and
+chunked rendering. Compare performance without `profile=kernels` or
+`rasterStats=1` first; enable kernel profiling separately to locate changes.

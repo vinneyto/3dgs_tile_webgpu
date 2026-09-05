@@ -257,7 +257,12 @@ export class DebugPanel {
       pipelineLine,
       stagesLine,
       subpixelCullLine,
-      ...(hardware ? [] : [rasterChunkLine]),
+      ...(hardware
+        ? []
+        : [
+            rasterChunkLine,
+            `raster reduce  ${(this.pass as GaussianPass | null)?.rasterSubgroups ? "subgroup" : "workgroup"} · ?rasterSubgroups=0 disables experiment`,
+          ]),
       ...(hardware
         ? ["depth          hardware test · opaque scene attachment"]
         : [

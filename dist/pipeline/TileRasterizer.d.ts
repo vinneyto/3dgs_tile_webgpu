@@ -25,6 +25,7 @@ export declare class TileRasterizer {
     private readonly rasterChunkSize;
     private readonly tileCount;
     private readonly transmittanceThreshold;
+    private readonly rasterSubgroups;
     private readonly attributes;
     private readonly chunks;
     private computeNode;
@@ -32,7 +33,7 @@ export declare class TileRasterizer {
     private compositeNode;
     private readonly metrics;
     private readonly clearMetrics;
-    constructor(renderer: WebGPURenderer, gaussianCount: number, intersectionCapacity: number, mode: DepthSortMode, meansAttribute: StorageBufferAttribute, projectedMeanAttribute: StorageBufferAttribute, projectedConicAttribute: StorageBufferAttribute, projectedColorAttribute: StorageBufferAttribute, sortedRecordsAttribute: StorageBufferAttribute, tileOffsetsAttribute: StorageBufferAttribute, colorTexture: StorageTexture, depthTexture: StorageTexture | null, frame: FrameUniforms, maxSplatsPerTile: number | null, rasterChunkSize: number | null, tileCount: number, nodes: GaussianRasterNodeSlots, rasterStats?: boolean, transmittanceThreshold?: number);
+    constructor(renderer: WebGPURenderer, gaussianCount: number, intersectionCapacity: number, mode: DepthSortMode, meansAttribute: StorageBufferAttribute, projectedMeanAttribute: StorageBufferAttribute, projectedConicAttribute: StorageBufferAttribute, projectedColorAttribute: StorageBufferAttribute, sortedRecordsAttribute: StorageBufferAttribute, tileOffsetsAttribute: StorageBufferAttribute, colorTexture: StorageTexture, depthTexture: StorageTexture | null, frame: FrameUniforms, maxSplatsPerTile: number | null, rasterChunkSize: number | null, tileCount: number, nodes: GaussianRasterNodeSlots, rasterStats?: boolean, transmittanceThreshold?: number, rasterSubgroups?: boolean);
     rebuild(nodes: GaussianRasterNodeSlots): void;
     encode(tilesX: number, tilesY: number): void;
     dispose(): void;
