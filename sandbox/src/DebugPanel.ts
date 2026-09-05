@@ -388,7 +388,7 @@ export class DebugPanel {
         "GPU render passes (separate from compute)",
         ...timings.renderPasses.map(
           (pass, index) =>
-            `${`${index + 1}. ${pass.name}`.padEnd(42)} ${formatMs(pass.gpuMs)}`,
+            `${`${index + 1}. ${pass.name}`.padEnd(42)} ${formatMs(pass.gpuMs)}  draws ${pass.drawCalls ?? "?"}\n   ${pass.mode ?? ""}`,
         ),
         "GPU samples resolve asynchronously; FPS is a rolling average.",
         "",

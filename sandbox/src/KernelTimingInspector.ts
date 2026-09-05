@@ -17,7 +17,12 @@ export interface FrameKernelTimings {
   computeMs: number;
   renderMs: number;
   kernels: KernelTiming[];
-  renderPasses: { name: string; gpuMs: number }[];
+  renderPasses: {
+    name: string;
+    gpuMs: number;
+    drawCalls?: number;
+    mode?: string;
+  }[];
 }
 
 interface InspectorComputeStats {
@@ -30,6 +35,8 @@ interface InspectorComputeStats {
 interface InspectorRenderStats {
   uid: string;
   name?: string;
+  drawCalls?: number;
+  mode?: string;
   gpu: number;
 }
 
@@ -43,6 +50,11 @@ interface ResolvedInspectorFrame {
 
 interface TimestampBackend {
   trackTimestamp: boolean;
+  initTimestampQuery?: (
+    type: string,
+    uid: string,
+    descriptor: { timestampWrites?: object },
+  ) => void;
   timestampQueryPool?: {
     compute?: TimestampPool | null;
     render?: TimestampPool | null;
@@ -62,6 +74,48 @@ export class KernelTimingInspector extends RendererInspector {
   private timestampReadback: Promise<unknown> | null = null;
   private sampledFramePending = false;
   private timestampErrorReported = false;
+
+  private restoreTimestampHook: (() => void) | null = null;
+  private renderStack: {
+    stats: InspectorRenderStats;
+    start: number;
+    children: number;
+  }[] = [];
+
+  override beginRender(
+    ...args: Parameters<RendererInspector["beginRender"]>
+  ): void {
+    super.beginRender(...args);
+    const stats = (
+      this as unknown as { currentRender: InspectorRenderStats | null }
+    ).currentRender;
+    const renderer = this.getRenderer() as WebGPURenderer;
+    if (stats?.uid !== args[0]) return;
+    stats.mode = `${renderer.opaque ? "opaque" : ""}${renderer.opaque && renderer.transparent ? "+" : ""}${renderer.transparent ? "transparent" : ""} layers=0x${args[2].layers.mask.toString(16)}`;
+    this.renderStack.push({
+      stats,
+      start: renderer.info.render.drawCalls,
+      children: 0,
+    });
+  }
+
+  override finishRender(uid: string): void {
+    const entry = this.renderStack.pop();
+    if (entry) {
+      const renderer = this.getRenderer() as WebGPURenderer;
+      const inclusive = renderer.info.render.drawCalls - entry.start;
+      entry.stats.drawCalls = inclusive - entry.children;
+      const parent = this.renderStack.at(-1);
+      if (parent) parent.children += inclusive;
+    }
+    super.finishRender(uid);
+  }
+
+  /** Restore the renderer hook before disposing the sandbox. */
+  release(): void {
+    this.restoreTimestampHook?.();
+    this.restoreTimestampHook = null;
+  }
 
   constructor() {
     super();
@@ -106,12 +160,32 @@ export class KernelTimingInspector extends RendererInspector {
       renderPasses: frame.renders.map((stats) => ({
         name: compactName(stats.name || "render pass"),
         gpuMs: stats.gpu,
+        drawCalls: stats.drawCalls,
+        mode: stats.mode,
       })),
     };
   }
 
   /** Disable Three.js' continuous query allocation and sample on demand. */
   enableControlledSampling(renderer: WebGPURenderer): void {
+    const backend = timestampBackend(renderer);
+    const original = backend.initTimestampQuery;
+    if (original && this.restoreTimestampHook === null) {
+      // Three r185 reuses descriptors and leaves timestampWrites attached when
+      // tracking is disabled. Unsampled frames must not write stale queries.
+      backend.initTimestampQuery = function (type, uid, descriptor) {
+        delete descriptor.timestampWrites;
+        original.call(this, type, uid, descriptor);
+        // Three also shares one mutable timestampWrites object across passes.
+        // Keep this descriptor's query indices stable for deferred use.
+        const writes = (descriptor as { timestampWrites?: object })
+          .timestampWrites;
+        if (writes) descriptor.timestampWrites = { ...writes };
+      };
+      this.restoreTimestampHook = () => {
+        backend.initTimestampQuery = original;
+      };
+    }
     setTimestampTracking(renderer, false);
   }
 

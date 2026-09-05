@@ -1,8 +1,67 @@
-import { TimestampQuery } from "three/webgpu";
+import { TimestampQuery, Scene, PerspectiveCamera } from "three/webgpu";
 import { describe, expect, it, vi } from "vitest";
 import { KernelTimingInspector } from "../sandbox/src/KernelTimingInspector";
 
 describe("KernelTimingInspector", () => {
+  it("clears stale descriptor writes on unsampled frames and keeps sampled indices stable", () => {
+    const inspector = new KernelTimingInspector();
+    const writes = { beginningOfPassWriteIndex: 0 };
+    const backend = {
+      trackTimestamp: true,
+      initTimestampQuery(
+        _type: string,
+        _uid: string,
+        descriptor: { timestampWrites?: object },
+      ) {
+        if (!this.trackTimestamp) return;
+        writes.beginningOfPassWriteIndex++;
+        descriptor.timestampWrites = writes;
+      },
+    };
+    const original = backend.initTimestampQuery;
+    const renderer = { backend } as never;
+    const a: { timestampWrites?: object } = {};
+    const b: { timestampWrites?: object } = {};
+    inspector.enableControlledSampling(renderer);
+    inspector.beginFrameSample(renderer);
+    backend.initTimestampQuery("render", "a", a);
+    backend.initTimestampQuery("render", "b", b);
+    expect(a.timestampWrites).toEqual({ beginningOfPassWriteIndex: 1 });
+    expect(b.timestampWrites).toEqual({ beginningOfPassWriteIndex: 2 });
+    backend.trackTimestamp = false;
+    backend.initTimestampQuery("render", "c", a);
+    expect(a.timestampWrites).toBeUndefined();
+    inspector.release();
+    expect(backend.initTimestampQuery).toBe(original);
+  });
+
+  it("excludes nested scene draws from the compositor draw count", () => {
+    const inspector = new KernelTimingInspector();
+    const renderer = {
+      backend: { trackTimestamp: true },
+      _nodes: { nodeFrame: { frameId: 1 } },
+      info: { render: { drawCalls: 0 } },
+      opaque: true,
+      transparent: true,
+    };
+    inspector.setRenderer(renderer as never);
+    inspector.begin();
+    const scene = new Scene();
+    const camera = new PerspectiveCamera();
+    inspector.beginRender("outer:f1", scene, camera, null as never);
+    inspector.beginRender("inner:f1", scene, camera, null as never);
+    renderer.info.render.drawCalls += 3;
+    inspector.finishRender("inner:f1");
+    renderer.info.render.drawCalls++;
+    inspector.finishRender("outer:f1");
+    const frame = (inspector as unknown as { currentFrame: unknown })
+      .currentFrame;
+    inspector.resolveFrame(frame);
+    expect(inspector.latest?.renderPasses.map((p) => p.drawCalls)).toEqual([
+      1, 3,
+    ]);
+  });
+
   it("reports the hardware draw separately from other render passes", () => {
     const inspector = new KernelTimingInspector();
     inspector.resolveFrame({

@@ -114,7 +114,7 @@ export class GaussianSandbox {
     status: HTMLElement,
     metrics: HTMLElement,
     kernelTimings: HTMLElement,
-    timingInspector: KernelTimingInspector | null,
+    private readonly timingInspector: KernelTimingInspector | null,
     private readonly options: SandboxOptions,
   ) {
     this.controls = new OrbitControls(camera, renderer.domElement);
@@ -236,6 +236,7 @@ export class GaussianSandbox {
     this.hoverMarkerGeometry.dispose();
     this.hoverMarkerOpaque.material.dispose();
     this.hoverMarkerOverlay.material.dispose();
+    this.timingInspector?.release();
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
