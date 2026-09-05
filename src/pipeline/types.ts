@@ -14,10 +14,8 @@ export type RadixBackend = "auto" | "subgroup" | "workgroup";
 export type ResolvedRadixBackend = Exclude<RadixBackend, "auto">;
 
 export interface GaussianPassOptions {
-  /** Raster tile edge. Default 16; 8 is an experimental alternative. */
-  tileSize?: 8 | 16;
-  /** Conservative per-Gaussian coverage mask of 4x4 pixel blocks. Default false. */
-  rasterBlockMask?: boolean;
+  /** Four independent 8x8 raster workgroups per sorted 16x16 tile. Default false. */
+  rasterSubtiles?: boolean;
   /** Early termination threshold for remaining transmittance; finite and in (0, 1). Default 0.0001. */
   rasterTransmittanceThreshold?: number;
   /** Exact float32 or quantized 16-bit depth for the visible-Gaussian pre-sort. */
@@ -78,9 +76,9 @@ export interface GaussianTileLoadStats {
   tilesOver512: number;
   tilesOver1024: number;
   tilesOver2048: number;
-  /** Estimated batches before early exit, using tileSize squared samples per batch. */
+  /** Estimated batches before early exit across all raster workgroups. */
   totalBatches: number;
-  /** Maximum estimated batch count for a tile before early exit. */
+  /** Maximum estimated aggregate batch count for one parent tile. */
   maxBatches: number;
 }
 

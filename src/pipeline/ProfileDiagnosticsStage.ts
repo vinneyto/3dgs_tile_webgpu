@@ -28,8 +28,9 @@ export class ProfileDiagnosticsStage {
     gaussianCount: number,
     projectedMeanAttribute: StorageBufferAttribute,
     projectedConicAttribute: StorageBufferAttribute,
-    private readonly frame: FrameUniforms,
+    frame: FrameUniforms,
     private readonly maxRasterizedSplatsPerTile: number | null,
+    private readonly rasterSubtiles = false,
   ) {
     this.zeroPixelFlags = this.attributes.createUint(
       "3dgs.profile-zero-pixel-subpixel-flags",
@@ -71,18 +72,21 @@ export class ProfileDiagnosticsStage {
     let zeroPixelSubpixelSplats = 0;
     for (const flag of flags) zeroPixelSubpixelSplats += flag;
     const offsets = new Uint32Array(offsetBuffer);
+    const batchSize = this.rasterSubtiles ? 64 : 256;
+    const groups = this.rasterSubtiles ? 4 : 1;
     return {
-      tileLoads: summarizeTileLoads(offsets, this.frame.tileSize ** 2),
+      tileLoads: summarizeTileLoads(offsets, batchSize, groups),
       appliedTileCap:
         this.maxRasterizedSplatsPerTile === null
           ? null
           : estimateTileCap(
               offsets,
               this.maxRasterizedSplatsPerTile,
-              this.frame.tileSize ** 2,
+              batchSize,
+              groups,
             ),
       tileCapEstimates: PROFILE_TILE_CAPS.map((cap) =>
-        estimateTileCap(offsets, cap, this.frame.tileSize ** 2),
+        estimateTileCap(offsets, cap, batchSize, groups),
       ),
       zeroPixelSubpixelSplats,
     };

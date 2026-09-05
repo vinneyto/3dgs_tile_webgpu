@@ -213,18 +213,15 @@ fn subpixel_has_sample(
 }
 `;
 
-export function countContributingTilesWGSL(tileSize = 16): string {
-  const contribution = tileContributionWGSL(
-    {
-      center: "center",
-      conic: "conic",
-      powerThreshold: "power_threshold",
-      tileX: "tile_x",
-      tileY: "tile_y",
-      onHit: "count++;",
-    },
-    tileSize,
-  );
+export function countContributingTilesWGSL(): string {
+  const contribution = tileContributionWGSL({
+    center: "center",
+    conic: "conic",
+    powerThreshold: "power_threshold",
+    tileX: "tile_x",
+    tileY: "tile_y",
+    onHit: "count++;",
+  });
   return /* wgsl */ `
 fn count_contributing_tiles(
   center: vec2<f32>,

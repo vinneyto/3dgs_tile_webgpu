@@ -13,14 +13,11 @@ interface TileContributionNames {
  * Conservative StopThePop tile/ellipse test shared verbatim by projection
  * and emission. Keeping the two loops identical prevents count/emission drift.
  */
-export function tileContributionWGSL(
-  names: TileContributionNames,
-  tileSize = TILE_SIZE,
-): string {
+export function tileContributionWGSL(names: TileContributionNames): string {
   const { center, conic, powerThreshold, tileX, tileY, onHit } = names;
   return /* wgsl */ `
-      let rect_min = vec2<f32>(f32(${tileX}), f32(${tileY})) * ${tileSize}.0;
-      let rect_max = rect_min + vec2<f32>(${tileSize}.0);
+      let rect_min = vec2<f32>(f32(${tileX}), f32(${tileY})) * ${TILE_SIZE}.0;
+      let rect_max = rect_min + vec2<f32>(${TILE_SIZE}.0);
       let x_left = ${center}.x < rect_min.x;
       let x_right = ${center}.x > rect_max.x;
       let in_x_range = !(x_left || x_right);
@@ -34,8 +31,8 @@ export function tileContributionWGSL(
           select(rect_max.y, rect_min.y, y_above)
         );
         let edge = vec2<f32>(
-          select(-${tileSize}.0, ${tileSize}.0, x_left),
-          select(-${tileSize}.0, ${tileSize}.0, y_above)
+          select(-${TILE_SIZE}.0, ${TILE_SIZE}.0, x_left),
+          select(-${TILE_SIZE}.0, ${TILE_SIZE}.0, y_above)
         );
         let difference = ${center} - corner;
         let tx_raw = (

@@ -38,15 +38,14 @@ fn prepare_dispatch(
 }
 `;
 
-export function createEmitIntersectionsWGSL(tileSize = TILE_SIZE): string {
-  const emitContributingTile = tileContributionWGSL(
-    {
-      center: "center",
-      conic: "conic",
-      powerThreshold: "power_threshold",
-      tileX: "tile_x",
-      tileY: "tile_y",
-      onHit: /* wgsl */ `
+export const emitIntersectionsWGSL = (() => {
+  const emitContributingTile = tileContributionWGSL({
+    center: "center",
+    conic: "conic",
+    powerThreshold: "power_threshold",
+    tileX: "tile_x",
+    tileY: "tile_y",
+    onHit: /* wgsl */ `
         if (local_index < reserved_count) {
           let destination = (*intersection_offsets)[rank] + local_index;
           if (destination < capacity) {
@@ -55,9 +54,7 @@ export function createEmitIntersectionsWGSL(tileSize = TILE_SIZE): string {
           }
         }
         local_index++;`,
-    },
-    tileSize,
-  );
+  });
   return /* wgsl */ `
 fn emit_intersections(
   rank: u32,
@@ -82,12 +79,12 @@ fn emit_intersections(
   let max_tile_x = i32(tiles.x) - 1;
   let max_tile_y = i32(tiles.y) - 1;
   let tile_min = vec2<i32>(
-    clamp(i32(floor((center.x - radius.x) / ${tileSize}.0)), 0, max_tile_x),
-    clamp(i32(floor((center.y - radius.y) / ${tileSize}.0)), 0, max_tile_y)
+    clamp(i32(floor((center.x - radius.x) / ${TILE_SIZE}.0)), 0, max_tile_x),
+    clamp(i32(floor((center.y - radius.y) / ${TILE_SIZE}.0)), 0, max_tile_y)
   );
   let tile_max = vec2<i32>(
-    clamp(i32(floor((center.x + radius.x) / ${tileSize}.0)), 0, max_tile_x),
-    clamp(i32(floor((center.y + radius.y) / ${tileSize}.0)), 0, max_tile_y)
+    clamp(i32(floor((center.x + radius.x) / ${TILE_SIZE}.0)), 0, max_tile_x),
+    clamp(i32(floor((center.y + radius.y) / ${TILE_SIZE}.0)), 0, max_tile_y)
   );
   let reserved_count = (*tile_counts)[rank];
   var local_index = 0u;
@@ -110,6 +107,4 @@ ${emitContributingTile}
   return 0u;
 }
 `;
-}
-
-export const emitIntersectionsWGSL = createEmitIntersectionsWGSL();
+})();

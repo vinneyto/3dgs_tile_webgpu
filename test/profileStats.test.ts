@@ -3,11 +3,15 @@ import { profileSubpixelCoverageWGSL } from "../src/kernels/profileDiagnostics";
 import { estimateTileCap, summarizeTileLoads } from "../src/utils/profileStats";
 
 describe("profile diagnostics", () => {
-  it("uses 64-splat batches for 8x8 tiles", () => {
+  it("estimates all four raster groups without changing tile loads", () => {
     const offsets = new Uint32Array([0, 65, 322]);
-    expect(summarizeTileLoads(offsets, 64).totalBatches).toBe(7);
-    expect(summarizeTileLoads(offsets, 256).totalBatches).toBe(3);
-    expect(estimateTileCap(offsets, 128, 64).totalBatches).toBe(4);
+    expect(summarizeTileLoads(offsets, 64, 4)).toMatchObject({
+      totalBatches: 28,
+      maxBatches: 20,
+      max: 257,
+      mean: 161,
+    });
+    expect(estimateTileCap(offsets, 128, 64, 4).totalBatches).toBe(16);
   });
   it("summarizes emitted intersections per tile", () => {
     const stats = summarizeTileLoads(

@@ -21,6 +21,7 @@ import { RadixSorter } from "./RadixSorter";
 import { TileOffsetBuilder } from "./TileOffsetBuilder";
 import { TileRasterizer } from "./TileRasterizer";
 import { VisibleGaussianStage } from "./VisibleGaussianStage";
+import { TILE_SIZE } from "./constants";
 import type {
   AntialiasMode,
   DepthSortMode,
@@ -67,10 +68,9 @@ export class TiledGaussianPipeline {
     private readonly radixBackend: ResolvedRadixBackend,
     private readonly nodes: GaussianNodeSlots,
     private readonly rasterTransmittanceThreshold = 1e-4,
-    tileSize: 8 | 16 = 16,
-    private readonly rasterBlockMask = false,
+    private readonly rasterSubtiles = false,
   ) {
-    this.frame = new FrameUniforms(camera, background, tileSize);
+    this.frame = new FrameUniforms(camera, background);
     this.objects = new ObjectFrameState(camera, store, data.count);
     this.projection = new ProjectionStage(
       data,
@@ -88,6 +88,7 @@ export class TiledGaussianPipeline {
           this.projection.projectedConic,
           this.frame,
           maxRasterizedSplatsPerTile,
+          this.rasterSubtiles,
         )
       : null;
     this.visibleScan = new ExclusiveScanStage(
@@ -265,8 +266,8 @@ export class TiledGaussianPipeline {
     colorTexture: StorageTexture,
     depthTexture: StorageTexture | null,
   ): void {
-    const tilesX = Math.ceil(width / this.frame.tileSize);
-    const tilesY = Math.ceil(height / this.frame.tileSize);
+    const tilesX = Math.ceil(width / TILE_SIZE);
+    const tilesY = Math.ceil(height / TILE_SIZE);
     const tileCount = tilesX * tilesY;
     if (tilesX > 65_535 || tilesY > 65_535) {
       throw new RangeError("Render size exceeds WebGPU's tile dispatch limit");
@@ -306,7 +307,7 @@ export class TiledGaussianPipeline {
       this.nodes,
       this.profileKernels,
       this.rasterTransmittanceThreshold,
-      this.rasterBlockMask,
+      this.rasterSubtiles,
     );
     this.width = width;
     this.height = height;

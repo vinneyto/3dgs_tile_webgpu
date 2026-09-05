@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DepthTexture,
   PerspectiveCamera,
@@ -43,37 +43,37 @@ const TEST_LIMITS = {
 };
 
 describe("generated Gaussian WGSL", () => {
-  it.each([8, 16] as const)(
-    "builds both coverage-mask modes for %i-pixel tiles",
-    (tileSize) => {
-      for (const blockMask of [false, true]) {
-        const result = buildPipeline(
-          createDefaultGaussianNodeSlots(),
-          true,
-          tileSize,
-          blockMask,
-        );
-        expect(result.projectionSource).toContain(`* ${tileSize}.0`);
-        expect(result.partialCount).toBe(tileSize * tileSize);
-        for (const source of [
-          result.rasterSource,
-          result.chunkSource,
-          result.compositeSource,
-        ]) {
-          expect(source).toContain(
-            `@workgroup_size( ${tileSize}, ${tileSize}, 1 )`,
-          );
-        }
-        for (const source of [result.rasterSource, result.chunkSource]) {
-          expect(source.includes("fn raster_block_mask")).toBe(blockMask);
-          expect(source).toContain(`+= ${tileSize * tileSize} )`);
-          if (blockMask) {
-            expect(source).toContain("mask |= 1u <<");
-            expect(source).toContain(">> 2u");
-            expect(source).not.toContain("/ 4.0");
-          }
-        }
+  it.each([false, true])(
+    "splits only raster dispatch when rasterSubtiles=%s",
+    (split) => {
+      const result = buildPipeline(
+        createDefaultGaussianNodeSlots(),
+        true,
+        split,
+      );
+      const size = split ? 8 : 16;
+      expect(result.projectionSource).toContain("* 16.0");
+      for (const source of [result.rasterSource, result.chunkSource]) {
+        expect(source).toContain(`@workgroup_size( ${size}, ${size}, 1 )`);
+        expect(source).toContain(`+= ${size * size} )`);
+        expect(source).not.toContain("raster_block_mask");
+        if (split) expect(source).toContain("workgroupId.z * 64u");
       }
+      expect(result.compositeSource).toContain("@workgroup_size( 16, 16, 1 )");
+      expect(result.partialCount).toBe(256);
+      expect(result.prepareSource).toContain(
+        `vec4<u32>(count, 1u, ${split ? 4 : 1}u, 0u)`,
+      );
+      result.rasterizer.encode(2, 3);
+      expect(result.compute).toHaveBeenCalledWith(expect.anything(), [
+        2,
+        3,
+        split ? 4 : 1,
+      ]);
+      expect(result.compute).toHaveBeenLastCalledWith(
+        expect.anything(),
+        [2, 3, 1],
+      );
     },
   );
   it("builds projection and raster TSL shells into compute shaders", () => {
@@ -314,8 +314,7 @@ describe("generated Gaussian WGSL", () => {
 function buildPipeline(
   nodes: ReturnType<typeof createDefaultGaussianNodeSlots>,
   subpixelSampleCulling = true,
-  tileSize: 8 | 16 = 16,
-  blockMask = false,
+  split = false,
 ) {
   const data = oneGaussian();
   const store = new GaussianStore();
@@ -323,7 +322,7 @@ function buildPipeline(
   store.pack({ limits: TEST_LIMITS });
   const packed = store.getPackedData();
   const camera = new PerspectiveCamera();
-  const frame = new FrameUniforms(camera, [0, 0, 0, 0], tileSize);
+  const frame = new FrameUniforms(camera, [0, 0, 0, 0]);
   const objects = new ObjectFrameState(camera, store, packed.count);
   const projection = new ProjectionStage(
     packed,
@@ -333,8 +332,9 @@ function buildPipeline(
     nodes,
     subpixelSampleCulling,
   );
+  const compute = vi.fn();
   const rasterizer = new TileRasterizer(
-    {} as never,
+    { compute } as never,
     packed.count,
     2,
     "float32",
@@ -353,15 +353,21 @@ function buildPipeline(
     nodes,
     false,
     1e-4,
-    blockMask,
+    split,
   );
 
   return {
+    rasterizer,
+    compute,
     partialCount: (
       rasterizer as unknown as {
         chunks: { partialData: StorageBufferAttribute };
       }
     ).chunks.partialData.count,
+    prepareSource: buildCompute(
+      (rasterizer as unknown as { chunks: { prepareNode: unknown } }).chunks
+        .prepareNode,
+    ),
     compositeSource: buildCompute(
       (rasterizer as unknown as { compositeNode: unknown }).compositeNode,
     ),

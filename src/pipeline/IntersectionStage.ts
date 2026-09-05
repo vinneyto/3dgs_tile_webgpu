@@ -6,7 +6,7 @@ import type {
 } from "three/webgpu";
 import { instanceIndex, storage, uint, uvec2, wgslFn } from "three/tsl";
 import {
-  createEmitIntersectionsWGSL,
+  emitIntersectionsWGSL,
   prepareDispatchWGSL,
 } from "../kernels/intersections";
 import { AttributePool } from "./AttributePool";
@@ -87,9 +87,7 @@ export class IntersectionStage {
       .compute(1)
       .setName("3DGS prepare intersection indirect dispatch WGSL");
 
-    const emitKernel = wgslFn<Record<string, Node>>(
-      createEmitIntersectionsWGSL(frame.tileSize),
-    );
+    const emitKernel = wgslFn<Record<string, Node>>(emitIntersectionsWGSL);
     this.emitNode = emitKernel({
       rank: instanceIndex,
       tiles: uvec2(frame.tilesX, frame.tilesY),

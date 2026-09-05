@@ -11,14 +11,10 @@ fn compact_morton_bits_16(value: u32) -> u32 {
 }
 `;
 
-export function createWorkgroupUniformLoadWGSL(size = WORKGROUP_SIZE): string {
-  return /* wgsl */ `
+export const workgroupUniformLoadWGSL = /* wgsl */ `
 fn load_shared_active(
-  values: ptr<workgroup, array<u32, ${size}>>
+  values: ptr<workgroup, array<u32, ${WORKGROUP_SIZE}>>
 ) -> u32 {
   return workgroupUniformLoad(&(*values)[0]);
 }
 `;
-}
-
-export const workgroupUniformLoadWGSL = createWorkgroupUniformLoadWGSL();

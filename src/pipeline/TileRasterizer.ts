@@ -42,11 +42,11 @@ import {
   countRasterChunksWGSL,
   emitRasterChunkTasksWGSL,
   maxRasterChunkTasks,
-  prepareRasterChunkDispatchWGSL,
+  createPrepareRasterChunkDispatchWGSL,
 } from "../kernels/rasterChunks";
 import {
   compactMortonBitsWGSL,
-  createWorkgroupUniformLoadWGSL,
+  workgroupUniformLoadWGSL,
 } from "../kernels/rasterHelpers";
 import {
   rasterBreakContextNodes,
@@ -73,8 +73,7 @@ import {
 } from "../nodes/GaussianContextNodes";
 import { AttributePool } from "./AttributePool";
 import { ExclusiveScanStage } from "./ExclusiveScanStage";
-import { WORKGROUP_SIZE } from "./constants";
-import { rasterBlockMaskWGSL } from "../kernels/rasterBlockMask";
+import { TILE_SIZE, WORKGROUP_SIZE } from "./constants";
 import type { FrameUniforms } from "./FrameUniforms";
 import type { DepthSortMode } from "./types";
 
@@ -127,7 +126,7 @@ export class TileRasterizer {
     nodes: GaussianRasterNodeSlots,
     profileKernels = false,
     private readonly transmittanceThreshold = 1e-4,
-    private readonly rasterBlockMask = false,
+    private readonly rasterSubtiles = false,
   ) {
     this.metrics = profileKernels
       ? this.attributes.createUint("3dgs.raster-work", tileCount * 4)
@@ -187,7 +186,11 @@ export class TileRasterizer {
       throw new Error("TileRasterizer has no compute node");
     }
     if (this.chunks === null) {
-      this.renderer.compute(this.computeNode, [tilesX, tilesY, 1]);
+      this.renderer.compute(this.computeNode, [
+        tilesX,
+        tilesY,
+        this.rasterSubtiles ? 4 : 1,
+      ]);
       return;
     }
     if (this.chunkComputeNode === null || this.compositeNode === null) {
@@ -198,7 +201,11 @@ export class TileRasterizer {
     this.chunks.offsets.encode(this.renderer);
     this.renderer.compute(this.chunks.prepareNode);
     this.renderer.compute(this.chunks.emitNode);
-    this.renderer.compute(this.computeNode, [tilesX, tilesY, 1]);
+    this.renderer.compute(this.computeNode, [
+      tilesX,
+      tilesY,
+      this.rasterSubtiles ? 4 : 1,
+    ]);
     this.renderer.compute(this.chunkComputeNode, this.chunks.dispatch);
     this.renderer.compute(this.compositeNode, [tilesX, tilesY, 1]);
   }
@@ -242,7 +249,7 @@ export class TileRasterizer {
     const dispatch = this.attributes.createIndirect(
       "3dgs.raster-chunk-dispatch",
     );
-    const partialCount = taskCapacity * this.frame.tileSize ** 2;
+    const partialCount = taskCapacity * WORKGROUP_SIZE;
     const partialStride = this.depthTexture === null ? 1 : 2;
     const partialData = this.attributes.createFloat(
       "3dgs.raster-chunk-partials",
@@ -276,7 +283,7 @@ export class TileRasterizer {
       .compute(this.tileCount, [WORKGROUP_SIZE])
       .setName("3DGS count exact raster chunks WGSL");
     const prepareKernel = wgslFn<Record<string, Node>>(
-      prepareRasterChunkDispatchWGSL,
+      createPrepareRasterChunkDispatchWGSL(this.rasterSubtiles),
     );
     const prepareNode = prepareKernel({
       tile_count: uint(this.tileCount),
@@ -316,14 +323,8 @@ export class TileRasterizer {
     nodes: GaussianRasterNodeSlots,
     target: RasterTarget,
   ): ComputeNode {
-    const tileSize = this.frame.tileSize;
-    const batchSize = tileSize * tileSize;
-    const blockMask = this.rasterBlockMask
-      ? wgslFn<any>(rasterBlockMaskWGSL(tileSize))
-      : null;
-    const sharedMask: any = this.rasterBlockMask
-      ? workgroupArray("uint", batchSize)
-      : null;
+    const rasterSize = this.rasterSubtiles ? 8 : 16;
+    const batchSize = rasterSize * rasterSize;
     const counters =
       this.metrics === null
         ? null
@@ -362,12 +363,12 @@ export class TileRasterizer {
     const sharedConic: any = workgroupArray("vec4", batchSize);
     const sharedColor: any = workgroupArray("vec4", batchSize);
     const sharedGaussianId: any = workgroupArray("uint", batchSize);
-    const sharedActive: any = workgroupArray("uint", batchSize);
+    const sharedActive: any = workgroupArray("uint", WORKGROUP_SIZE);
     const sharedActiveSums: any = workgroupArray("uint", batchSize / 32);
     const colorOutput =
       target === "direct" ? storageTexture(this.colorTexture) : null;
     const compactMorton = wgslFn<any>(compactMortonBitsWGSL);
-    const uniformLoad = wgslFn<any>(createWorkgroupUniformLoadWGSL(batchSize));
+    const uniformLoad = wgslFn<any>(workgroupUniformLoadWGSL);
     const chunks = this.chunks;
     const chunkTasks =
       target === "chunk" && chunks !== null
@@ -381,8 +382,15 @@ export class TileRasterizer {
 
     const kernel = Fn(() => {
       const localIndex = uint(invocationLocalIndex);
-      const localX = compactMorton({ value: localIndex }) as any;
-      const localY = compactMorton({ value: localIndex.shiftRight(1) }) as any;
+      // The top two Morton bits select one of the four 8x8 quadrants.
+      // Keep the parent pixel index for chunk storage and 16x16 composition.
+      const parentPixelIndex = this.rasterSubtiles
+        ? uint(workgroupId.z).mul(uint(64)).add(localIndex)
+        : localIndex;
+      const localX = compactMorton({ value: parentPixelIndex }) as any;
+      const localY = compactMorton({
+        value: parentPixelIndex.shiftRight(1),
+      }) as any;
       const taskIndex = uint(workgroupId.x);
       const tile = (
         target === "direct"
@@ -396,8 +404,8 @@ export class TileRasterizer {
       const tileY =
         target === "direct" ? workgroupId.y : tile.div(frame.tilesX);
       const pixel = uvec2(
-        tileX.mul(uint(tileSize)).add(localX),
-        tileY.mul(uint(tileSize)).add(localY),
+        tileX.mul(uint(TILE_SIZE)).add(localX),
+        tileY.mul(uint(TILE_SIZE)).add(localY),
       ).toVar("rasterPixelCoordinateValue");
       const activePixel = pixel.x
         .lessThan(uint(frame.viewport.x))
@@ -488,16 +496,6 @@ export class TileRasterizer {
               .element(localIndex)
               .assign(projectedColor.element(gaussianId));
             sharedGaussianId.element(localIndex).assign(gaussianId);
-            if (blockMask !== null) {
-              sharedMask.element(localIndex).assign(
-                blockMask({
-                  center: mean.xy,
-                  conic: conic.xyz,
-                  threshold: mean.w.mul(255).log(),
-                  origin: vec2(tileX, tileY).mul(tileSize),
-                }),
-              );
-            }
           });
           If(localIndex.equal(0), () => {
             sharedActive
@@ -551,21 +549,6 @@ export class TileRasterizer {
                   done.assign(bool(true));
                   Break();
                 });
-                if (sharedMask !== null) {
-                  const block = uint(localY)
-                    .shiftRight(uint(2))
-                    .mul(uint(tileSize / 4))
-                    .add(uint(localX).shiftRight(uint(2)));
-                  If(
-                    sharedMask
-                      .element(batchIndex)
-                      .bitAnd(uint(1).shiftLeft(block))
-                      .equal(0),
-                    () => {
-                      Continue();
-                    },
-                  );
-                }
                 const conicAndThreshold = sharedConic.element(batchIndex);
                 const conic = conicAndThreshold.xyz;
                 const power = conic.x
@@ -702,8 +685,8 @@ export class TileRasterizer {
           );
         } else {
           const partialIndex = taskIndex
-            .mul(uint(batchSize))
-            .add(localIndex)
+            .mul(uint(WORKGROUP_SIZE))
+            .add(parentPixelIndex)
             .mul(uint(chunks!.partialStride));
           partialData!
             .element(partialIndex)
@@ -718,7 +701,7 @@ export class TileRasterizer {
     });
 
     return kernel()
-      .computeKernel([tileSize, tileSize])
+      .computeKernel([rasterSize, rasterSize])
       .setName(
         target === "direct"
           ? `3DGS direct tile rasterizer TSL (${this.mode})`
@@ -727,7 +710,6 @@ export class TileRasterizer {
   }
 
   private createCompositeNode(): ComputeNode {
-    const tileSize = this.frame.tileSize;
     const counters =
       this.metrics === null
         ? null
@@ -759,8 +741,8 @@ export class TileRasterizer {
       const tile = workgroupId.y.mul(frame.tilesX).add(workgroupId.x);
       const chunkCount = chunkCounts.element(tile);
       const pixel = uvec2(
-        workgroupId.x.mul(uint(tileSize)).add(localX),
-        workgroupId.y.mul(uint(tileSize)).add(localY),
+        workgroupId.x.mul(uint(TILE_SIZE)).add(localX),
+        workgroupId.y.mul(uint(TILE_SIZE)).add(localY),
       );
       const activePixel = pixel.x
         .lessThan(uint(frame.viewport.x))
@@ -781,7 +763,7 @@ export class TileRasterizer {
           ({ i }) => {
             const partialIndex = firstChunk
               .add(i)
-              .mul(uint(tileSize * tileSize))
+              .mul(uint(WORKGROUP_SIZE))
               .add(localIndex)
               .mul(uint(chunks.partialStride));
             const partial = partialData.element(partialIndex);
@@ -822,7 +804,7 @@ export class TileRasterizer {
     });
 
     return kernel()
-      .computeKernel([tileSize, tileSize])
+      .computeKernel([TILE_SIZE, TILE_SIZE])
       .setName("3DGS exact raster chunk composite TSL");
   }
 

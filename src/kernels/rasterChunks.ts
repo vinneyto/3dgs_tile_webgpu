@@ -25,7 +25,8 @@ fn count_raster_chunks(
 }
 `;
 
-export const prepareRasterChunkDispatchWGSL = /* wgsl */ `
+export function createPrepareRasterChunkDispatchWGSL(subtiles = false): string {
+  return /* wgsl */ `
 fn prepare_raster_chunk_dispatch(
   tile_count: u32,
   task_capacity: u32,
@@ -39,10 +40,14 @@ fn prepare_raster_chunk_dispatch(
     count = (*chunk_offsets)[last] + (*chunk_counts)[last];
   }
   count = min(count, task_capacity);
-  (*dispatch)[0] = vec4<u32>(count, 1u, 1u, 0u);
+  (*dispatch)[0] = vec4<u32>(count, 1u, ${subtiles ? 4 : 1}u, 0u);
   return 0u;
 }
 `;
+}
+
+export const prepareRasterChunkDispatchWGSL =
+  createPrepareRasterChunkDispatchWGSL();
 
 export const emitRasterChunkTasksWGSL = /* wgsl */ `
 fn emit_raster_chunk_tasks(

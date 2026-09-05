@@ -2,26 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateShWGSL,
   projectionCovarianceWGSL,
-  countContributingTilesWGSL,
 } from "../src/kernels/projectionHelpers";
-import { createEmitIntersectionsWGSL } from "../src/kernels/intersections";
 
 describe("projectionWGSL antialias specialization", () => {
-  it.each([8, 16])(
-    "uses the same %i-pixel rectangles for count and emission",
-    (size) => {
-      const count = countContributingTilesWGSL(size);
-      const emit = createEmitIntersectionsWGSL(size);
-      const region = (source: string) =>
-        source.slice(
-          source.indexOf("let rect_min"),
-          source.indexOf("if (contributes)"),
-        );
-      expect(region(count)).toEqual(region(emit));
-      expect(count).toContain(`* ${size}.0`);
-      expect(emit).toContain(`/ ${size}.0`);
-    },
-  );
   it("preserves subpixel energy in compensated mode", () => {
     const source = projectionCovarianceWGSL("compensated");
 

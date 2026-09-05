@@ -10,6 +10,7 @@ export const PROFILE_TILE_CAPS = [2_048, 4_096, 8_192] as const;
 export function summarizeTileLoads(
   offsets: Uint32Array,
   batchSize = RASTER_BATCH_SIZE,
+  rasterGroups = 1,
 ): GaussianTileLoadStats {
   const tileCount = Math.max(0, offsets.length - 1);
   if (tileCount === 0) {
@@ -46,7 +47,7 @@ export function summarizeTileLoads(
     if (load > 512) tilesOver512++;
     if (load > 1_024) tilesOver1024++;
     if (load > 2_048) tilesOver2048++;
-    const batches = Math.ceil(load / batchSize);
+    const batches = Math.ceil(load / batchSize) * rasterGroups;
     totalBatches += batches;
     maxBatches = Math.max(maxBatches, batches);
   }
@@ -71,6 +72,7 @@ export function estimateTileCap(
   offsets: Uint32Array,
   cap: number,
   batchSize = RASTER_BATCH_SIZE,
+  rasterGroups = 1,
 ): GaussianTileCapStats {
   if (!Number.isInteger(cap) || cap <= 0) {
     throw new RangeError("tile cap must be a positive integer");
@@ -88,7 +90,7 @@ export function estimateTileCap(
     rasterizedIntersections += rasterized;
     droppedIntersections += dropped;
     if (dropped > 0) affectedTiles++;
-    const batches = Math.ceil(rasterized / batchSize);
+    const batches = Math.ceil(rasterized / batchSize) * rasterGroups;
     totalBatches += batches;
     maxBatches = Math.max(maxBatches, batches);
   }
