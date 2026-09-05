@@ -511,21 +511,63 @@ const depthNode = pass.getTextureNode("depth"); // requires outputDepth: true
 
 ## Gaussian node customization
 
+The sandbox supports `&rasterSubtiles=1` to rasterize each sorted 16x16 tile
+with four independent 8x8 workgroups. Omit the flag or use
+`&rasterSubtiles=0` for one 16x16 workgroup. The library option is
+`GaussianPassOptions.rasterSubtiles` (default `false`). Both modes work with
+or without profiling and are shown in renderer diagnostics.
+
+Projection, intersection counting/emission, and tile sorting always use the
+same 16x16 parent tiles. Only raster dispatch changes: the four workgroups
+share the parent candidate list and independently accumulate their 64 pixels,
+with their own alpha/depth early exits and 64-Gaussian load batches.
+Chunk raster uses the same four quadrants, writing disjoint regions of the
+existing 256-pixel partial buffer. Chunk composition remains one 16x16
+workgroup per parent tile. This avoids increasing sort records but repeats
+candidate loading between raster workgroups; measure total GPU time at the
+same pose, resolution, `rasterT`, and profiling mode.
+
+The previous `tileSize` and `blockMask` experiments and public options have
+been removed. Old URL parameters are ignored; no coverage mask is generated.
+
+With `?profile=kernels`, the sandbox diagnostics also report actual raster
+work: checked pixel/Gaussian pairs, blended pairs, both averages per pixel,
+the blend/check ratio, and the fraction of pixels with final transmittance
+below the configured T threshold (before background composition). The denominator is in-bounds
+pixels in nonempty tiles, including pixels not covered by any ellipse.
+Work totals include all independently rasterized chunks; final pixels are
+counted only once. Counters accumulate locally inside the Gaussian loop and
+are atomically added to per-tile totals after traversal. They are disabled
+outside kernel profiling and add profiling overhead when enabled. Readback
+uses the existing 1.5-second diagnostics interval.
+
+The sandbox currently defaults to the early-exit experiment `?rasterT=0.001`.
+Use `?rasterT=0.0001` for the original baseline, with or without profiling.
+The active cutoff is shown in renderer diagnostics and applies to direct raster,
+chunk raster, chunk composition, and saturation counters. Compare identical
+camera poses and resolution. A larger cutoff drops more of the faint tail and
+can change the image; chunk-local termination is independent of preceding chunks.
+The library retains its original default `0.0001`; configure it with
+`GaussianPassOptions.rasterTransmittanceThreshold` (finite, strictly between 0 and 1).
+
 `GaussianPass` exposes projection-domain slots evaluated once per packed
-Gaussian and raster-domain slots evaluated for every covered pixel/Gaussian
-pair. Read-only context accessors are imported from the package in the same
-style as Three.js TSL accessors:
+Gaussian, a pixel-scoped raster slot, and raster-domain slots evaluated during
+depth-ordered Gaussian traversal. Read-only context accessors are imported from
+the package in the same style as Three.js TSL accessors:
 
 ```ts
 import { Vector3 } from "three/webgpu";
-import { uniform } from "three/tsl";
+import { perspectiveDepthToViewZ, uniform } from "three/tsl";
 import {
   gaussianColor,
   gaussianProjectedArea,
   rasterGaussianColor,
   rasterGaussianOpacity,
+  rasterPixelCoordinate,
+  rasterPixelValue,
   rasterPower,
   rasterUV,
+  rasterViewDepth,
 } from "3dgs-tile-webgpu";
 
 const tint = uniform(new Vector3(1, 0.8, 0.8));
@@ -542,7 +584,25 @@ Projection slots are `gaussianPositionLocalNode`,
 `gaussianPositionWorldNode`, `gaussianScaleNode`, `gaussianRotationNode`,
 `gaussianOpacityNode`, `gaussianColorNode`, and `gaussianVisibilityNode`.
 Raster slots are `rasterColorNode`, `rasterAlphaNode`, and
-`rasterDiscardNode`.
+`rasterDiscardNode`. `rasterPixelValueNode` is evaluated once per active pixel
+before Gaussian iteration. Its cached scalar is exposed as `rasterPixelValue`.
+`rasterBreakNode` is evaluated for each depth-ordered Gaussian before ellipse
+evaluation; when true, it ends the remaining traversal for that pixel.
+
+Together, the pixel value and early break slots allow an external TSL depth
+module to sample scene depth once per pixel without coupling `GaussianPass` to
+a particular scene pass:
+
+```ts
+const sceneViewDepth = perspectiveDepthToViewZ(
+  opaquePass.getTextureNode("depth").load(rasterPixelCoordinate),
+  uniform(camera.near),
+  uniform(camera.far),
+).negate();
+
+pass.rasterPixelValueNode = sceneViewDepth;
+pass.rasterBreakNode = rasterPixelValue.lessThan(rasterViewDepth);
+```
 
 Replacing a projection root rebuilds only the projection `ComputeNode`;
 replacing a raster root rebuilds only the tile-rasterizer `ComputeNode`.
@@ -757,7 +817,8 @@ projection; with culling disabled it is the number of candidates that continue
 through the pipeline. Profiling adds a compute pass, timestamp overhead and two
 diagnostic readbacks, so its FPS is not the final production-performance number.
 
-The tile profile also reports total and worst-tile raster batches (256 splats
+The tile profile also reports estimated total and worst-parent-tile raster
+batches before early exit (one group of 256, or four groups loading 64 splats
 per batch), plus counterfactual dropped-intersection, affected-tile and batch
 counts for caps of 2048, 4096 and 8192. Exact chunked rasterization is enabled
 by default with `rasterChunkSize: 8192`. Tiles within that limit retain the

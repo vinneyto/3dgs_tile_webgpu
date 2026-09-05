@@ -29,6 +29,8 @@ export function readSandboxOptions(
         parameters.get("aa") === "classic" ? "classic" : "compensated",
       background: [0.018, 0.022, 0.032, 1],
       profileKernels: profileEnabled,
+      rasterSubtiles: parameters.get("rasterSubtiles") === "1",
+      rasterTransmittanceThreshold: readRasterThreshold(parameters),
       maxRasterizedSplatsPerTile: readOptionalLimit(parameters, "tileCap"),
       rasterChunkSize: readOptionalLimit(parameters, "rasterChunk"),
       subpixelSampleCulling: parameters.get("subpixelCull") !== "0",
@@ -44,6 +46,11 @@ export function readSandboxOptions(
       ),
     },
   };
+}
+
+function readRasterThreshold(parameters: URLSearchParams): number {
+  const value = Number(parameters.get("rasterT") ?? "0.001");
+  return Number.isFinite(value) && value > 0 && value < 1 ? value : 0.001;
 }
 
 function readRenderPixelRatio(parameters: URLSearchParams): number {

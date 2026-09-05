@@ -5,7 +5,7 @@ import {
   type NodeFrame,
   type WebGPURenderer,
 } from "three/webgpu";
-import { vec3 } from "three/tsl";
+import { float, vec3 } from "three/tsl";
 
 import { GaussianData } from "../src/GaussianData";
 import { GaussianPass } from "../src/GaussianPass";
@@ -96,6 +96,11 @@ describe("GaussianPass node slots", () => {
     pass.updateBefore({ renderer } as unknown as NodeFrame);
     expect(pipeline.rebuildProjection).toHaveBeenCalledOnce();
     expect(pipeline.rebuildRasterizer).toHaveBeenCalledOnce();
+
+    pass.rasterPixelValueNode = float(1);
+    pass.updateBefore({ renderer } as unknown as NodeFrame);
+    expect(pipeline.rebuildProjection).toHaveBeenCalledOnce();
+    expect(pipeline.rebuildRasterizer).toHaveBeenCalledTimes(2);
   });
 });
 

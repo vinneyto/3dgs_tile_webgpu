@@ -60,6 +60,8 @@ export class GaussianPass extends PassNode {
   readonly outputDepth: boolean;
   readonly colorSpace: ColorSpace;
   readonly profileKernels: boolean;
+  readonly rasterSubtiles: boolean;
+  readonly rasterTransmittanceThreshold: number;
   readonly maxRasterizedSplatsPerTile: number | null;
   readonly rasterChunkSize: number | null;
   readonly subpixelSampleCulling: boolean;
@@ -148,6 +150,18 @@ export class GaussianPass extends PassNode {
     this.outputDepth = options.outputDepth ?? false;
     this.colorSpace = options.colorSpace ?? SRGBColorSpace;
     this.profileKernels = options.profileKernels ?? false;
+    this.rasterSubtiles = options.rasterSubtiles ?? false;
+    this.rasterTransmittanceThreshold =
+      options.rasterTransmittanceThreshold ?? 1e-4;
+    if (
+      !Number.isFinite(this.rasterTransmittanceThreshold) ||
+      this.rasterTransmittanceThreshold <= 0 ||
+      this.rasterTransmittanceThreshold >= 1
+    ) {
+      throw new RangeError(
+        "rasterTransmittanceThreshold must be finite and in (0, 1)",
+      );
+    }
     this.maxRasterizedSplatsPerTile = maxRasterizedSplatsPerTile;
     this.rasterChunkSize = rasterChunkSize;
     this.subpixelSampleCulling = options.subpixelSampleCulling ?? true;
@@ -282,6 +296,22 @@ export class GaussianPass extends PassNode {
     return this.nodeSlots.rasterColorNode;
   }
 
+  get rasterPixelValueNode(): Node {
+    return this.nodeSlots.rasterPixelValueNode;
+  }
+
+  set rasterPixelValueNode(node: Node) {
+    this.setRasterNode("rasterPixelValueNode", node);
+  }
+
+  get rasterBreakNode(): Node {
+    return this.nodeSlots.rasterBreakNode;
+  }
+
+  set rasterBreakNode(node: Node) {
+    this.setRasterNode("rasterBreakNode", node);
+  }
+
   set rasterColorNode(node: Node) {
     this.setRasterNode("rasterColorNode", node);
   }
@@ -379,6 +409,8 @@ export class GaussianPass extends PassNode {
         this.subpixelSampleCulling,
         this.radixBackend,
         this.nodeSlots,
+        this.rasterTransmittanceThreshold,
+        this.rasterSubtiles,
       );
       this.pipelineLayoutVersion = this.gaussianStore.layoutVersion;
       this.dirtyStages = DirtyStage.None;
@@ -487,7 +519,11 @@ export class GaussianPass extends PassNode {
   private setRasterNode(
     key: keyof Pick<
       GaussianNodeSlots,
-      "rasterColorNode" | "rasterAlphaNode" | "rasterDiscardNode"
+      | "rasterPixelValueNode"
+      | "rasterBreakNode"
+      | "rasterColorNode"
+      | "rasterAlphaNode"
+      | "rasterDiscardNode"
     >,
     node: Node,
   ): void {

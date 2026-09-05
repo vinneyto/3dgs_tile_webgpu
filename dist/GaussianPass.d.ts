@@ -12,6 +12,8 @@ export declare class GaussianPass extends PassNode {
     readonly outputDepth: boolean;
     readonly colorSpace: ColorSpace;
     readonly profileKernels: boolean;
+    readonly rasterSubtiles: boolean;
+    readonly rasterTransmittanceThreshold: number;
     readonly maxRasterizedSplatsPerTile: number | null;
     readonly rasterChunkSize: number | null;
     readonly subpixelSampleCulling: boolean;
@@ -51,6 +53,10 @@ export declare class GaussianPass extends PassNode {
     get gaussianVisibilityNode(): Node;
     set gaussianVisibilityNode(node: Node);
     get rasterColorNode(): Node;
+    get rasterPixelValueNode(): Node;
+    set rasterPixelValueNode(node: Node);
+    get rasterBreakNode(): Node;
+    set rasterBreakNode(node: Node);
     set rasterColorNode(node: Node);
     get rasterAlphaNode(): Node;
     set rasterAlphaNode(node: Node);

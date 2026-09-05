@@ -3,6 +3,16 @@ import { profileSubpixelCoverageWGSL } from "../src/kernels/profileDiagnostics";
 import { estimateTileCap, summarizeTileLoads } from "../src/utils/profileStats";
 
 describe("profile diagnostics", () => {
+  it("estimates all four raster groups without changing tile loads", () => {
+    const offsets = new Uint32Array([0, 65, 322]);
+    expect(summarizeTileLoads(offsets, 64, 4)).toMatchObject({
+      totalBatches: 28,
+      maxBatches: 20,
+      max: 257,
+      mean: 161,
+    });
+    expect(estimateTileCap(offsets, 128, 64, 4).totalBatches).toBe(16);
+  });
   it("summarizes emitted intersections per tile", () => {
     const stats = summarizeTileLoads(
       new Uint32Array([0, 0, 10, 266, 779, 1_804, 3_853]),

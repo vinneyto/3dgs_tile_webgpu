@@ -245,6 +245,9 @@ export class DebugPanel {
       stagesLine,
       subpixelCullLine,
       rasterChunkLine,
+      `raster layout  sort 16x16 · raster ${this.pass?.rasterSubtiles ? "4 x 8x8" : "1 x 16x16"}`,
+      `               ?rasterSubtiles=1 enables split workgroups`,
+      `raster cutoff  T < ${this.pass?.rasterTransmittanceThreshold ?? "—"} · ?rasterT=0.0001 baseline`,
       ...profileLines,
       "",
       ...packingLines,
@@ -274,12 +277,23 @@ export class DebugPanel {
       return ["tile profile   waiting for GPU readback"];
     }
     const loads = profile.tileLoads;
+    const work = profile.rasterWork;
     return [
+      ...(work == null
+        ? []
+        : [
+            `raster checked ${formatInteger(work.checked)}  avg/pixel ${(work.checked / Math.max(1, work.pixels)).toFixed(1)}`,
+            `raster blended ${formatInteger(work.blended)}  avg/pixel ${(work.blended / Math.max(1, work.pixels)).toFixed(1)}`,
+            `blend/check    ${((100 * work.blended) / Math.max(1, work.checked)).toFixed(1)}%`,
+            `alpha stopped  ${formatInteger(work.alphaStopped)} / ${formatInteger(work.pixels)} (${((100 * work.alphaStopped) / Math.max(1, work.pixels)).toFixed(1)}%)`,
+            `raster scope   pixels in nonempty tiles · configured T cutoff`,
+            `               work includes all chunks · profiling overhead`,
+          ]),
       `tile splats    max ${formatInteger(loads.max)}  mean ${loads.mean.toFixed(1)}  median ${loads.median.toFixed(1)}`,
       `percentiles    p95 ${formatInteger(loads.p95)}  p99 ${formatInteger(loads.p99)}`,
       `heavy tiles    >256 ${formatInteger(loads.tilesOver256)}  >512 ${formatInteger(loads.tilesOver512)}`,
       `               >1024 ${formatInteger(loads.tilesOver1024)}  >2048 ${formatInteger(loads.tilesOver2048)}`,
-      `raster batches total ${formatInteger(loads.totalBatches)}  max/tile ${formatInteger(loads.maxBatches)}`,
+      `raster batches estimated ${formatInteger(loads.totalBatches)}  max/tile ${formatInteger(loads.maxBatches)}`,
       `subpixel       zero-pixel ${subpixelSampleCulling ? "culled" : "candidates"} ${formatInteger(profile.zeroPixelSubpixelSplats)}`,
       ...profile.tileCapEstimates.flatMap((estimate) =>
         formatTileCap("cap estimate", estimate),

@@ -5,6 +5,10 @@ export type AntialiasMode = "compensated" | "classic";
 export type RadixBackend = "auto" | "subgroup" | "workgroup";
 export type ResolvedRadixBackend = Exclude<RadixBackend, "auto">;
 export interface GaussianPassOptions {
+    /** Four independent 8x8 raster workgroups per sorted 16x16 tile. Default false. */
+    rasterSubtiles?: boolean;
+    /** Early termination threshold for remaining transmittance; finite and in (0, 1). Default 0.0001. */
+    rasterTransmittanceThreshold?: number;
     /** Exact float32 or quantized 16-bit depth for the visible-Gaussian pre-sort. */
     depthSortMode?: DepthSortMode;
     /** Preserve subpixel Gaussian energy, or retain the original fixed-footprint 3DGS low-pass behavior. */
@@ -57,9 +61,9 @@ export interface GaussianTileLoadStats {
     tilesOver512: number;
     tilesOver1024: number;
     tilesOver2048: number;
-    /** Number of 256-splat outer-loop iterations summed over all tiles. */
+    /** Estimated batches before early exit across all raster workgroups. */
     totalBatches: number;
-    /** Longest 256-splat outer loop executed by a single tile. */
+    /** Maximum estimated aggregate batch count for one parent tile. */
     maxBatches: number;
 }
 export interface GaussianTileCapStats {
@@ -72,6 +76,16 @@ export interface GaussianTileCapStats {
     maxBatches: number;
 }
 export interface GaussianPassProfileStats {
+    /** Actual pixel/Gaussian work, including all independently executed chunks.
+     * Pixels counts in-bounds pixels in nonempty tiles, once after composition.
+     * AlphaStopped counts those pixels whose final T is below the configured threshold, before background.
+     */
+    rasterWork?: {
+        checked: number;
+        blended: number;
+        pixels: number;
+        alphaStopped: number;
+    } | null;
     tileLoads: GaussianTileLoadStats;
     /** What the configured raster-only cap did to this frame, or null when disabled. */
     appliedTileCap: GaussianTileCapStats | null;
