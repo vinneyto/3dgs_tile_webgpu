@@ -43,118 +43,146 @@ const TEST_LIMITS = {
 };
 
 describe("generated Gaussian WGSL", () => {
-  it("builds projection and raster TSL shells into compute shaders", () => {
-    const data = oneGaussian();
-    const store = new GaussianStore();
-    store.add(data);
-    store.pack({ limits: TEST_LIMITS });
-    const packed = store.getPackedData();
-    const camera = new PerspectiveCamera();
-    const frame = new FrameUniforms(camera, [0, 0, 0, 0]);
-    const objects = new ObjectFrameState(camera, store, packed.count);
-    const nodes = createDefaultGaussianNodeSlots();
-    const projection = new ProjectionStage(
-      packed,
-      frame,
-      objects,
-      "compensated",
-      nodes,
-    );
-    const records = attribute(new Uint32Array(4));
-    const offsets = attribute(new Uint32Array(8));
-    const rasterizer = new TileRasterizer(
-      {} as never,
-      packed.count,
-      2,
-      "float32",
-      packed.means,
-      projection.projectedMean,
-      projection.projectedConic,
-      projection.projectedColor,
-      records,
-      offsets,
-      new StorageTexture(16, 16),
-      null,
-      frame,
-      2_048,
-      8_192,
-      1,
-      nodes,
-      true,
-      0.001,
-    );
+  it.each([false, true])(
+    "builds projection and raster TSL shells (subgroups=%s)",
+    (rasterSubgroups) => {
+      const data = oneGaussian();
+      const store = new GaussianStore();
+      store.add(data);
+      store.pack({ limits: TEST_LIMITS });
+      const packed = store.getPackedData();
+      const camera = new PerspectiveCamera();
+      const frame = new FrameUniforms(camera, [0, 0, 0, 0]);
+      const objects = new ObjectFrameState(camera, store, packed.count);
+      const nodes = createDefaultGaussianNodeSlots();
+      const projection = new ProjectionStage(
+        packed,
+        frame,
+        objects,
+        "compensated",
+        nodes,
+      );
+      const records = attribute(new Uint32Array(4));
+      const offsets = attribute(new Uint32Array(8));
+      const rasterizer = new TileRasterizer(
+        {} as never,
+        packed.count,
+        2,
+        "float32",
+        packed.means,
+        projection.projectedMean,
+        projection.projectedConic,
+        projection.projectedColor,
+        records,
+        offsets,
+        new StorageTexture(16, 16),
+        null,
+        frame,
+        2_048,
+        8_192,
+        1,
+        nodes,
+        true,
+        0.001,
+        rasterSubgroups,
+      );
 
-    const projectionSource = buildCompute(
-      (projection as unknown as { computeNode: unknown }).computeNode,
-    );
-    const rasterSource = buildCompute(
-      (rasterizer as unknown as { computeNode: unknown }).computeNode,
-    );
-    const rasterInternals = rasterizer as unknown as {
-      clearMetrics: unknown;
-      chunkComputeNode: unknown;
-      compositeNode: unknown;
-      chunks: {
-        countNode: unknown;
-        prepareNode: unknown;
-        emitNode: unknown;
+      const projectionSource = buildCompute(
+        (projection as unknown as { computeNode: unknown }).computeNode,
+      );
+      const rasterSource = buildCompute(
+        (rasterizer as unknown as { computeNode: unknown }).computeNode,
+        rasterSubgroups,
+      );
+      const rasterInternals = rasterizer as unknown as {
+        clearMetrics: unknown;
+        chunkComputeNode: unknown;
+        compositeNode: unknown;
+        chunks: {
+          countNode: unknown;
+          prepareNode: unknown;
+          emitNode: unknown;
+        };
       };
-    };
-    const chunkSource = buildCompute(rasterInternals.chunkComputeNode);
-    expect(buildCompute(rasterInternals.clearMetrics)).toContain("atomicStore");
-    expect(rasterSource).toContain("rasterChecked");
-    expect(rasterSource).toContain("rasterBlended");
-    expect(rasterSource).toContain("atomicAdd");
-    expect(chunkSource).toContain("atomicAdd");
-    const compositeSource = buildCompute(rasterInternals.compositeNode);
-    expect(compositeSource).toContain("atomicAdd");
-    for (const source of [rasterSource, chunkSource, compositeSource]) {
-      expect(source).toContain("< 0.001");
-      expect(source).not.toContain("< 0.0001");
-    }
-    const countChunksSource = buildCompute(rasterInternals.chunks.countNode);
-    const prepareChunksSource = buildCompute(
-      rasterInternals.chunks.prepareNode,
-    );
-    const emitChunksSource = buildCompute(rasterInternals.chunks.emitNode);
+      const chunkSource = buildCompute(
+        rasterInternals.chunkComputeNode,
+        rasterSubgroups,
+      );
+      for (const shader of [rasterSource, chunkSource]) {
+        expect(shader.includes("subgroupOr")).toBe(rasterSubgroups);
+        expect(shader.includes("enable subgroups;")).toBe(rasterSubgroups);
+        expect(shader).toContain("rasterBlendWeight");
+        if (rasterSubgroups) {
+          expect(shader).toContain("workgroupUniformLoad(&(*partials)[0])");
+          expect(shader).not.toContain("subgroupActive =");
+          expect(shader).not.toMatch(/\bactive\b/);
+          expect(shader).toContain("subgroupOr(pixel_active)");
+          expect(shader).toMatch(/@builtin\(\s*subgroup_size\s*\)/);
+          expect(shader).not.toMatch(
+            /var<private> (?:hasNextBatch|tileActiveReduction|rasterSampleEnd)/,
+          );
+          expect(shader).toContain("var tileActiveReduction : u32;");
+        }
+      }
+      expect(buildCompute(rasterInternals.clearMetrics)).toContain(
+        "atomicStore",
+      );
+      expect(rasterSource).toContain("rasterChecked");
+      expect(rasterSource).toContain("rasterBlended");
+      expect(rasterSource).toContain("atomicAdd");
+      expect(chunkSource).toContain("atomicAdd");
+      const compositeSource = buildCompute(rasterInternals.compositeNode);
+      expect(compositeSource).toContain("atomicAdd");
+      for (const source of [rasterSource, chunkSource, compositeSource]) {
+        expect(source).toContain("< 0.001");
+        expect(source).not.toContain("< 0.0001");
+      }
+      const countChunksSource = buildCompute(rasterInternals.chunks.countNode);
+      const prepareChunksSource = buildCompute(
+        rasterInternals.chunks.prepareNode,
+      );
+      const emitChunksSource = buildCompute(rasterInternals.chunks.emitNode);
 
-    expect(projectionSource).toContain(
-      "project_gaussian_covariance_compensated",
-    );
-    expect(projectionSource).toContain("count_contributing_tiles");
-    expect(projectionSource).toContain("subpixel_has_sample");
-    expect(rasterSource).toContain("compact_morton_bits_16");
-    expect(rasterSource).toContain("rasterTileSampleCount");
-    expect(rasterSource).toContain("floor");
-    expect(rasterSource).toContain("2048u");
-    expect(rasterSource).toContain("workgroupBarrier");
-    expect(chunkSource).toContain("rasterSampleStart");
-    expect(chunkSource).toContain("8192u");
-    expect(compositeSource).toContain("chunkCompositeTransmittance");
-    expect(countChunksSource).toContain("count_raster_chunks");
-    expect(prepareChunksSource).toContain("prepare_raster_chunk_dispatch");
-    expect(emitChunksSource).toContain("emit_raster_chunk_tasks");
-    expect(projectionSource).not.toMatch(/return;\s*return;/);
-    expect(rasterSource).not.toMatch(/continue;\s*continue;/);
-    expect(rasterSource).not.toMatch(/break;\s*break;/);
+      expect(projectionSource).toContain(
+        "project_gaussian_covariance_compensated",
+      );
+      expect(projectionSource).toContain("count_contributing_tiles");
+      expect(projectionSource).toContain("subpixel_has_sample");
+      expect(rasterSource).toContain("compact_morton_bits_16");
+      expect(rasterSource).toContain("rasterTileSampleCount");
+      expect(rasterSource).toContain("floor");
+      expect(rasterSource).toContain("2048u");
+      expect(rasterSource).toContain("workgroupBarrier");
+      expect(chunkSource).toContain("rasterSampleStart");
+      expect(chunkSource).toContain("8192u");
+      expect(compositeSource).toContain("chunkCompositeTransmittance");
+      expect(countChunksSource).toContain("count_raster_chunks");
+      expect(prepareChunksSource).toContain("prepare_raster_chunk_dispatch");
+      expect(emitChunksSource).toContain("emit_raster_chunk_tasks");
+      expect(projectionSource).not.toMatch(/return;\s*return;/);
+      expect(rasterSource).not.toMatch(/continue;\s*continue;/);
+      expect(rasterSource).not.toMatch(/break;\s*break;/);
 
-    const batchSync = rasterSource.indexOf("hasNextBatch = load_shared_active");
-    const batchRead = rasterSource.indexOf(
-      "for ( var i : u32 = 0u;",
-      batchSync,
-    );
-    expect(batchSync).toBeGreaterThan(-1);
-    expect(batchRead).toBeGreaterThan(batchSync);
+      const batchSync = rasterSource.indexOf(
+        "hasNextBatch = load_shared_active",
+      );
+      const batchRead = rasterSource.indexOf(
+        "for ( var i : u32 = 0u;",
+        batchSync,
+      );
+      expect(batchSync).toBeGreaterThan(-1);
+      expect(batchRead).toBeGreaterThan(batchSync);
 
-    const pixelSetup = rasterSource.indexOf("rasterActivePixel =");
-    const outerLoop = rasterSource.indexOf(
-      "for ( var i : u32 = 0u; i < rasterSampleEnd;",
-    );
-    const outputStore = rasterSource.lastIndexOf("textureStore(");
-    expect(pixelSetup).toBeGreaterThan(-1);
-    expect(outerLoop).toBeGreaterThan(pixelSetup);
-    expect(outputStore).toBeGreaterThan(outerLoop);
-  });
+      const pixelSetup = rasterSource.indexOf("rasterActivePixel =");
+      const outerLoop = rasterSource.indexOf(
+        "for ( var i : u32 = 0u; i < rasterSampleEnd;",
+      );
+      const outputStore = rasterSource.lastIndexOf("textureStore(");
+      expect(pixelSetup).toBeGreaterThan(-1);
+      expect(outerLoop).toBeGreaterThan(pixelSetup);
+      expect(outputStore).toBeGreaterThan(outerLoop);
+    },
+  );
 
   it("builds representative custom projection and raster graphs", () => {
     const nodes = createDefaultGaussianNodeSlots();
@@ -373,7 +401,7 @@ function buildPipeline(
   };
 }
 
-function buildCompute(computeNode: unknown): string {
+function buildCompute(computeNode: unknown, subgroups = false): string {
   const renderer = {
     backend: {
       isWebGPUBackend: true,
@@ -384,7 +412,7 @@ function buildCompute(computeNode: unknown): string {
     getRenderTarget: () => null,
     getPixelRatio: () => 1,
     getDrawingBufferSize: () => ({ width: 16, height: 16 }),
-    hasFeature: () => false,
+    hasFeature: (name: string) => name === "subgroups" && subgroups,
     hasCompatibility: () => false,
   };
   const builder = new WGSLNodeBuilder(

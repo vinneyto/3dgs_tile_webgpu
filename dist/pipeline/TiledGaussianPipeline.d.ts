@@ -25,6 +25,7 @@ export declare class TiledGaussianPipeline {
     private readonly nodes;
     private readonly rasterTransmittanceThreshold;
     private readonly rasterStats;
+    private readonly rasterSubgroups;
     readonly frame: FrameUniforms;
     readonly objects: ObjectFrameState;
     readonly projection: ProjectionStage;
@@ -43,7 +44,7 @@ export declare class TiledGaussianPipeline {
     private tilesX;
     private tilesY;
     private tileStageRebuilds;
-    constructor(renderer: WebGPURenderer, camera: PerspectiveCamera, data: GaussianData, store: GaussianStore, mode: DepthSortMode, antialiasMode: AntialiasMode, capacity: number, background: readonly [number, number, number, number], profileKernels: boolean, maxRasterizedSplatsPerTile: number | null, rasterChunkSize: number | null, subpixelSampleCulling: boolean, radixBackend: ResolvedRadixBackend, nodes: GaussianNodeSlots, rasterTransmittanceThreshold?: number, rasterStats?: boolean);
+    constructor(renderer: WebGPURenderer, camera: PerspectiveCamera, data: GaussianData, store: GaussianStore, mode: DepthSortMode, antialiasMode: AntialiasMode, capacity: number, background: readonly [number, number, number, number], profileKernels: boolean, maxRasterizedSplatsPerTile: number | null, rasterChunkSize: number | null, subpixelSampleCulling: boolean, radixBackend: ResolvedRadixBackend, nodes: GaussianNodeSlots, rasterTransmittanceThreshold?: number, rasterStats?: boolean, rasterSubgroups?: boolean);
     prepareFrame(width: number, height: number, colorTexture: StorageTexture, depthTexture: StorageTexture | null): void;
     render(): void;
     rebuildProjection(nodes: GaussianProjectionNodeSlots): void;

@@ -38,7 +38,10 @@ export class GaussianLodColorHelper {
   private disposed = false;
 
   constructor(
-    readonly pass: GaussianPass,
+    readonly pass: Pick<
+      GaussianPass,
+      "gaussianStore" | "rasterColorNode" | "colorSpace" | "subscribeDebug"
+    >,
     options: GaussianLodColorHelperOptions = {},
   ) {
     if (options.colors !== undefined && options.colors.length === 0) {

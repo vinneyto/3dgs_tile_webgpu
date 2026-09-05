@@ -132,3 +132,9 @@ export {
   rasterPower,
   rasterWeight,
 } from "./nodes/GaussianContextNodes";
+
+export {
+  GaussianHardwarePass,
+  gaussianHardwarePass,
+  type GaussianHardwarePassOptions,
+} from "./GaussianHardwarePass";

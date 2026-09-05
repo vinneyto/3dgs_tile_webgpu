@@ -11,7 +11,7 @@ export interface GaussianLodColorHelperOptions {
 }
 /** Tints GaussianPass raster color with a packed current-LOD debug palette. */
 export declare class GaussianLodColorHelper {
-    readonly pass: GaussianPass;
+    readonly pass: Pick<GaussianPass, "gaussianStore" | "rasterColorNode" | "colorSpace" | "subscribeDebug">;
     readonly isGaussianLodColorHelper = true;
     readonly lodLevelAttribute: GaussianStorePackedAttribute;
     readonly tintStrength: number;
@@ -22,7 +22,7 @@ export declare class GaussianLodColorHelper {
     private readonly unsubscribeDebug;
     private active;
     private disposed;
-    constructor(pass: GaussianPass, options?: GaussianLodColorHelperOptions);
+    constructor(pass: Pick<GaussianPass, "gaussianStore" | "rasterColorNode" | "colorSpace" | "subscribeDebug">, options?: GaussianLodColorHelperOptions);
     get enabled(): boolean;
     set enabled(value: boolean);
     /** Refresh after store.pack(); only a replaced backing buffer rebuilds the node. */

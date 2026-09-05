@@ -2,6 +2,7 @@ import {
   type GaussianCloud,
   GaussianLodColorHelper,
   type GaussianPass,
+  type GaussianHardwarePass,
   OctreeHelper,
 } from "../../src/index";
 
@@ -12,7 +13,10 @@ export class SpatialDebugHelpers {
   private octreeVisible = false;
   private lodColoringEnabled = false;
 
-  attach(cloud: GaussianCloud, pass: GaussianPass): void {
+  attach(
+    cloud: GaussianCloud,
+    pass: GaussianPass | GaussianHardwarePass,
+  ): void {
     this.clear();
     if (cloud.lod !== null) {
       this.octreeHelper = new OctreeHelper(cloud.lod.octree, {

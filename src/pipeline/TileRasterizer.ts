@@ -21,6 +21,9 @@ import {
   floor,
   instanceIndex,
   invocationLocalIndex,
+  invocationSubgroupIndex,
+  subgroupIndex,
+  subgroupSize,
   ivec2,
   max,
   select,
@@ -46,6 +49,7 @@ import {
 } from "../kernels/rasterChunks";
 import {
   compactMortonBitsWGSL,
+  subgroupActiveWGSL,
   workgroupUniformLoadWGSL,
 } from "../kernels/rasterHelpers";
 import {
@@ -126,6 +130,7 @@ export class TileRasterizer {
     nodes: GaussianRasterNodeSlots,
     rasterStats = false,
     private readonly transmittanceThreshold = 1e-4,
+    private readonly rasterSubgroups = false,
   ) {
     this.metrics = rasterStats
       ? this.attributes.createUint("3dgs.raster-work", tileCount * 4)
@@ -359,6 +364,9 @@ export class TileRasterizer {
       target === "direct" ? storageTexture(this.colorTexture) : null;
     const compactMorton = wgslFn<any>(compactMortonBitsWGSL);
     const uniformLoad = wgslFn<any>(workgroupUniformLoadWGSL);
+    const subgroupActive = this.rasterSubgroups
+      ? wgslFn<any>(subgroupActiveWGSL)
+      : null;
     const chunks = this.chunks;
     const chunkTasks =
       target === "chunk" && chunks !== null
@@ -583,7 +591,10 @@ export class TileRasterizer {
                   depthWritten.assign(bool(true));
                 });
                 const color = resolveNode(nodes.rasterColorNode, overrides);
-                accumulated.addAssign(color.mul(transmittance).mul(alpha));
+                const weight = transmittance
+                  .mul(alpha)
+                  .toVar("rasterBlendWeight");
+                accumulated.addAssign(color.mul(weight));
                 blended?.addAssign(1);
                 transmittance.mulAssign(float(1).sub(alpha));
                 If(transmittance.lessThan(this.transmittanceThreshold), () => {
@@ -596,35 +607,57 @@ export class TileRasterizer {
           If(hasNextBatch.equal(0), () => {
             Break();
           });
-          sharedActive
-            .element(localIndex)
-            .assign(select(activePixel.and(done.not()), uint(1), uint(0)));
-          workgroupBarrier();
-          If(localIndex.lessThan(8), () => {
-            const firstLane = localIndex.mul(32);
-            const subgroupActive = uint(0).toVar("subgroupActive");
-            Loop(
-              { start: uint(0), end: uint(32), type: "uint", condition: "<" },
-              ({ i }) => {
-                subgroupActive.bitOrAssign(
-                  sharedActive.element(firstLane.add(i)),
-                );
-              },
-            );
-            sharedActiveSums.element(localIndex).assign(subgroupActive);
-          });
-          workgroupBarrier();
-          If(localIndex.equal(0), () => {
-            const tileActive = uint(0).toVar("tileActiveReduction");
-            Loop(
-              { start: uint(0), end: uint(8), type: "uint", condition: "<" },
-              ({ i }) => {
-                tileActive.bitOrAssign(sharedActiveSums.element(uint(i)));
-              },
-            );
-            sharedActive.element(uint(0)).assign(tileActive);
-          });
-          const tileActive = uniformLoad({ values: sharedActive }) as any;
+          let tileActive: any;
+          if (subgroupActive !== null) {
+            // Three's BarrierNode forces function-local variables. Barriers
+            // hidden inside wgslFn do not, causing loop-control values to become
+            // private globals and lose uniformity across helper calls.
+            workgroupBarrier();
+            tileActive = (
+              subgroupActive({
+                pixel_active: select(
+                  activePixel.and(done.not()),
+                  uint(1),
+                  uint(0),
+                ),
+                local_index: localIndex,
+                subgroup_index: subgroupIndex,
+                subgroup_lane: invocationSubgroupIndex,
+                subgroup_size: subgroupSize,
+                partials: sharedActive,
+              }) as any
+            ).toVar("tileActiveReduction");
+          } else {
+            sharedActive
+              .element(localIndex)
+              .assign(select(activePixel.and(done.not()), uint(1), uint(0)));
+            workgroupBarrier();
+            If(localIndex.lessThan(8), () => {
+              const firstLane = localIndex.mul(32);
+              const subgroupActive = uint(0).toVar("subgroupActive");
+              Loop(
+                { start: uint(0), end: uint(32), type: "uint", condition: "<" },
+                ({ i }) => {
+                  subgroupActive.bitOrAssign(
+                    sharedActive.element(firstLane.add(i)),
+                  );
+                },
+              );
+              sharedActiveSums.element(localIndex).assign(subgroupActive);
+            });
+            workgroupBarrier();
+            If(localIndex.equal(0), () => {
+              const tileActive = uint(0).toVar("tileActiveReduction");
+              Loop(
+                { start: uint(0), end: uint(8), type: "uint", condition: "<" },
+                ({ i }) => {
+                  tileActive.bitOrAssign(sharedActiveSums.element(uint(i)));
+                },
+              );
+              sharedActive.element(uint(0)).assign(tileActive);
+            });
+            tileActive = uniformLoad({ values: sharedActive }) as any;
+          }
           If(tileActive.equal(0), () => {
             Break();
           });

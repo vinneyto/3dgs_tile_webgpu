@@ -2,6 +2,7 @@ import type { WebGPURenderer } from "three/webgpu";
 import type {
   GaussianCloud,
   GaussianPass,
+  GaussianHardwarePass,
   GaussianPassDebugSnapshot,
   GaussianPassStats,
   GaussianStorePackStats,
@@ -22,7 +23,7 @@ export interface DebugPanelPassOptions {
 }
 
 export class DebugPanel {
-  private pass: GaussianPass | null = null;
+  private pass: GaussianPass | GaussianHardwarePass | null = null;
   private stats: GaussianPassStats | null = null;
   private frameCount = 0;
   private previousFrameTime = 0;
@@ -66,8 +67,14 @@ export class DebugPanel {
   }
 
   setPass(pass: null): void;
-  setPass(pass: GaussianPass, options: DebugPanelPassOptions): void;
-  setPass(pass: GaussianPass | null, options?: DebugPanelPassOptions): void {
+  setPass(
+    pass: GaussianPass | GaussianHardwarePass,
+    options: DebugPanelPassOptions,
+  ): void;
+  setPass(
+    pass: GaussianPass | GaussianHardwarePass | null,
+    options?: DebugPanelPassOptions,
+  ): void {
     this.unsubscribePassDebug?.();
     this.unsubscribePassDebug = null;
     this.pass = pass;
@@ -184,6 +191,8 @@ export class DebugPanel {
     const info = this.renderer.info;
     const memory = info.memory;
     const debug = this.pass?.getDebugInfo() ?? null;
+    const hardware =
+      this.pass !== null && !("rasterTransmittanceThreshold" in this.pass);
     const memoryDelta =
       this.memoryBaseline === null ? null : memory.total - this.memoryBaseline;
     const fps = this.averageFrameMs > 0 ? 1_000 / this.averageFrameMs : 0;
@@ -208,15 +217,17 @@ export class DebugPanel {
           : "GPU timings    ?profile=kernels enables timestamp profiling"
         : timings === null
           ? "GPU timings    waiting for timestamp resolution"
-          : `GPU compute    ${formatMs(timings.computeMs)}  present ${formatMs(timings.renderMs)}`;
+          : `GPU compute    ${formatMs(timings.computeMs)}  render sum ${formatMs(timings.renderMs)}`;
     const pipelineLine =
       debug === null || !debug.initialized
         ? "pipeline       waiting for first frame"
-        : `pipeline       ${debug.width}×${debug.height}  tiles ${debug.tilesX}×${debug.tilesY}`;
+        : `pipeline       ${debug.width}×${debug.height}${hardware ? "" : `  tiles ${debug.tilesX}×${debug.tilesY}`}`;
     const stagesLine =
       debug === null
         ? "stages         —"
-        : `stages         rebuilds ${debug.tileStageRebuilds}  radix ${debug.radixBackend} depth ${debug.depthRadixPasses} + tile ${debug.tileRadixPasses}`;
+        : hardware
+          ? `stages         radix ${debug.radixBackend} depth ${debug.depthRadixPasses}`
+          : `stages         rebuilds ${debug.tileStageRebuilds}  radix ${debug.radixBackend} depth ${debug.depthRadixPasses} + tile ${debug.tileRadixPasses}`;
     const subpixelCullLine =
       debug === null
         ? "subpixel cull  —"
@@ -239,14 +250,25 @@ export class DebugPanel {
       timestampLine,
       "",
       visibleLine,
-      intersectionLine,
-      requestedLine,
+      ...(hardware
+        ? ["backend        hardware · GPU sorted instanced quads"]
+        : [intersectionLine]),
+      ...(hardware ? [] : [requestedLine]),
       pipelineLine,
       stagesLine,
       subpixelCullLine,
-      rasterChunkLine,
-      `raster cutoff  T < ${this.pass?.rasterTransmittanceThreshold ?? "—"} · ?rasterT=0.0001 baseline`,
-      ...profileLines,
+      ...(hardware
+        ? []
+        : [
+            rasterChunkLine,
+            `raster reduce  ${(this.pass as GaussianPass | null)?.rasterSubgroups ? "subgroup" : "workgroup"} · ?rasterSubgroups=0 disables experiment`,
+          ]),
+      ...(hardware
+        ? ["depth          hardware test · opaque scene attachment"]
+        : [
+            `raster cutoff  T < ${this.pass && "rasterTransmittanceThreshold" in this.pass ? this.pass.rasterTransmittanceThreshold : "—"} · ?rasterT=0.0001 baseline`,
+          ]),
+      ...(hardware ? [] : profileLines),
       "",
       ...packingLines,
       "",
@@ -267,7 +289,10 @@ export class DebugPanel {
     profileKernels: boolean,
     subpixelSampleCulling: boolean,
   ): string[] {
-    if (!profileKernels && !this.pass?.rasterStats) {
+    if (
+      !profileKernels &&
+      !(this.pass && "rasterStats" in this.pass && this.pass.rasterStats)
+    ) {
       return [
         "tile profile   ?profile=kernels · ?rasterStats=1 for work counters",
       ];
@@ -364,6 +389,13 @@ export class DebugPanel {
       [
         `${profileKernels ? "individual kernels" : "batched groups"} · GPU frame ${timings.frameId}`,
         ...rows,
+        "",
+        "GPU render passes (separate from compute)",
+        ...timings.renderPasses.map(
+          (pass, index) =>
+            `${`${index + 1}. ${pass.name}`.padEnd(42)} ${formatMs(pass.gpuMs)}  draws ${pass.drawCalls ?? "?"}\n   ${pass.mode ?? ""}`,
+        ),
+        "GPU samples resolve asynchronously; FPS is a rolling average.",
         "",
         profileKernels
           ? "?profile=kernels splits the batched prepare/emit group"
