@@ -22,14 +22,14 @@ fn load_shared_active(
 /** All workgroup lanes must call this, including finished/out-of-bounds pixels. */
 export const subgroupActiveWGSL = /* wgsl */ `
 fn raster_subgroup_active(
-  active: u32,
+  pixel_active: u32,
   local_index: u32,
   subgroup_index: u32,
   subgroup_lane: u32,
   subgroup_size: u32,
   partials: ptr<workgroup, array<u32, ${WORKGROUP_SIZE}>>
 ) -> u32 {
-  let any_active = subgroupOr(active);
+  let any_active = subgroupOr(pixel_active);
   if (subgroup_lane == 0u) {
     (*partials)[subgroup_index] = any_active;
   }

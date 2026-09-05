@@ -4,8 +4,12 @@ import { readSandboxOptions } from "../sandbox/src/SandboxOptions";
 describe("sandbox raster options", () => {
   it("allows disabling the subgroup raster experiment independently of radix", () => {
     expect(readSandboxOptions(new URLSearchParams()).pass.rasterSubgroups).toBe(
-      true,
+      false,
     );
+    expect(
+      readSandboxOptions(new URLSearchParams("rasterSubgroups=1")).pass
+        .rasterSubgroups,
+    ).toBe(true);
     const options = readSandboxOptions(
       new URLSearchParams("rasterSubgroups=0&radix=subgroup"),
     );

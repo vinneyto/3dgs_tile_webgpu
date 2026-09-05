@@ -609,9 +609,17 @@ export class TileRasterizer {
           });
           let tileActive: any;
           if (subgroupActive !== null) {
+            // Three's BarrierNode forces function-local variables. Barriers
+            // hidden inside wgslFn do not, causing loop-control values to become
+            // private globals and lose uniformity across helper calls.
+            workgroupBarrier();
             tileActive = (
               subgroupActive({
-                active: select(activePixel.and(done.not()), uint(1), uint(0)),
+                pixel_active: select(
+                  activePixel.and(done.not()),
+                  uint(1),
+                  uint(0),
+                ),
                 local_index: localIndex,
                 subgroup_index: subgroupIndex,
                 subgroup_lane: invocationSubgroupIndex,

@@ -92,6 +92,7 @@ describe("generated Gaussian WGSL", () => {
       );
       const rasterSource = buildCompute(
         (rasterizer as unknown as { computeNode: unknown }).computeNode,
+        rasterSubgroups,
       );
       const rasterInternals = rasterizer as unknown as {
         clearMetrics: unknown;
@@ -103,7 +104,10 @@ describe("generated Gaussian WGSL", () => {
           emitNode: unknown;
         };
       };
-      const chunkSource = buildCompute(rasterInternals.chunkComputeNode);
+      const chunkSource = buildCompute(
+        rasterInternals.chunkComputeNode,
+        rasterSubgroups,
+      );
       for (const shader of [rasterSource, chunkSource]) {
         expect(shader.includes("subgroupOr")).toBe(rasterSubgroups);
         expect(shader.includes("enable subgroups;")).toBe(rasterSubgroups);
@@ -111,6 +115,13 @@ describe("generated Gaussian WGSL", () => {
         if (rasterSubgroups) {
           expect(shader).toContain("workgroupUniformLoad(&(*partials)[0])");
           expect(shader).not.toContain("subgroupActive =");
+          expect(shader).not.toMatch(/\bactive\b/);
+          expect(shader).toContain("subgroupOr(pixel_active)");
+          expect(shader).toMatch(/@builtin\(\s*subgroup_size\s*\)/);
+          expect(shader).not.toMatch(
+            /var<private> (?:hasNextBatch|tileActiveReduction|rasterSampleEnd)/,
+          );
+          expect(shader).toContain("var tileActiveReduction : u32;");
         }
       }
       expect(buildCompute(rasterInternals.clearMetrics)).toContain(
@@ -390,7 +401,7 @@ function buildPipeline(
   };
 }
 
-function buildCompute(computeNode: unknown): string {
+function buildCompute(computeNode: unknown, subgroups = false): string {
   const renderer = {
     backend: {
       isWebGPUBackend: true,
@@ -401,7 +412,7 @@ function buildCompute(computeNode: unknown): string {
     getRenderTarget: () => null,
     getPixelRatio: () => 1,
     getDrawingBufferSize: () => ({ width: 16, height: 16 }),
-    hasFeature: () => false,
+    hasFeature: (name: string) => name === "subgroups" && subgroups,
     hasCompatibility: () => false,
   };
   const builder = new WGSLNodeBuilder(

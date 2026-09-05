@@ -35,7 +35,7 @@ export function readSandboxOptions(
       background: [0.018, 0.022, 0.032, 1],
       profileKernels: profileEnabled,
       rasterStats,
-      rasterSubgroups: parameters.get("rasterSubgroups") !== "0",
+      rasterSubgroups: parameters.get("rasterSubgroups") === "1",
       rasterTransmittanceThreshold: readRasterThreshold(parameters),
       maxRasterizedSplatsPerTile: readOptionalLimit(parameters, "tileCap"),
       rasterChunkSize: readOptionalLimit(parameters, "rasterChunk"),

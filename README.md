@@ -918,7 +918,7 @@ passes receive working-linear RGB and `RenderPipeline` performs exactly one disp
 
 ### Tiled subgroup experiment
 
-The sandbox enables subgroup activity reduction when supported. Compare the same
+The sandbox keeps subgroup activity reduction opt-in while GPU validation is pending. Compare the same
 stationary camera with `?renderer=tiled&rasterSubgroups=1` and
 `?renderer=tiled&rasterSubgroups=0` (use `&` when a PLY query is already present).
 The panel's `raster reduce` line reports the actual path. Library users opt in
