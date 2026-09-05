@@ -374,7 +374,7 @@ export class GaussianPass extends PassNode {
     if (this.gaussianStore.needsPack) {
       this.gaussianStore.pack({ limits: webGpuDeviceLimits(renderer) });
     }
-    const lodUpdate = this.gaussianStore.updateLod(this.camera);
+    const lodUpdate = this.gaussianStore.updateLod(this.camera, width, height);
     const data = this.gaussianStore.getPackedData();
     if (this.requestedIntersectionCapacity === null) {
       this.resolvedIntersectionCapacity = Math.min(

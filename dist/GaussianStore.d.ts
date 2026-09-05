@@ -1,3 +1,5 @@
+import { type GaussianMipmapLodOptions } from "./GaussianMipmapLod";
+import { type ScreenSpaceLodPackingOptions } from "./lod-packing/ScreenSpaceLodPackingStrategy";
 import { Camera } from "three/webgpu";
 import { GaussianCloud } from "./GaussianCloud";
 import { GaussianData } from "./GaussianData";
@@ -20,6 +22,8 @@ export interface GaussianStoreOptions {
     defaultPackingStrategy?: GaussianLodPackingStrategy;
     /** Upload limits for the built-in streaming LOD strategy. */
     defaultStreamingLod?: GaussianStoreDefaultLodOptions;
+    /** Screen-space selection settings for mipmap clouds. */
+    defaultScreenSpaceLod?: ScreenSpaceLodPackingOptions;
     /** Maximum packed Gaussian count. Defaults to the rendering device limit. */
     maxGaussians?: number | "auto";
 }
@@ -83,6 +87,8 @@ export interface GaussianStoreLoadOptions {
     name?: string;
     octree?: Omit<GaussianOctreeBuildOptions, "ownsData">;
     lod?: Omit<GaussianLodBuildOptions, "ownsOctree">;
+    /** Opt into merged mipmap representations; omitted preserves legacy LOD. */
+    mipmap?: Omit<GaussianMipmapLodOptions, "ownsOctree">;
     priority?: number;
     packingStrategy?: GaussianLodPackingStrategy;
 }
@@ -95,6 +101,7 @@ export declare class GaussianStore {
     private readonly loader;
     readonly budgetingStrategy: GaussianStoreBudgetStrategy;
     readonly defaultPackingStrategy: GaussianLodPackingStrategy | null;
+    private readonly defaultScreenSpaceLod;
     private readonly defaultStreamingLod;
     readonly maxGaussiansOption: number | "auto";
     readonly packedShFormat: "rgb8e8";
@@ -117,6 +124,7 @@ export declare class GaussianStore {
     private packingInvalid;
     private latestPackStats;
     private disposed;
+    private lastPackLimits;
     /** Changes only after a successful pack() replaces the shared layout. */
     layoutVersion: number;
     constructor(options?: GaussianStoreOptions);
@@ -151,10 +159,11 @@ export declare class GaussianStore {
     /** Mark one cloud for strategy re-evaluation after its strategy parameters change. */
     invalidateCloudPacking(cloud: GaussianCloud): void;
     /**
-     * Update camera-relative streaming LODs and apply at most one
-     * bounded upload batch per cloud. GaussianPass calls this automatically.
+     * Update camera-relative LODs. Mipmap cuts commit atomically; legacy
+     * streaming applies one bounded batch per cloud. Viewport dimensions are
+     * physical pixels. GaussianPass calls this automatically.
      */
-    updateLod(camera: Camera): GaussianStoreLodUpdate;
+    updateLod(camera: Camera, width?: number, height?: number): GaussianStoreLodUpdate;
     /** Current packed attributes. pack() must have resolved all invalidations. */
     getPackedData(): GaussianData;
     dispose(): void;

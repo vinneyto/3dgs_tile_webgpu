@@ -3,7 +3,11 @@ import type {
   GaussianData,
   GaussianStore,
 } from "../../src/index";
-import { GaussianLod, GaussianOctree } from "../../src/index";
+import {
+  GaussianLod,
+  GaussianOctree,
+  GaussianMipmapLod,
+} from "../../src/index";
 
 export const SANDBOX_LOD_LEVELS = [
   { retention: 0.2 },
@@ -18,18 +22,21 @@ export interface CloudBounds {
   readonly radius: number;
 }
 
-export function addDataWithSandboxLod(
+export async function addDataWithSandboxLod(
   store: GaussianStore,
   data: GaussianData,
   name: string,
-): GaussianCloud {
+  mipmap = true,
+): Promise<GaussianCloud> {
   const octree = GaussianOctree.build(data, { ownsData: true });
   let lod: GaussianLod | null = null;
   try {
-    lod = GaussianLod.build(octree, {
-      levels: SANDBOX_LOD_LEVELS,
-      ownsOctree: true,
-    });
+    lod = mipmap
+      ? await GaussianMipmapLod.buildAsync(octree, { ownsOctree: true })
+      : GaussianLod.build(octree, {
+          levels: SANDBOX_LOD_LEVELS,
+          ownsOctree: true,
+        });
     return store.addLod(lod, { name, ownsLod: true });
   } catch (error) {
     if (lod !== null) lod.dispose();

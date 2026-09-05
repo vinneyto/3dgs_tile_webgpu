@@ -9,6 +9,8 @@ export interface SandboxOptions {
   readonly profileEnabled: boolean;
   readonly statsEnabled: boolean;
   readonly pixelRatio: number;
+  readonly mipmapLod: boolean;
+  readonly lodPixelSize: number;
   readonly pass: GaussianPassOptions;
   readonly streamingLod: GaussianStoreDefaultLodOptions;
 }
@@ -24,6 +26,8 @@ export function readSandboxOptions(
     statsEnabled:
       profileEnabled || rasterStats || parameters.get("stats") !== "0",
     pixelRatio: readRenderPixelRatio(parameters),
+    mipmapLod: parameters.get("lod") !== "legacy",
+    lodPixelSize: readPositiveQuery(parameters, "lodPixels", 4),
     pass: {
       depthSortMode:
         parameters.get("sort") === "packed16" ? "packed16" : "float32",

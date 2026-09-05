@@ -147,7 +147,7 @@ export class LodHelper extends Object3D {
       });
       const mesh = new InstancedMesh(geometry, material, nodeIds.length);
       for (let instance = 0; instance < nodeIds.length; instance++) {
-        const bounds = this.lod.octree.nodes[nodeIds[instance]!]!.bounds;
+        const bounds = this.lod.getNodeBounds(nodeIds[instance]!);
         bounds.getCenter(center);
         bounds.getSize(size);
         matrix.makeScale(size.x, size.y, size.z);

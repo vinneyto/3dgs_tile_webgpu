@@ -1,4 +1,4 @@
-import { Vector3, type Ray } from "three/webgpu";
+import { Box3, Vector3, type Ray } from "three/webgpu";
 
 import {
   GaussianOctree,
@@ -60,12 +60,17 @@ export class GaussianLod {
   private readonly ownsOctree: boolean;
   private disposed = false;
 
-  private constructor(
+  protected constructor(
     readonly octree: GaussianOctree,
     options: GaussianLodBuildOptions,
+    skipRepresentations = false,
   ) {
     this.levels = validateLevels(options.levels ?? DEFAULT_LEVELS);
     this.ownsOctree = options.ownsOctree ?? false;
+    if (skipRepresentations) {
+      this.nodes = [];
+      return;
+    }
     const importance = options.importance ?? defaultImportance;
     const scores = new Float64Array(octree.data.count);
     for (let index = 0; index < scores.length; index++) {
@@ -101,6 +106,25 @@ export class GaussianLod {
     });
   }
 
+  /** Data addressed by packing indices; mipmap LOD includes merged parents. */
+  get data() {
+    return this.octree.data;
+  }
+
+  getNodeBounds(nodeId: number): Box3 {
+    return this.octree.nodes[nodeId]!.bounds;
+  }
+
+  protected raycastBounds(nodeId: number, radiusScale: number): Box3 {
+    const node = this.octree.nodes[nodeId]!;
+    const expansion = Math.max(0, radiusScale - 3) * node.maxSplatRadius;
+    return expansion === 0
+      ? node.raycastBounds
+      : node.raycastBounds.clone().expandByScalar(expansion);
+  }
+
+  validateCut(_packing: GaussianLodPacking): void {}
+
   get levelCount(): number {
     return this.levels.length;
   }
@@ -125,12 +149,13 @@ export class GaussianLod {
       throw new RangeError("GaussianLodPacking arrays must have equal lengths");
     }
 
+    this.validateCut(packing);
     const result = new Uint32Array(packing.gaussianCount);
     const selectedNodes = new Set<number>();
     let destination = 0;
     for (let entry = 0; entry < packing.nodeIds.length; entry++) {
       const nodeId = packing.nodeIds[entry]!;
-      const node = this.getLeafNode(nodeId);
+      const node = this.getPackingNode(nodeId);
       if (selectedNodes.has(nodeId)) {
         throw new Error(
           `GaussianLodPacking contains duplicate leaf node ${nodeId}`,
@@ -175,15 +200,15 @@ export class GaussianLod {
       throw new RangeError("GaussianLodPacking arrays must have equal lengths");
     }
 
-    const means = this.octree.data.means.array as Float32Array;
-    const scalesOpacity = this.octree.data.scalesOpacity.array as Float32Array;
+    const means = this.data.means.array as Float32Array;
+    const scalesOpacity = this.data.scalesOpacity.array as Float32Array;
     const center = new Vector3();
     const closest = new Vector3();
     const hits: GaussianOctreeRaycastHit[] = [];
     const selectedNodes = new Set<number>();
     for (let entry = 0; entry < packing.nodeIds.length; entry++) {
       const nodeId = packing.nodeIds[entry]!;
-      const lodNode = this.getLeafNode(nodeId);
+      const lodNode = this.getPackingNode(nodeId);
       if (selectedNodes.has(nodeId)) {
         throw new Error(
           `GaussianLodPacking contains duplicate leaf node ${nodeId}`,
@@ -195,14 +220,7 @@ export class GaussianLod {
       if (count === undefined) {
         throw new RangeError(`GaussianLod level ${level} does not exist`);
       }
-      const octreeNode = this.octree.nodes[nodeId]!;
-      const expansion =
-        Math.max(0, radiusScale - 3) * octreeNode.maxSplatRadius;
-      const hitBounds =
-        expansion === 0
-          ? octreeNode.raycastBounds
-          : octreeNode.raycastBounds.clone().expandByScalar(expansion);
-      if (!ray.intersectsBox(hitBounds)) continue;
+      if (!ray.intersectsBox(this.raycastBounds(nodeId, radiusScale))) continue;
       for (let local = 0; local < count; local++) {
         const gaussianIndex = lodNode.sortedGaussianIndices[local]!;
         const offset = gaussianIndex * 4;
@@ -237,7 +255,7 @@ export class GaussianLod {
     if (this.disposed) throw new Error("GaussianLod has been disposed");
   }
 
-  private getLeafNode(nodeId: number): GaussianLodNode {
+  getPackingNode(nodeId: number): GaussianLodNode {
     const node = this.getNode(nodeId);
     if (this.octree.nodes[nodeId]?.isLeaf !== true) {
       throw new Error(

@@ -1,3 +1,11 @@
+import {
+  GaussianMipmapLod,
+  type GaussianMipmapLodOptions,
+} from "./GaussianMipmapLod";
+import {
+  ScreenSpaceLodPackingStrategy,
+  type ScreenSpaceLodPackingOptions,
+} from "./lod-packing/ScreenSpaceLodPackingStrategy";
 import { Camera, StorageBufferAttribute, Vector3 } from "three/webgpu";
 
 import { CanonicalGaussianPlyLoader } from "./CanonicalGaussianPlyLoader";
@@ -58,6 +66,8 @@ export interface GaussianStoreOptions {
   defaultPackingStrategy?: GaussianLodPackingStrategy;
   /** Upload limits for the built-in streaming LOD strategy. */
   defaultStreamingLod?: GaussianStoreDefaultLodOptions;
+  /** Screen-space selection settings for mipmap clouds. */
+  defaultScreenSpaceLod?: ScreenSpaceLodPackingOptions;
   /** Maximum packed Gaussian count. Defaults to the rendering device limit. */
   maxGaussians?: number | "auto";
 }
@@ -135,6 +145,8 @@ export interface GaussianStoreLoadOptions {
   name?: string;
   octree?: Omit<GaussianOctreeBuildOptions, "ownsData">;
   lod?: Omit<GaussianLodBuildOptions, "ownsOctree">;
+  /** Opt into merged mipmap representations; omitted preserves legacy LOD. */
+  mipmap?: Omit<GaussianMipmapLodOptions, "ownsOctree">;
   priority?: number;
   packingStrategy?: GaussianLodPackingStrategy;
 }
@@ -187,6 +199,7 @@ export class GaussianStore {
   private readonly loader: GaussianDataLoader;
   readonly budgetingStrategy: GaussianStoreBudgetStrategy;
   readonly defaultPackingStrategy: GaussianLodPackingStrategy | null;
+  private readonly defaultScreenSpaceLod: ScreenSpaceLodPackingOptions;
   private readonly defaultStreamingLod: GaussianStoreDefaultLodOptions;
   readonly maxGaussiansOption: number | "auto";
   readonly packedShFormat = "rgb8e8" as const;
@@ -212,6 +225,7 @@ export class GaussianStore {
   private packingInvalid = false;
   private latestPackStats: GaussianStorePackStats | null = null;
   private disposed = false;
+  private lastPackLimits: GaussianStorePackLimits | null = null;
 
   /** Changes only after a successful pack() replaces the shared layout. */
   layoutVersion = 0;
@@ -221,6 +235,7 @@ export class GaussianStore {
     this.budgetingStrategy =
       options.budgetingStrategy ?? new RemainingCapacityBudgetStrategy();
     this.defaultPackingStrategy = options.defaultPackingStrategy ?? null;
+    this.defaultScreenSpaceLod = options.defaultScreenSpaceLod ?? {};
     this.defaultStreamingLod = { ...options.defaultStreamingLod };
     this.maxGaussiansOption = validateMaxGaussians(
       options.maxGaussians ?? "auto",
@@ -296,10 +311,13 @@ export class GaussianStore {
         ...options.octree,
         ownsData: true,
       });
-      lod = GaussianLod.build(octree, {
-        ...options.lod,
-        ownsOctree: true,
-      });
+      lod =
+        options.mipmap !== undefined
+          ? await GaussianMipmapLod.buildAsync(octree, {
+              ...options.mipmap,
+              ownsOctree: true,
+            })
+          : GaussianLod.build(octree, { ...options.lod, ownsOctree: true });
       return this.addLod(lod, {
         name: options.name ?? sourceName(url),
         priority: options.priority,
@@ -371,7 +389,9 @@ export class GaussianStore {
     const packingStrategy =
       options.packingStrategy ??
       this.defaultPackingStrategy ??
-      createDefaultPackingStrategy(this.defaultStreamingLod);
+      (lod instanceof GaussianMipmapLod
+        ? new ScreenSpaceLodPackingStrategy(this.defaultScreenSpaceLod)
+        : createDefaultPackingStrategy(this.defaultStreamingLod));
     this.entries.push({
       cloud,
       count: 0,
@@ -457,6 +477,7 @@ export class GaussianStore {
     this.packedObjectCapacity = this.objectCapacity;
     this.packingInvalid = false;
     this.latestPackStats = { ...result.stats, planningMs, slotUpdateMs };
+    this.lastPackLimits = limits;
     if (!canUpdateInPlace) {
       this.layoutVersion++;
       oldData?.dispose();
@@ -748,22 +769,51 @@ export class GaussianStore {
   }
 
   /**
-   * Update camera-relative streaming LODs and apply at most one
-   * bounded upload batch per cloud. GaussianPass calls this automatically.
+   * Update camera-relative LODs. Mipmap cuts commit atomically; legacy
+   * streaming applies one bounded batch per cloud. Viewport dimensions are
+   * physical pixels. GaussianPass calls this automatically.
    */
-  updateLod(camera: Camera): GaussianStoreLodUpdate {
+  updateLod(camera: Camera, width = 1, height = 1): GaussianStoreLodUpdate {
     this.assertUsable();
     if (this.packingInvalid || this.packedData === null) {
       return { appliedBatches: 0, pending: false, clouds: [] };
     }
+    const screenChanged = new Set<StoreEntry>();
+    for (const entry of this.entries) {
+      if (!(entry.packingStrategy instanceof ScreenSpaceLodPackingStrategy))
+        continue;
+      entry.packingStrategy
+        .setViewport(width, height)
+        .setFromCamera(camera, entry.cloud);
+      if (entry.packingStrategy.update()) {
+        screenChanged.add(entry);
+        this.invalidateCloudPacking(entry.cloud);
+      }
+    }
+    if (screenChanged.size && this.lastPackLimits)
+      this.pack({ limits: this.lastPackLimits });
     camera.updateWorldMatrix(true, false);
     const focus = new Vector3();
     const boundsCenter = new Vector3();
-    let appliedBatches = 0;
+    let appliedBatches = screenChanged.size;
     let pending = false;
     const clouds: GaussianStoreCloudLodUpdate[] = [];
     for (const entry of this.entries) {
       const strategy = entry.packingStrategy;
+      if (entry.lod && strategy instanceof ScreenSpaceLodPackingStrategy) {
+        camera.getWorldPosition(focus);
+        entry.cloud.worldToLocal(focus);
+        entry.lod.octree.rootBounds.getCenter(boundsCenter);
+        pending ||= strategy.pending;
+        clouds.push({
+          cloud: entry.cloud,
+          focusDistance: focus.distanceTo(boundsCenter),
+          applied: screenChanged.has(entry),
+          pending: strategy.pending,
+          targetStats: strategy.targetStats,
+        });
+        continue;
+      }
       if (
         entry.lod === null ||
         strategy === null ||
@@ -1156,7 +1206,7 @@ export class GaussianStore {
     shCoefficients: Uint32Array,
     destinationCoefficientCount: number,
   ): void {
-    const source = entry.lod?.octree.data ?? entry.source;
+    const source = entry.lod?.data ?? entry.source;
     if (source === null) {
       throw new Error("GaussianStore lost the source for a packed cloud");
     }
@@ -1363,22 +1413,17 @@ function validatePackingStructure(
   if (packing.nodeIds.length !== packing.lodLevels.length) {
     throw new RangeError("GaussianLodPacking arrays must have equal lengths");
   }
+  lod.validateCut(packing);
   const selected = new Set<number>();
   let gaussianCount = 0;
   for (let index = 0; index < packing.nodeIds.length; index++) {
     const nodeId = packing.nodeIds[index]!;
-    const node = lod.nodes[nodeId];
-    const octreeNode = lod.octree.nodes[nodeId];
+    const node = lod.getPackingNode(nodeId);
     const level = packing.lodLevels[index]!;
     const count = node?.levelCounts[level];
-    if (count === undefined || octreeNode === undefined) {
+    if (count === undefined) {
       throw new RangeError(
         `GaussianLod packing references invalid node ${nodeId} or level ${level}`,
-      );
-    }
-    if (!octreeNode.isLeaf) {
-      throw new Error(
-        `GaussianLodPacking must reference leaf nodes; node ${nodeId} is internal`,
       );
     }
     if (selected.has(nodeId)) {

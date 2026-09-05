@@ -1,3 +1,4 @@
+import { GaussianMipmapLod } from "../../src/index";
 import type { GaussianCloud, GaussianStore } from "../../src/index";
 
 /** Owns user-facing loading and packed-cloud status text. */
@@ -25,7 +26,7 @@ export class CloudStatus {
     store: GaussianStore,
   ): void {
     this.set(
-      `${source}: ${sourceCount.toLocaleString()}→${cloud.gaussianCount.toLocaleString()} Gaussians · packed ${store.packedShFormat.toUpperCase()} SH degree ${store.shDegree}`,
+      `${source}: ${sourceCount.toLocaleString()}→${cloud.gaussianCount.toLocaleString()} Gaussians · ${cloud.lod instanceof GaussianMipmapLod ? "mipmap LOD" : "legacy LOD"} · packed ${store.packedShFormat.toUpperCase()} SH degree ${store.shDegree}`,
     );
   }
 

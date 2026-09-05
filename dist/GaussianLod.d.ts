@@ -1,4 +1,4 @@
-import { type Ray } from "three/webgpu";
+import { Box3, type Ray } from "three/webgpu";
 import { GaussianOctree, type GaussianOctreeRaycastHit, type GaussianOctreeRaycastOptions } from "./GaussianOctree";
 export interface GaussianLodLevelOptions {
     /** Fraction of a node's most important Gaussians retained by this level. */
@@ -36,7 +36,12 @@ export declare class GaussianLod {
     readonly nodes: readonly GaussianLodNode[];
     private readonly ownsOctree;
     private disposed;
-    private constructor();
+    protected constructor(octree: GaussianOctree, options: GaussianLodBuildOptions, skipRepresentations?: boolean);
+    /** Data addressed by packing indices; mipmap LOD includes merged parents. */
+    get data(): import("./GaussianData").GaussianData;
+    getNodeBounds(nodeId: number): Box3;
+    protected raycastBounds(nodeId: number, radiusScale: number): Box3;
+    validateCut(_packing: GaussianLodPacking): void;
     get levelCount(): number;
     get finestLevel(): number;
     getNode(nodeId: number): GaussianLodNode;
@@ -45,5 +50,5 @@ export declare class GaussianLod {
     raycast(ray: Ray, packing: GaussianLodPacking, options?: GaussianOctreeRaycastOptions): GaussianOctreeRaycastHit[];
     dispose(): void;
     private assertUsable;
-    private getLeafNode;
+    getPackingNode(nodeId: number): GaussianLodNode;
 }

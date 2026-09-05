@@ -160,6 +160,90 @@ const unsubscribe = pass.subscribeDebug(({ pass, storePack, lod }) => {
 });
 ```
 
+### Mipmap LOD experiment (sandbox default)
+
+The sandbox now builds a hierarchy of **merged Gaussians** and selects a
+screen-space cut in a worker. This is a different representation from the legacy
+importance-prefix LOD: a selected parent replaces its descendants rather than
+removing a fraction of them.
+
+- `?ply=mug.ply` enables mipmap LOD with a **4 physical pixel** refinement threshold.
+- `?ply=mug.ply&lodPixels=2` retains more detail; `lodPixels=8` favors fewer splats.
+- `?ply=mug.ply&lod=legacy` restores the previous radial/prefix LOD.
+- Keep camera, drawing-buffer resolution, `rasterT`, and profiling flags identical
+  when comparing. The status line reports the selected count and LOD mode; the
+  diagnostics report worker planning, slot updates, visible splats and intersections.
+
+Library usage is additive; existing `store.load()` and `GaussianLod.build()` keep
+legacy behavior. Opt in explicitly outside the sandbox:
+
+```ts
+const store = new GaussianStore({
+  loader,
+  defaultScreenSpaceLod: { pixelSize: 4 },
+  maxGaussians: 500_000,
+});
+const cloud = await store.load("mug.ply", { mipmap: {} });
+// Use the existing GaussianPass as before: it supplies the physical viewport.
+```
+
+For an existing CPU octree, use
+`await GaussianMipmapLod.buildAsync(octree, { ownsOctree: true })`, then
+`store.addLod(lod, { ownsLod: true })`. The Store chooses an owned
+`ScreenSpaceLodPackingStrategy` automatically. Its explicit override is supported
+with `packingStrategy: new ScreenSpaceLodPackingStrategy({ pixelSize: 4 })`;
+call `dispose()` on explicitly supplied strategies when finished. Non-browser
+builds and selection use a synchronous fallback when `Worker` is unavailable.
+
+The worker partitions centers spatially into a binary tree. Terminal groups
+(default maximum 8 originals, configurable with `mipmap: { leafSize: 8 }`)
+retain the original splats. Internal nodes store weighted means, full covariance
+including between-center variance, eigendecomposed scales/rotations, and weighted
+SH coefficients. Weights use opacity times an ellipsoid-area proxy. Parents
+retain the accumulated weight for subsequent merges; their rendering opacity is
+clamped to the renderer's existing [0, 1] contract. Original geometry attributes
+remain unchanged; the augmented SH storage uses the existing RGB8E8 format.
+
+Selection refines the largest projected groups first until they satisfy the pixel
+threshold or the allocated Gaussian budget. It accounts for perspective FOV,
+physical viewport size, orthographic zoom, and cloud transforms. Angular size
+uses radial camera distance for rotation stability. Off-screen subtrees remain
+represented, so an asynchronously arriving cut does not expose holes after a
+camera turn; existing GPU projection handles visibility culling.
+
+Completed cuts are applied **atomically**: a parent and its children never render
+simultaneously. Unchanged nodes keep their GPU slots. This mipmap path does not
+use the legacy per-leaf streaming upload limits, because partially applying a
+hierarchy replacement could introduce holes or double coverage. Large camera
+jumps can therefore cause larger upload batches. Selection may lag camera motion
+by a worker round trip, and LOD transitions currently have no crossfade/hysteresis.
+
+The rasterizer, depth hooks and radix kernels are unchanged. The fixed Store
+capacity is also unchanged: projection still dispatches over the slot capacity
+and rejects inactive slots, while fewer selected splats reduce downstream
+visibility/sort/intersection/raster work. The hierarchy adds CPU memory and one-time
+load work; it does not promise a speedup when the screen-space criterion needs
+almost all originals, especially at close zoom.
+
+API details for custom integrations:
+
+- `GaussianLod.data` addresses the representation indices, including merged
+  parents. `lod.octree.data` remains the original source for full-resolution picking.
+- Mipmap packing node IDs refer to the mipmap hierarchy, not the source octree.
+  Use `lod.getNodeBounds(id)` for packing visualization. The legacy radial packing
+  strategies target source-octree leaves and are not compatible with this hierarchy.
+- Mipmap nodes have one representation (packing level 0); hierarchy depth is not
+  the legacy prefix-level number. The existing LOD color helper therefore shows
+  a single level for this mode.
+- Manual integrations should call `store.updateLod(camera, width, height)` with
+  physical drawing-buffer dimensions. GaussianPass already does this.
+
+Inspired by Spark's [merged-Gaussian LOD approach](https://sparkjs.dev/docs/new-spark-renderer/).
+This implementation is independent: it does not reproduce Spark's tree format,
+size-aware construction, extended-opacity filter, foveation or paged streaming.
+Merged parents are a visual approximation, especially when their opacity saturates;
+compare both detail and transparency when changing `lodPixels`.
+
 ### Advanced data and strategy customization
 
 ```ts
