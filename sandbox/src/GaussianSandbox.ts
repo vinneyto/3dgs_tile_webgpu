@@ -19,7 +19,12 @@ import {
   WebGPURenderer,
 } from "three/webgpu";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { pass as scenePass, perspectiveDepthToViewZ, uniform } from "three/tsl";
+import {
+  pass as scenePass,
+  perspectiveDepthToViewZ,
+  uniform,
+  vec4,
+} from "three/tsl";
 import {
   CanonicalGaussianPlyLoader,
   gaussianPass,
@@ -297,13 +302,6 @@ export class GaussianSandbox {
     this.hoverMarker.scale.setScalar(Math.max(bounds.radius * 0.012, 0.005));
 
     if (this.options.rendererMode === "hardware") {
-      const bg = this.options.pass.background!;
-      this.scene.background = new Color().setRGB(
-        bg[0],
-        bg[1],
-        bg[2],
-        SRGBColorSpace,
-      );
       this.pass = gaussianHardwarePass(this.renderer, this.camera, store, {
         scene: this.scene,
         depthSortMode: this.options.pass.depthSortMode,
@@ -353,8 +351,16 @@ export class GaussianSandbox {
     });
     this.pipeline = new RenderPipeline(this.renderer);
     if (this.options.rendererMode === "hardware") {
-      this.pipeline.outputNode = compositePremultipliedOver(
+      // Keep the shared scene background null: a Color background forces the
+      // overlay pass to clear with alpha 1, hiding the entire hardware result.
+      const bg = this.options.pass.background!;
+      const color = new Color().setRGB(bg[0], bg[1], bg[2], SRGBColorSpace);
+      const withBackground = compositePremultipliedOver(
+        vec4(color.r * bg[3], color.g * bg[3], color.b * bg[3], bg[3]),
         this.pass,
+      );
+      this.pipeline.outputNode = compositePremultipliedOver(
+        withBackground,
         this.overlayPass,
       );
     } else {
