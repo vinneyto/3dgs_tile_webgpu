@@ -121,6 +121,7 @@ export {
   rasterPixelCoordinate,
   rasterScreenPosition,
   rasterScreenUV,
+  rasterPixelValue,
   rasterGaussianCenter,
   rasterPixelDelta,
   rasterGaussianCoord,

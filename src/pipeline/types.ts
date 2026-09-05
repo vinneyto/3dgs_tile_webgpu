@@ -14,6 +14,8 @@ export type RadixBackend = "auto" | "subgroup" | "workgroup";
 export type ResolvedRadixBackend = Exclude<RadixBackend, "auto">;
 
 export interface GaussianPassOptions {
+  /** Early termination threshold for remaining transmittance; finite and in (0, 1). Default 0.0001. */
+  rasterTransmittanceThreshold?: number;
   /** Exact float32 or quantized 16-bit depth for the visible-Gaussian pre-sort. */
   depthSortMode?: DepthSortMode;
   /** Preserve subpixel Gaussian energy, or retain the original fixed-footprint 3DGS low-pass behavior. */
@@ -28,6 +30,8 @@ export interface GaussianPassOptions {
   colorSpace?: ColorSpace;
   /** Enable individual kernel profiling plus tile-load and subpixel coverage diagnostics. */
   profileKernels?: boolean;
+  /** Collect expensive per-pixel raster work counters and distribution stats. Default false; independent of kernel timings. */
+  rasterStats?: boolean;
   /** Optional per-tile raster sample budget. Disabled by default. Intersections are still emitted and sorted. */
   maxRasterizedSplatsPerTile?: number | null;
   /**
@@ -58,7 +62,7 @@ export interface GaussianPassStats {
   requestedIntersections: number;
   intersectionCapacity: number;
   overflow: boolean;
-  /** Expensive distribution/readback metrics available with profileKernels. */
+  /** Expensive distribution/readback metrics available with profileKernels or rasterStats. */
   profile: GaussianPassProfileStats | null;
 }
 
@@ -72,9 +76,9 @@ export interface GaussianTileLoadStats {
   tilesOver512: number;
   tilesOver1024: number;
   tilesOver2048: number;
-  /** Number of 256-splat outer-loop iterations summed over all tiles. */
+  /** Estimated 256-splat batches summed over all tiles, before early termination. */
   totalBatches: number;
-  /** Longest 256-splat outer loop executed by a single tile. */
+  /** Maximum estimated 256-splat batches per tile, before early termination. */
   maxBatches: number;
 }
 
@@ -89,6 +93,16 @@ export interface GaussianTileCapStats {
 }
 
 export interface GaussianPassProfileStats {
+  /** Actual pixel/Gaussian work, including all independently executed chunks.
+   * Pixels counts in-bounds pixels in nonempty tiles, once after composition.
+   * AlphaStopped counts those pixels whose final T is below the configured threshold, before background.
+   */
+  rasterWork?: {
+    checked: number;
+    blended: number;
+    pixels: number;
+    alphaStopped: number;
+  } | null;
   tileLoads: GaussianTileLoadStats;
   /** What the configured raster-only cap did to this frame, or null when disabled. */
   appliedTileCap: GaussianTileCapStats | null;

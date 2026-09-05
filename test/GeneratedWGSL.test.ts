@@ -1,3 +1,4 @@
+import { rasterDepthNodes } from "../sandbox/src/rasterDepthNodes";
 import { describe, expect, it } from "vitest";
 import {
   DepthTexture,
@@ -79,6 +80,8 @@ describe("generated Gaussian WGSL", () => {
       8_192,
       1,
       nodes,
+      true,
+      0.001,
     );
 
     const projectionSource = buildCompute(
@@ -88,6 +91,7 @@ describe("generated Gaussian WGSL", () => {
       (rasterizer as unknown as { computeNode: unknown }).computeNode,
     );
     const rasterInternals = rasterizer as unknown as {
+      clearMetrics: unknown;
       chunkComputeNode: unknown;
       compositeNode: unknown;
       chunks: {
@@ -97,7 +101,17 @@ describe("generated Gaussian WGSL", () => {
       };
     };
     const chunkSource = buildCompute(rasterInternals.chunkComputeNode);
+    expect(buildCompute(rasterInternals.clearMetrics)).toContain("atomicStore");
+    expect(rasterSource).toContain("rasterChecked");
+    expect(rasterSource).toContain("rasterBlended");
+    expect(rasterSource).toContain("atomicAdd");
+    expect(chunkSource).toContain("atomicAdd");
     const compositeSource = buildCompute(rasterInternals.compositeNode);
+    expect(compositeSource).toContain("atomicAdd");
+    for (const source of [rasterSource, chunkSource, compositeSource]) {
+      expect(source).toContain("< 0.001");
+      expect(source).not.toContain("< 0.0001");
+    }
     const countChunksSource = buildCompute(rasterInternals.chunks.countNode);
     const prepareChunksSource = buildCompute(
       rasterInternals.chunks.prepareNode,
@@ -163,23 +177,80 @@ describe("generated Gaussian WGSL", () => {
     expect(chunkSource).toContain("0.25");
   });
 
-  it("builds raster discard against an external scene depth texture", () => {
+  it("loads external scene depth once per pixel before Gaussian iteration", () => {
     const nodes = createDefaultGaussianNodeSlots();
     const sceneDepth = texture(new DepthTexture(16, 16)).load(
       rasterPixelCoordinate,
     );
-    nodes.rasterDiscardNode = perspectiveDepthToViewZ(
-      sceneDepth,
-      uniform(0.01),
-      uniform(10_000),
-    )
-      .negate()
-      .lessThan(rasterViewDepth);
+    Object.assign(
+      nodes,
+      rasterDepthNodes(
+        perspectiveDepthToViewZ(
+          sceneDepth,
+          uniform(0.01),
+          uniform(10_000),
+        ).negate(),
+        "float32",
+      ),
+    );
 
     const { rasterSource, chunkSource } = buildPipeline(nodes);
+    expect(rasterSource).not.toContain("atomicAdd");
+    expect(chunkSource).not.toContain("rasterChecked");
 
-    expect(rasterSource).toContain("textureLoad");
-    expect(chunkSource).toContain("textureLoad");
+    for (const source of [rasterSource, chunkSource]) {
+      const textureLoad = source.indexOf("textureLoad");
+      const gaussianIteration = source.indexOf("for (", textureLoad);
+      expect(textureLoad).toBeGreaterThan(-1);
+      expect(gaussianIteration).toBeGreaterThan(textureLoad);
+      expect(source.match(/textureLoad/g)).toHaveLength(1);
+      expect(source.slice(gaussianIteration)).toMatch(
+        /rasterPixelValue[\s\S]*done = true;[\s\S]*break;/,
+      );
+    }
+  });
+
+  it("keeps cached depth but discards individual splats with packed sorting", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    Object.assign(
+      nodes,
+      rasterDepthNodes(
+        texture(new DepthTexture(16, 16)).load(rasterPixelCoordinate),
+        "packed16",
+      ),
+    );
+    const { rasterSource, chunkSource } = buildPipeline(
+      nodes,
+      true,
+      false,
+      "packed16",
+    );
+    for (const source of [rasterSource, chunkSource]) {
+      expect(source.match(/textureLoad/g)).toHaveLength(1);
+      expect(source).toMatch(
+        /if \( \( rasterPixelValue < [^\n]+\) \) \{\s+continue;/,
+      );
+    }
+  });
+
+  it("emits expensive work counters only when explicitly enabled", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    const enabled = buildPipeline(nodes, true, true);
+    const disabled = buildPipeline(nodes);
+    for (const key of ["rasterSource", "chunkSource"] as const) {
+      expect(enabled[key]).toContain("atomicAdd");
+      expect(enabled[key]).toContain("rasterChecked");
+      expect(disabled[key]).not.toContain("atomicAdd");
+    }
+  });
+
+  it("rejects per-Gaussian accessors in the pixel-scoped node", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.rasterPixelValueNode = rasterViewDepth;
+
+    expect(() => buildPipeline(nodes)).toThrow(
+      /rasterPixelValueNode uses a context accessor that is not available/,
+    );
   });
 
   it("omits subpixel sample culling when disabled", () => {
@@ -249,6 +320,8 @@ describe("generated Gaussian WGSL", () => {
 function buildPipeline(
   nodes: ReturnType<typeof createDefaultGaussianNodeSlots>,
   subpixelSampleCulling = true,
+  rasterStats = false,
+  mode: "float32" | "packed16" = "float32",
 ) {
   const data = oneGaussian();
   const store = new GaussianStore();
@@ -270,7 +343,7 @@ function buildPipeline(
     {} as never,
     packed.count,
     2,
-    "float32",
+    mode,
     packed.means,
     projection.projectedMean,
     projection.projectedConic,
@@ -284,6 +357,7 @@ function buildPipeline(
     8_192,
     1,
     nodes,
+    rasterStats,
   );
 
   return {
