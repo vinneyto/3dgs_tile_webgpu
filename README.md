@@ -511,6 +511,17 @@ const depthNode = pass.getTextureNode("depth"); // requires outputDepth: true
 
 ## Gaussian node customization
 
+With `?profile=kernels`, the sandbox diagnostics also report actual raster
+work: checked pixel/Gaussian pairs, blended pairs, both averages per pixel,
+the blend/check ratio, and the fraction of pixels with final transmittance
+below `1e-4` (before background composition). The denominator is in-bounds
+pixels in nonempty tiles, including pixels not covered by any ellipse.
+Work totals include all independently rasterized chunks; final pixels are
+counted only once. Counters accumulate locally inside the Gaussian loop and
+are atomically added to per-tile totals after traversal. They are disabled
+outside kernel profiling and add profiling overhead when enabled. Readback
+uses the existing 1.5-second diagnostics interval.
+
 `GaussianPass` exposes projection-domain slots evaluated once per packed
 Gaussian, a pixel-scoped raster slot, and raster-domain slots evaluated during
 depth-ordered Gaussian traversal. Read-only context accessors are imported from

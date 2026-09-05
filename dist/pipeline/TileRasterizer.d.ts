@@ -29,11 +29,19 @@ export declare class TileRasterizer {
     private computeNode;
     private chunkComputeNode;
     private compositeNode;
-    constructor(renderer: WebGPURenderer, gaussianCount: number, intersectionCapacity: number, mode: DepthSortMode, meansAttribute: StorageBufferAttribute, projectedMeanAttribute: StorageBufferAttribute, projectedConicAttribute: StorageBufferAttribute, projectedColorAttribute: StorageBufferAttribute, sortedRecordsAttribute: StorageBufferAttribute, tileOffsetsAttribute: StorageBufferAttribute, colorTexture: StorageTexture, depthTexture: StorageTexture | null, frame: FrameUniforms, maxSplatsPerTile: number | null, rasterChunkSize: number | null, tileCount: number, nodes: GaussianRasterNodeSlots);
+    private readonly metrics;
+    private readonly clearMetrics;
+    constructor(renderer: WebGPURenderer, gaussianCount: number, intersectionCapacity: number, mode: DepthSortMode, meansAttribute: StorageBufferAttribute, projectedMeanAttribute: StorageBufferAttribute, projectedConicAttribute: StorageBufferAttribute, projectedColorAttribute: StorageBufferAttribute, sortedRecordsAttribute: StorageBufferAttribute, tileOffsetsAttribute: StorageBufferAttribute, colorTexture: StorageTexture, depthTexture: StorageTexture | null, frame: FrameUniforms, maxSplatsPerTile: number | null, rasterChunkSize: number | null, tileCount: number, nodes: GaussianRasterNodeSlots, profileKernels?: boolean);
     rebuild(nodes: GaussianRasterNodeSlots): void;
     encode(tilesX: number, tilesY: number): void;
     dispose(): void;
     private createChunkSchedule;
     private createRasterNode;
     private createCompositeNode;
+    readWorkStats(): Promise<{
+        checked: number;
+        blended: number;
+        pixels: number;
+        alphaStopped: number;
+    } | null>;
 }

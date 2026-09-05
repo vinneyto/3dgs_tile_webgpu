@@ -72,6 +72,16 @@ export interface GaussianTileCapStats {
     maxBatches: number;
 }
 export interface GaussianPassProfileStats {
+    /** Actual pixel/Gaussian work, including all independently executed chunks.
+     * Pixels counts in-bounds pixels in nonempty tiles, once after composition.
+     * AlphaStopped counts those pixels whose final T is below 1e-4, before background.
+     */
+    rasterWork?: {
+        checked: number;
+        blended: number;
+        pixels: number;
+        alphaStopped: number;
+    } | null;
     tileLoads: GaussianTileLoadStats;
     /** What the configured raster-only cap did to this frame, or null when disabled. */
     appliedTileCap: GaussianTileCapStats | null;

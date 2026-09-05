@@ -13,6 +13,8 @@ import {
   If,
   Loop,
   bool,
+  atomicAdd,
+  atomicStore,
   clamp,
   exp,
   float,
@@ -101,6 +103,8 @@ export class TileRasterizer {
   private computeNode: ComputeNode | null = null;
   private chunkComputeNode: ComputeNode | null = null;
   private compositeNode: ComputeNode | null = null;
+  private readonly metrics: StorageBufferAttribute | null;
+  private readonly clearMetrics: ComputeNode | null;
 
   constructor(
     private readonly renderer: WebGPURenderer,
@@ -120,7 +124,23 @@ export class TileRasterizer {
     private readonly rasterChunkSize: number | null,
     private readonly tileCount: number,
     nodes: GaussianRasterNodeSlots,
+    profileKernels = false,
   ) {
+    this.metrics = profileKernels
+      ? this.attributes.createUint("3dgs.raster-work", tileCount * 4)
+      : null;
+    const counters =
+      this.metrics === null
+        ? null
+        : storage(this.metrics, "uint", tileCount * 4).toAtomic();
+    this.clearMetrics =
+      counters === null
+        ? null
+        : Fn(() => {
+            atomicStore(counters.element(instanceIndex), uint(0));
+          })()
+            .compute(tileCount * 4)
+            .setName("3DGS clear raster work metrics");
     this.chunks = this.createChunkSchedule();
     this.rebuild(nodes);
   }
@@ -159,6 +179,7 @@ export class TileRasterizer {
   }
 
   encode(tilesX: number, tilesY: number): void {
+    if (this.clearMetrics !== null) this.renderer.compute(this.clearMetrics);
     if (this.computeNode === null) {
       throw new Error("TileRasterizer has no compute node");
     }
@@ -180,6 +201,7 @@ export class TileRasterizer {
   }
 
   dispose(): void {
+    this.clearMetrics?.dispose();
     this.computeNode?.dispose();
     this.computeNode = null;
     this.chunkComputeNode?.dispose();
@@ -291,6 +313,10 @@ export class TileRasterizer {
     nodes: GaussianRasterNodeSlots,
     target: RasterTarget,
   ): ComputeNode {
+    const counters =
+      this.metrics === null
+        ? null
+        : storage(this.metrics, "uint", this.tileCount * 4).toAtomic();
     const means = storage(
       this.meansAttribute,
       "vec4",
@@ -409,6 +435,8 @@ export class TileRasterizer {
       const depth = float(1).toVar("depth");
       const depthWritten = bool(false).toVar("depthWritten");
       const done = bool(false).toVar("done");
+      const checked = counters === null ? null : uint(0).toVar("rasterChecked");
+      const blended = counters === null ? null : uint(0).toVar("rasterBlended");
       Loop(
         {
           start: sampleStart,
@@ -480,6 +508,7 @@ export class TileRasterizer {
                 condition: "<",
               },
               ({ i: batchIndex }) => {
+                checked?.addAssign(1);
                 const mean = sharedMean.element(batchIndex);
                 const gaussianId = sharedGaussianId.element(batchIndex);
                 const delta = pixelCenter.sub(mean.xy);
@@ -552,6 +581,7 @@ export class TileRasterizer {
                 });
                 const color = resolveNode(nodes.rasterColorNode, overrides);
                 accumulated.addAssign(color.mul(transmittance).mul(alpha));
+                blended?.addAssign(1);
                 transmittance.mulAssign(float(1).sub(alpha));
                 If(transmittance.lessThan(1e-4), () => {
                   done.assign(bool(true));
@@ -599,6 +629,21 @@ export class TileRasterizer {
       );
 
       If(activePixel, () => {
+        if (counters !== null) {
+          const base = tile.mul(4);
+          atomicAdd(counters.element(base), checked!);
+          atomicAdd(counters.element(base.add(1)), blended!);
+          if (target === "direct") {
+            // Chunked tiles are counted by the composite, not this bypass path.
+            If(sourceCount.greaterThan(0).and(sampleEnd.greaterThan(0)), () => {
+              atomicAdd(counters.element(base.add(2)), uint(1));
+              atomicAdd(
+                counters.element(base.add(3)),
+                select(transmittance.lessThan(1e-4), uint(1), uint(0)),
+              );
+            });
+          }
+        }
         if (target === "direct") {
           storeFinalPixel(
             accumulated,
@@ -636,6 +681,10 @@ export class TileRasterizer {
   }
 
   private createCompositeNode(): ComputeNode {
+    const counters =
+      this.metrics === null
+        ? null
+        : storage(this.metrics, "uint", this.tileCount * 4).toAtomic();
     const chunks = this.chunks!;
     const chunkCounts = storage(
       chunks.counts,
@@ -711,12 +760,37 @@ export class TileRasterizer {
           this.depthTexture,
           frame,
         );
+        if (counters !== null) {
+          atomicAdd(counters.element(tile.mul(4).add(2)), uint(1));
+          atomicAdd(
+            counters.element(tile.mul(4).add(3)),
+            select(transmittance.lessThan(1e-4), uint(1), uint(0)),
+          );
+        }
       });
     });
 
     return kernel()
       .computeKernel([TILE_SIZE, TILE_SIZE])
       .setName("3DGS exact raster chunk composite TSL");
+  }
+
+  async readWorkStats() {
+    if (this.metrics === null) return null;
+    const values = new Uint32Array(
+      await this.renderer.getArrayBufferAsync(this.metrics),
+    );
+    let checked = 0,
+      blended = 0,
+      pixels = 0,
+      alphaStopped = 0;
+    for (let i = 0; i < values.length; i += 4) {
+      checked += values[i]!;
+      blended += values[i + 1]!;
+      pixels += values[i + 2]!;
+      alphaStopped += values[i + 3]!;
+    }
+    return { checked, blended, pixels, alphaStopped };
   }
 }
 

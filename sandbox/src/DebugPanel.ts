@@ -274,7 +274,18 @@ export class DebugPanel {
       return ["tile profile   waiting for GPU readback"];
     }
     const loads = profile.tileLoads;
+    const work = profile.rasterWork;
     return [
+      ...(work == null
+        ? []
+        : [
+            `raster checked ${formatInteger(work.checked)}  avg/pixel ${(work.checked / Math.max(1, work.pixels)).toFixed(1)}`,
+            `raster blended ${formatInteger(work.blended)}  avg/pixel ${(work.blended / Math.max(1, work.pixels)).toFixed(1)}`,
+            `blend/check    ${((100 * work.blended) / Math.max(1, work.checked)).toFixed(1)}%`,
+            `alpha stopped  ${formatInteger(work.alphaStopped)} / ${formatInteger(work.pixels)} (${((100 * work.alphaStopped) / Math.max(1, work.pixels)).toFixed(1)}%)`,
+            `raster scope   pixels in nonempty tiles · T < 1e-4`,
+            `               work includes all chunks · profiling overhead`,
+          ]),
       `tile splats    max ${formatInteger(loads.max)}  mean ${loads.mean.toFixed(1)}  median ${loads.median.toFixed(1)}`,
       `percentiles    p95 ${formatInteger(loads.p95)}  p99 ${formatInteger(loads.p99)}`,
       `heavy tiles    >256 ${formatInteger(loads.tilesOver256)}  >512 ${formatInteger(loads.tilesOver512)}`,

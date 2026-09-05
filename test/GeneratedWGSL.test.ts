@@ -80,6 +80,7 @@ describe("generated Gaussian WGSL", () => {
       8_192,
       1,
       nodes,
+      true,
     );
 
     const projectionSource = buildCompute(
@@ -89,6 +90,7 @@ describe("generated Gaussian WGSL", () => {
       (rasterizer as unknown as { computeNode: unknown }).computeNode,
     );
     const rasterInternals = rasterizer as unknown as {
+      clearMetrics: unknown;
       chunkComputeNode: unknown;
       compositeNode: unknown;
       chunks: {
@@ -98,7 +100,13 @@ describe("generated Gaussian WGSL", () => {
       };
     };
     const chunkSource = buildCompute(rasterInternals.chunkComputeNode);
+    expect(buildCompute(rasterInternals.clearMetrics)).toContain("atomicStore");
+    expect(rasterSource).toContain("rasterChecked");
+    expect(rasterSource).toContain("rasterBlended");
+    expect(rasterSource).toContain("atomicAdd");
+    expect(chunkSource).toContain("atomicAdd");
     const compositeSource = buildCompute(rasterInternals.compositeNode);
+    expect(compositeSource).toContain("atomicAdd");
     const countChunksSource = buildCompute(rasterInternals.chunks.countNode);
     const prepareChunksSource = buildCompute(
       rasterInternals.chunks.prepareNode,
@@ -177,6 +185,8 @@ describe("generated Gaussian WGSL", () => {
     nodes.rasterBreakNode = rasterPixelValue.lessThan(rasterViewDepth);
 
     const { rasterSource, chunkSource } = buildPipeline(nodes);
+    expect(rasterSource).not.toContain("atomicAdd");
+    expect(chunkSource).not.toContain("rasterChecked");
 
     for (const source of [rasterSource, chunkSource]) {
       const textureLoad = source.indexOf("textureLoad");

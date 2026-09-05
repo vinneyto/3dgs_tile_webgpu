@@ -193,13 +193,14 @@ export class TiledGaussianPipeline {
     if (this.profileDiagnostics === null || this.tileOffsets === null) {
       return this.intersections.readStats();
     }
-    const [stats, profile] = await Promise.all([
+    const [stats, profile, rasterWork] = await Promise.all([
       this.intersections.readStats(),
       this.profileDiagnostics.readStats(this.tileOffsets.offsets),
+      this.rasterizer?.readWorkStats() ?? Promise.resolve(null),
     ]);
     return {
       ...stats,
-      profile,
+      profile: { ...profile, rasterWork },
     };
   }
 
@@ -301,6 +302,7 @@ export class TiledGaussianPipeline {
       this.rasterChunkSize,
       tileCount,
       this.nodes,
+      this.profileKernels,
     );
     this.width = width;
     this.height = height;
