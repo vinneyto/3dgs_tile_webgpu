@@ -14,8 +14,6 @@ export type RadixBackend = "auto" | "subgroup" | "workgroup";
 export type ResolvedRadixBackend = Exclude<RadixBackend, "auto">;
 
 export interface GaussianPassOptions {
-  /** Four independent 8x8 raster workgroups per sorted 16x16 tile. Default false. */
-  rasterSubtiles?: boolean;
   /** Early termination threshold for remaining transmittance; finite and in (0, 1). Default 0.0001. */
   rasterTransmittanceThreshold?: number;
   /** Exact float32 or quantized 16-bit depth for the visible-Gaussian pre-sort. */
@@ -32,6 +30,8 @@ export interface GaussianPassOptions {
   colorSpace?: ColorSpace;
   /** Enable individual kernel profiling plus tile-load and subpixel coverage diagnostics. */
   profileKernels?: boolean;
+  /** Collect expensive per-pixel raster work counters and distribution stats. Default false; independent of kernel timings. */
+  rasterStats?: boolean;
   /** Optional per-tile raster sample budget. Disabled by default. Intersections are still emitted and sorted. */
   maxRasterizedSplatsPerTile?: number | null;
   /**
@@ -62,7 +62,7 @@ export interface GaussianPassStats {
   requestedIntersections: number;
   intersectionCapacity: number;
   overflow: boolean;
-  /** Expensive distribution/readback metrics available with profileKernels. */
+  /** Expensive distribution/readback metrics available with profileKernels or rasterStats. */
   profile: GaussianPassProfileStats | null;
 }
 
@@ -76,9 +76,9 @@ export interface GaussianTileLoadStats {
   tilesOver512: number;
   tilesOver1024: number;
   tilesOver2048: number;
-  /** Estimated batches before early exit across all raster workgroups. */
+  /** Estimated 256-splat batches summed over all tiles, before early termination. */
   totalBatches: number;
-  /** Maximum estimated aggregate batch count for one parent tile. */
+  /** Maximum estimated 256-splat batches per tile, before early termination. */
   maxBatches: number;
 }
 

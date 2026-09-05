@@ -1,3 +1,4 @@
+import { rasterDepthNodes } from "./rasterDepthNodes";
 import {
   DirectionalLight,
   Group,
@@ -21,8 +22,6 @@ import {
   CanonicalGaussianPlyLoader,
   gaussianPass,
   rasterPixelCoordinate,
-  rasterPixelValue,
-  rasterViewDepth,
   type GaussianCloud,
   type GaussianPass,
   GaussianStore,
@@ -311,8 +310,10 @@ export class GaussianSandbox {
       uniform(this.camera.near),
       uniform(this.camera.far),
     ).negate();
-    this.pass.rasterPixelValueNode = opaqueViewDepth;
-    this.pass.rasterBreakNode = rasterPixelValue.lessThan(rasterViewDepth);
+    Object.assign(
+      this.pass,
+      rasterDepthNodes(opaqueViewDepth, this.pass.depthSortMode),
+    );
     this.transparentPass = scenePass(this.scene, this.camera);
     this.transparentPass.transparent = true;
     this.transparentPass.opaque = false;

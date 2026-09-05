@@ -1,28 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { readSandboxOptions } from "../sandbox/src/SandboxOptions";
 
-describe("raster T experiment", () => {
-  it("enables split raster workgroups only with the dedicated flag", () => {
-    expect(readSandboxOptions(new URLSearchParams()).pass.rasterSubtiles).toBe(
-      false,
-    );
+describe("sandbox raster options", () => {
+  it("keeps work counters independent of kernel timings", () => {
     expect(
-      readSandboxOptions(new URLSearchParams("rasterSubtiles=1")).pass
-        .rasterSubtiles,
-    ).toBe(true);
-    expect(
-      readSandboxOptions(
-        new URLSearchParams("rasterSubtiles=0&tileSize=8&blockMask=1"),
-      ).pass.rasterSubtiles,
+      readSandboxOptions(new URLSearchParams("profile=kernels")).pass
+        .rasterStats,
     ).toBe(false);
+    const options = readSandboxOptions(
+      new URLSearchParams("rasterStats=1&stats=0"),
+    );
+    expect(options.pass.rasterStats).toBe(true);
+    expect(options.pass.profileKernels).toBe(false);
+    expect(options.statsEnabled).toBe(true);
   });
-  it("defaults to 0.001 and supports the original baseline without profiling", () => {
+  it("defaults to 0.0001 and supports an explicit experiment without profiling", () => {
     expect(
       readSandboxOptions(new URLSearchParams()).pass
         .rasterTransmittanceThreshold,
-    ).toBe(0.001);
-    const options = readSandboxOptions(new URLSearchParams("rasterT=0.0001"));
-    expect(options.pass.rasterTransmittanceThreshold).toBe(0.0001);
+    ).toBe(0.0001);
+    const options = readSandboxOptions(new URLSearchParams("rasterT=0.001"));
+    expect(options.pass.rasterTransmittanceThreshold).toBe(0.001);
     expect(options.profileEnabled).toBe(false);
   });
   it.each(["0", "-1", "1", "NaN", "Infinity", ""])(
@@ -31,7 +29,7 @@ describe("raster T experiment", () => {
       expect(
         readSandboxOptions(new URLSearchParams({ rasterT: value })).pass
           .rasterTransmittanceThreshold,
-      ).toBe(0.001);
+      ).toBe(0.0001);
     },
   );
 });

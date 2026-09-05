@@ -17,10 +17,12 @@ export function readSandboxOptions(
   parameters = new URLSearchParams(location.search),
 ): SandboxOptions {
   const profileEnabled = parameters.get("profile") === "kernels";
+  const rasterStats = parameters.get("rasterStats") === "1";
   return {
     debugEnabled: parameters.get("debug") !== "0",
     profileEnabled,
-    statsEnabled: profileEnabled || parameters.get("stats") !== "0",
+    statsEnabled:
+      profileEnabled || rasterStats || parameters.get("stats") !== "0",
     pixelRatio: readRenderPixelRatio(parameters),
     pass: {
       depthSortMode:
@@ -29,7 +31,7 @@ export function readSandboxOptions(
         parameters.get("aa") === "classic" ? "classic" : "compensated",
       background: [0.018, 0.022, 0.032, 1],
       profileKernels: profileEnabled,
-      rasterSubtiles: parameters.get("rasterSubtiles") === "1",
+      rasterStats,
       rasterTransmittanceThreshold: readRasterThreshold(parameters),
       maxRasterizedSplatsPerTile: readOptionalLimit(parameters, "tileCap"),
       rasterChunkSize: readOptionalLimit(parameters, "rasterChunk"),
@@ -49,8 +51,8 @@ export function readSandboxOptions(
 }
 
 function readRasterThreshold(parameters: URLSearchParams): number {
-  const value = Number(parameters.get("rasterT") ?? "0.001");
-  return Number.isFinite(value) && value > 0 && value < 1 ? value : 0.001;
+  const value = Number(parameters.get("rasterT") ?? "0.0001");
+  return Number.isFinite(value) && value > 0 && value < 1 ? value : 0.0001;
 }
 
 function readRenderPixelRatio(parameters: URLSearchParams): number {

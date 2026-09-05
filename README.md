@@ -511,26 +511,11 @@ const depthNode = pass.getTextureNode("depth"); // requires outputDepth: true
 
 ## Gaussian node customization
 
-The sandbox supports `&rasterSubtiles=1` to rasterize each sorted 16x16 tile
-with four independent 8x8 workgroups. Omit the flag or use
-`&rasterSubtiles=0` for one 16x16 workgroup. The library option is
-`GaussianPassOptions.rasterSubtiles` (default `false`). Both modes work with
-or without profiling and are shown in renderer diagnostics.
+Depth cutoff early termination requires exact depth order (`float32`). The sandbox
+uses the same cached depth with per-Gaussian discard for `packed16`, because
+candidates inside a quantized depth bin can have a different exact depth order.
 
-Projection, intersection counting/emission, and tile sorting always use the
-same 16x16 parent tiles. Only raster dispatch changes: the four workgroups
-share the parent candidate list and independently accumulate their 64 pixels,
-with their own alpha/depth early exits and 64-Gaussian load batches.
-Chunk raster uses the same four quadrants, writing disjoint regions of the
-existing 256-pixel partial buffer. Chunk composition remains one 16x16
-workgroup per parent tile. This avoids increasing sort records but repeats
-candidate loading between raster workgroups; measure total GPU time at the
-same pose, resolution, `rasterT`, and profiling mode.
-
-The previous `tileSize` and `blockMask` experiments and public options have
-been removed. Old URL parameters are ignored; no coverage mask is generated.
-
-With `?profile=kernels`, the sandbox diagnostics also report actual raster
+With `?rasterStats=1` (`GaussianPassOptions.rasterStats`), the sandbox diagnostics report actual raster
 work: checked pixel/Gaussian pairs, blended pairs, both averages per pixel,
 the blend/check ratio, and the fraction of pixels with final transmittance
 below the configured T threshold (before background composition). The denominator is in-bounds
@@ -538,11 +523,12 @@ pixels in nonempty tiles, including pixels not covered by any ellipse.
 Work totals include all independently rasterized chunks; final pixels are
 counted only once. Counters accumulate locally inside the Gaussian loop and
 are atomically added to per-tile totals after traversal. They are disabled
-outside kernel profiling and add profiling overhead when enabled. Readback
+by default, including with `?profile=kernels`. Enable them separately when
+collecting work counts; they affect GPU timings on every frame. Readback
 uses the existing 1.5-second diagnostics interval.
 
-The sandbox currently defaults to the early-exit experiment `?rasterT=0.001`.
-Use `?rasterT=0.0001` for the original baseline, with or without profiling.
+The sandbox and library default to `T = 0.0001`.
+Use `?rasterT=0.001` to experiment with earlier termination, with or without profiling.
 The active cutoff is shown in renderer diagnostics and applies to direct raster,
 chunk raster, chunk composition, and saturation counters. Compare identical
 camera poses and resolution. A larger cutoff drops more of the faint tail and
@@ -817,8 +803,7 @@ projection; with culling disabled it is the number of candidates that continue
 through the pipeline. Profiling adds a compute pass, timestamp overhead and two
 diagnostic readbacks, so its FPS is not the final production-performance number.
 
-The tile profile also reports estimated total and worst-parent-tile raster
-batches before early exit (one group of 256, or four groups loading 64 splats
+The tile profile also reports total and worst-tile raster batches (256 splats
 per batch), plus counterfactual dropped-intersection, affected-tile and batch
 counts for caps of 2048, 4096 and 8192. Exact chunked rasterization is enabled
 by default with `rasterChunkSize: 8192`. Tiles within that limit retain the

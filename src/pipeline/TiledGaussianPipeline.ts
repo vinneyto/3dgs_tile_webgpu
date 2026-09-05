@@ -68,7 +68,7 @@ export class TiledGaussianPipeline {
     private readonly radixBackend: ResolvedRadixBackend,
     private readonly nodes: GaussianNodeSlots,
     private readonly rasterTransmittanceThreshold = 1e-4,
-    private readonly rasterSubtiles = false,
+    private readonly rasterStats = false,
   ) {
     this.frame = new FrameUniforms(camera, background);
     this.objects = new ObjectFrameState(camera, store, data.count);
@@ -80,17 +80,17 @@ export class TiledGaussianPipeline {
       nodes,
       subpixelSampleCulling,
     );
-    this.profileDiagnostics = profileKernels
-      ? new ProfileDiagnosticsStage(
-          renderer,
-          data.count,
-          this.projection.projectedMean,
-          this.projection.projectedConic,
-          this.frame,
-          maxRasterizedSplatsPerTile,
-          this.rasterSubtiles,
-        )
-      : null;
+    this.profileDiagnostics =
+      profileKernels || rasterStats
+        ? new ProfileDiagnosticsStage(
+            renderer,
+            data.count,
+            this.projection.projectedMean,
+            this.projection.projectedConic,
+            this.frame,
+            maxRasterizedSplatsPerTile,
+          )
+        : null;
     this.visibleScan = new ExclusiveScanStage(
       this.projection.projectedMean,
       data.count,
@@ -305,9 +305,8 @@ export class TiledGaussianPipeline {
       this.rasterChunkSize,
       tileCount,
       this.nodes,
-      this.profileKernels,
+      this.rasterStats,
       this.rasterTransmittanceThreshold,
-      this.rasterSubtiles,
     );
     this.width = width;
     this.height = height;

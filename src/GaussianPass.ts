@@ -60,7 +60,7 @@ export class GaussianPass extends PassNode {
   readonly outputDepth: boolean;
   readonly colorSpace: ColorSpace;
   readonly profileKernels: boolean;
-  readonly rasterSubtiles: boolean;
+  readonly rasterStats: boolean;
   readonly rasterTransmittanceThreshold: number;
   readonly maxRasterizedSplatsPerTile: number | null;
   readonly rasterChunkSize: number | null;
@@ -150,7 +150,7 @@ export class GaussianPass extends PassNode {
     this.outputDepth = options.outputDepth ?? false;
     this.colorSpace = options.colorSpace ?? SRGBColorSpace;
     this.profileKernels = options.profileKernels ?? false;
-    this.rasterSubtiles = options.rasterSubtiles ?? false;
+    this.rasterStats = options.rasterStats ?? false;
     this.rasterTransmittanceThreshold =
       options.rasterTransmittanceThreshold ?? 1e-4;
     if (
@@ -410,7 +410,7 @@ export class GaussianPass extends PassNode {
         this.radixBackend,
         this.nodeSlots,
         this.rasterTransmittanceThreshold,
-        this.rasterSubtiles,
+        this.rasterStats,
       );
       this.pipelineLayoutVersion = this.gaussianStore.layoutVersion;
       this.dirtyStages = DirtyStage.None;

@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { rasterDepthNodes } from "../sandbox/src/rasterDepthNodes";
+import { describe, expect, it } from "vitest";
 import {
   DepthTexture,
   PerspectiveCamera,
@@ -25,7 +26,6 @@ import {
   gaussianProjectedArea,
   rasterGaussianColor,
   rasterGaussianOpacity,
-  rasterPixelValue,
   rasterPixelCoordinate,
   rasterPower,
   rasterUV,
@@ -43,39 +43,6 @@ const TEST_LIMITS = {
 };
 
 describe("generated Gaussian WGSL", () => {
-  it.each([false, true])(
-    "splits only raster dispatch when rasterSubtiles=%s",
-    (split) => {
-      const result = buildPipeline(
-        createDefaultGaussianNodeSlots(),
-        true,
-        split,
-      );
-      const size = split ? 8 : 16;
-      expect(result.projectionSource).toContain("* 16.0");
-      for (const source of [result.rasterSource, result.chunkSource]) {
-        expect(source).toContain(`@workgroup_size( ${size}, ${size}, 1 )`);
-        expect(source).toContain(`+= ${size * size} )`);
-        expect(source).not.toContain("raster_block_mask");
-        if (split) expect(source).toContain("workgroupId.z * 64u");
-      }
-      expect(result.compositeSource).toContain("@workgroup_size( 16, 16, 1 )");
-      expect(result.partialCount).toBe(256);
-      expect(result.prepareSource).toContain(
-        `vec4<u32>(count, 1u, ${split ? 4 : 1}u, 0u)`,
-      );
-      result.rasterizer.encode(2, 3);
-      expect(result.compute).toHaveBeenCalledWith(expect.anything(), [
-        2,
-        3,
-        split ? 4 : 1,
-      ]);
-      expect(result.compute).toHaveBeenLastCalledWith(
-        expect.anything(),
-        [2, 3, 1],
-      );
-    },
-  );
   it("builds projection and raster TSL shells into compute shaders", () => {
     const data = oneGaussian();
     const store = new GaussianStore();
@@ -215,12 +182,17 @@ describe("generated Gaussian WGSL", () => {
     const sceneDepth = texture(new DepthTexture(16, 16)).load(
       rasterPixelCoordinate,
     );
-    nodes.rasterPixelValueNode = perspectiveDepthToViewZ(
-      sceneDepth,
-      uniform(0.01),
-      uniform(10_000),
-    ).negate();
-    nodes.rasterBreakNode = rasterPixelValue.lessThan(rasterViewDepth);
+    Object.assign(
+      nodes,
+      rasterDepthNodes(
+        perspectiveDepthToViewZ(
+          sceneDepth,
+          uniform(0.01),
+          uniform(10_000),
+        ).negate(),
+        "float32",
+      ),
+    );
 
     const { rasterSource, chunkSource } = buildPipeline(nodes);
     expect(rasterSource).not.toContain("atomicAdd");
@@ -235,6 +207,40 @@ describe("generated Gaussian WGSL", () => {
       expect(source.slice(gaussianIteration)).toMatch(
         /rasterPixelValue[\s\S]*done = true;[\s\S]*break;/,
       );
+    }
+  });
+
+  it("keeps cached depth but discards individual splats with packed sorting", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    Object.assign(
+      nodes,
+      rasterDepthNodes(
+        texture(new DepthTexture(16, 16)).load(rasterPixelCoordinate),
+        "packed16",
+      ),
+    );
+    const { rasterSource, chunkSource } = buildPipeline(
+      nodes,
+      true,
+      false,
+      "packed16",
+    );
+    for (const source of [rasterSource, chunkSource]) {
+      expect(source.match(/textureLoad/g)).toHaveLength(1);
+      expect(source).toMatch(
+        /if \( \( rasterPixelValue < [^\n]+\) \) \{\s+continue;/,
+      );
+    }
+  });
+
+  it("emits expensive work counters only when explicitly enabled", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    const enabled = buildPipeline(nodes, true, true);
+    const disabled = buildPipeline(nodes);
+    for (const key of ["rasterSource", "chunkSource"] as const) {
+      expect(enabled[key]).toContain("atomicAdd");
+      expect(enabled[key]).toContain("rasterChecked");
+      expect(disabled[key]).not.toContain("atomicAdd");
     }
   });
 
@@ -314,7 +320,8 @@ describe("generated Gaussian WGSL", () => {
 function buildPipeline(
   nodes: ReturnType<typeof createDefaultGaussianNodeSlots>,
   subpixelSampleCulling = true,
-  split = false,
+  rasterStats = false,
+  mode: "float32" | "packed16" = "float32",
 ) {
   const data = oneGaussian();
   const store = new GaussianStore();
@@ -332,12 +339,11 @@ function buildPipeline(
     nodes,
     subpixelSampleCulling,
   );
-  const compute = vi.fn();
   const rasterizer = new TileRasterizer(
-    { compute } as never,
+    {} as never,
     packed.count,
     2,
-    "float32",
+    mode,
     packed.means,
     projection.projectedMean,
     projection.projectedConic,
@@ -351,26 +357,10 @@ function buildPipeline(
     8_192,
     1,
     nodes,
-    false,
-    1e-4,
-    split,
+    rasterStats,
   );
 
   return {
-    rasterizer,
-    compute,
-    partialCount: (
-      rasterizer as unknown as {
-        chunks: { partialData: StorageBufferAttribute };
-      }
-    ).chunks.partialData.count,
-    prepareSource: buildCompute(
-      (rasterizer as unknown as { chunks: { prepareNode: unknown } }).chunks
-        .prepareNode,
-    ),
-    compositeSource: buildCompute(
-      (rasterizer as unknown as { compositeNode: unknown }).compositeNode,
-    ),
     projectionSource: buildCompute(
       (projection as unknown as { computeNode: unknown }).computeNode,
     ),

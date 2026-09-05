@@ -245,8 +245,6 @@ export class DebugPanel {
       stagesLine,
       subpixelCullLine,
       rasterChunkLine,
-      `raster layout  sort 16x16 · raster ${this.pass?.rasterSubtiles ? "4 x 8x8" : "1 x 16x16"}`,
-      `               ?rasterSubtiles=1 enables split workgroups`,
       `raster cutoff  T < ${this.pass?.rasterTransmittanceThreshold ?? "—"} · ?rasterT=0.0001 baseline`,
       ...profileLines,
       "",
@@ -269,8 +267,10 @@ export class DebugPanel {
     profileKernels: boolean,
     subpixelSampleCulling: boolean,
   ): string[] {
-    if (!profileKernels) {
-      return ["tile profile   ?profile=kernels enables distribution stats"];
+    if (!profileKernels && !this.pass?.rasterStats) {
+      return [
+        "tile profile   ?profile=kernels · ?rasterStats=1 for work counters",
+      ];
     }
     const profile = this.stats?.profile ?? null;
     if (profile === null) {
@@ -280,7 +280,7 @@ export class DebugPanel {
     const work = profile.rasterWork;
     return [
       ...(work == null
-        ? []
+        ? ["raster work    ?rasterStats=1 enables expensive counters"]
         : [
             `raster checked ${formatInteger(work.checked)}  avg/pixel ${(work.checked / Math.max(1, work.pixels)).toFixed(1)}`,
             `raster blended ${formatInteger(work.blended)}  avg/pixel ${(work.blended / Math.max(1, work.pixels)).toFixed(1)}`,

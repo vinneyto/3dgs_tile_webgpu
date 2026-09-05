@@ -134,7 +134,9 @@ export const rasterPixelContextNodes = new Set<Node>([
 ]);
 
 // Accessors available before ellipse evaluation. A true rasterBreakNode ends
-// the current pixel's depth-ordered Gaussian traversal.
+// the current pixel's depth-ordered Gaussian traversal. The predicate must
+// remain true for all later candidates; packed16 does not order exact depth
+// within a quantized bin. Use rasterDiscardNode for such comparisons.
 export const rasterBreakContextNodes = new Set<Node>([
   ...rasterPixelContextNodes,
   rasterPixelValue,
