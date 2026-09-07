@@ -49,6 +49,84 @@ describe("GaussianPass node slots", () => {
     expect(pipeline.render).toHaveBeenCalledOnce();
   });
 
+  it("uses the full drawing-buffer size at resolution scale 1", () => {
+    const { pass, renderer, store } = createPass({ outputDepth: true });
+    const pipeline = createPipelineMock();
+    Object.assign(pass as unknown as Record<string, unknown>, {
+      pipeline,
+      pipelineLayoutVersion: store.layoutVersion,
+    });
+
+    pass.updateBefore({ renderer } as unknown as NodeFrame);
+
+    expect(pass.renderTarget.width).toBe(32);
+    expect(pass.renderTarget.height).toBe(32);
+    expect(pass.depthTexture?.image).toMatchObject({ width: 32, height: 32 });
+    expect(pipeline.prepareFrame).toHaveBeenLastCalledWith(
+      32,
+      32,
+      pass.colorTexture,
+      pass.depthTexture,
+    );
+  });
+
+  it("scales every Gaussian render dimension with resolution scale", () => {
+    const { pass, renderer, store } = createPass({ outputDepth: true });
+    const pipeline = createPipelineMock();
+    Object.assign(pass as unknown as Record<string, unknown>, {
+      pipeline,
+      pipelineLayoutVersion: store.layoutVersion,
+    });
+
+    pass.setResolutionScale(0.5);
+    pass.updateBefore({ renderer } as unknown as NodeFrame);
+
+    expect(pass.renderTarget.width).toBe(16);
+    expect(pass.renderTarget.height).toBe(16);
+    expect(pass.depthTexture?.image).toMatchObject({ width: 16, height: 16 });
+    expect(pipeline.prepareFrame).toHaveBeenLastCalledWith(
+      16,
+      16,
+      pass.colorTexture,
+      pass.depthTexture,
+    );
+  });
+
+  it("resizes pass resources when resolution scale changes", () => {
+    const { pass, renderer, store } = createPass({ outputDepth: true });
+    const pipeline = createPipelineMock();
+    Object.assign(pass as unknown as Record<string, unknown>, {
+      pipeline,
+      pipelineLayoutVersion: store.layoutVersion,
+    });
+
+    pass.updateBefore({ renderer } as unknown as NodeFrame);
+    const renderTargetDisposed = vi.fn();
+    const depthTextureDisposed = vi.fn();
+    pass.renderTarget.addEventListener("dispose", renderTargetDisposed);
+    pass.depthTexture?.addEventListener("dispose", depthTextureDisposed);
+    pass.setResolutionScale(0.5);
+    pass.updateBefore({ renderer } as unknown as NodeFrame);
+    pass.setResolutionScale(1);
+    pass.updateBefore({ renderer } as unknown as NodeFrame);
+
+    expect(
+      pipeline.prepareFrame.mock.calls.map(([width, height]) => [
+        width,
+        height,
+      ]),
+    ).toEqual([
+      [32, 32],
+      [16, 16],
+      [32, 32],
+    ]);
+    expect(pass.renderTarget.width).toBe(32);
+    expect(pass.renderTarget.height).toBe(32);
+    expect(pass.depthTexture?.image).toMatchObject({ width: 32, height: 32 });
+    expect(renderTargetDisposed).toHaveBeenCalledTimes(2);
+    expect(depthTextureDisposed).toHaveBeenCalledTimes(2);
+  });
+
   it("exposes the documented identity defaults", () => {
     const { pass } = createPass();
 
@@ -108,6 +186,7 @@ function createPass(
   options: {
     maxRasterizedSplatsPerTile?: number | null;
     rasterChunkSize?: number | null;
+    outputDepth?: boolean;
   } = {},
 ): {
   pass: GaussianPass;
@@ -125,6 +204,16 @@ function createPass(
     options,
   );
   return { pass, renderer, store };
+}
+
+function createPipelineMock() {
+  return {
+    rebuildProjection: vi.fn(),
+    rebuildRasterizer: vi.fn(),
+    prepareFrame: vi.fn(),
+    render: vi.fn(),
+    dispose: vi.fn(),
+  };
 }
 
 function createRenderer(): WebGPURenderer {

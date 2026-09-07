@@ -216,7 +216,11 @@ export class GaussianPass extends PassNode {
 
   override setSize(width: number, height: number): void {
     super.setSize(width, height);
-    this.depthTexture?.setSize(width, height, 1);
+    this.depthTexture?.setSize(
+      this.renderTarget.width,
+      this.renderTarget.height,
+      1,
+    );
   }
 
   /** Color-managed output in Three.js' linear working color space. */
@@ -363,13 +367,19 @@ export class GaussianPass extends PassNode {
     }
 
     renderer.getDrawingBufferSize(drawingBufferSize);
-    const width = Math.max(1, Math.floor(drawingBufferSize.x));
-    const height = Math.max(1, Math.floor(drawingBufferSize.y));
+    const drawingBufferWidth = Math.max(1, Math.floor(drawingBufferSize.x));
+    const drawingBufferHeight = Math.max(1, Math.floor(drawingBufferSize.y));
+    const resolutionScale = this.getResolutionScale();
+    const width = Math.max(1, Math.floor(drawingBufferWidth * resolutionScale));
+    const height = Math.max(
+      1,
+      Math.floor(drawingBufferHeight * resolutionScale),
+    );
     if (
       this.renderTarget.width !== width ||
       this.renderTarget.height !== height
     ) {
-      this.setSize(width, height);
+      this.setSize(drawingBufferWidth, drawingBufferHeight);
     }
     if (this.gaussianStore.needsPack) {
       this.gaussianStore.pack({ limits: webGpuDeviceLimits(renderer) });
