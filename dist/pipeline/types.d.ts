@@ -4,7 +4,10 @@ export type DepthSortMode = "float32" | "packed16";
 export type AntialiasMode = "compensated" | "classic";
 export type RadixBackend = "auto" | "subgroup" | "workgroup";
 export type ResolvedRadixBackend = Exclude<RadixBackend, "auto">;
+export type GaussianPassRedrawStrategy = "always" | "auto" | "never";
 export interface GaussianPassOptions {
+    /** Controls when Gaussian kernels run. Defaults to "always" for backwards compatibility. */
+    redrawStrategy?: GaussianPassRedrawStrategy;
     /** Early termination threshold for remaining transmittance; finite and in (0, 1). Default 0.0001. */
     rasterTransmittanceThreshold?: number;
     /** Exact float32 or quantized 16-bit depth for the visible-Gaussian pre-sort. */

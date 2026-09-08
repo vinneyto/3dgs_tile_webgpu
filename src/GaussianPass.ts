@@ -36,6 +36,7 @@ import type {
   GaussianPassDebugInfo,
   GaussianPassDebugListener,
   GaussianPassOptions,
+  GaussianPassRedrawStrategy,
   GaussianPassResources,
   GaussianPassStats,
   ResolvedRadixBackend,
@@ -54,6 +55,7 @@ const enum DirtyStage {
  */
 export class GaussianPass extends PassNode {
   readonly gaussianStore: GaussianStore;
+  readonly redrawStrategy: GaussianPassRedrawStrategy;
   readonly depthSortMode: DepthSortMode;
   readonly antialiasMode: AntialiasMode;
   readonly background: readonly [number, number, number, number];
@@ -78,6 +80,11 @@ export class GaussianPass extends PassNode {
   private pipelineLayoutVersion = -1;
   private readonly nodeSlots = createDefaultGaussianNodeSlots();
   private dirtyStages = DirtyStage.None;
+  private frameDirty = true;
+  private successfulRenderCount = 0;
+  private cachedFrameCount = 0;
+  private autoSnapshot: AutoRedrawSnapshot | null = null;
+  private pipelineDevice: GPUDevice | null = null;
   private disposed = false;
 
   constructor(
@@ -95,10 +102,20 @@ export class GaussianPass extends PassNode {
 
     const depthSortMode = options.depthSortMode ?? "float32";
     const antialiasMode = options.antialiasMode ?? "compensated";
+    const redrawStrategy = options.redrawStrategy ?? "always";
     const requestedRadixBackend = options.radixBackend ?? "auto";
     if (antialiasMode !== "compensated" && antialiasMode !== "classic") {
       throw new RangeError(
         'antialiasMode must be either "compensated" or "classic"',
+      );
+    }
+    if (
+      redrawStrategy !== "always" &&
+      redrawStrategy !== "auto" &&
+      redrawStrategy !== "never"
+    ) {
+      throw new RangeError(
+        'redrawStrategy must be "always", "auto", or "never"',
       );
     }
     const radixBackend = resolveRadixBackend(
@@ -143,6 +160,7 @@ export class GaussianPass extends PassNode {
     this.name = "GaussianPass";
     this.ownerRenderer = renderer;
     this.gaussianStore = gaussianStore;
+    this.redrawStrategy = redrawStrategy;
     this.depthSortMode = depthSortMode;
     this.antialiasMode = antialiasMode;
     this.requestedIntersectionCapacity = intersectionCapacity;
@@ -215,12 +233,30 @@ export class GaussianPass extends PassNode {
   }
 
   override setSize(width: number, height: number): void {
+    const previousWidth = this.renderTarget.width;
+    const previousHeight = this.renderTarget.height;
     super.setSize(width, height);
     this.depthTexture?.setSize(
       this.renderTarget.width,
       this.renderTarget.height,
       1,
     );
+    if (
+      previousWidth !== this.renderTarget.width ||
+      previousHeight !== this.renderTarget.height
+    ) {
+      this.frameDirty = true;
+    }
+  }
+
+  /** Number of complete Gaussian kernel chains successfully encoded. */
+  get renderCount(): number {
+    return this.successfulRenderCount;
+  }
+
+  /** Number of frames that reused the last valid output textures. */
+  get cacheHitCount(): number {
+    return this.cachedFrameCount;
   }
 
   /** Color-managed output in Three.js' linear working color space. */
@@ -338,15 +374,25 @@ export class GaussianPass extends PassNode {
 
   invalidateProjection(): void {
     this.dirtyStages |= DirtyStage.Projection;
+    this.invalidateAutomatically();
   }
 
   invalidateRasterizer(): void {
     this.dirtyStages |= DirtyStage.Rasterizer;
+    this.invalidateAutomatically();
+  }
+
+  /** Force the next frame to run the complete Gaussian kernel chain. */
+  invalidate(): void {
+    this.frameDirty = true;
   }
 
   override set needsUpdate(value: boolean) {
     super.needsUpdate = value;
-    if (value) this.dirtyStages |= DirtyStage.All;
+    if (value) {
+      this.dirtyStages |= DirtyStage.All;
+      this.invalidateAutomatically();
+    }
   }
 
   override updateBefore(frame: NodeFrame): boolean | undefined {
@@ -381,10 +427,34 @@ export class GaussianPass extends PassNode {
     ) {
       this.setSize(drawingBufferWidth, drawingBufferHeight);
     }
+    const device = webGpuDevice(renderer);
+    if (this.pipelineDevice !== null && this.pipelineDevice !== device) {
+      this.pipeline?.dispose();
+      this.pipeline = null;
+      this.pipelineLayoutVersion = -1;
+      this.frameDirty = true;
+      this.autoSnapshot = null;
+    }
+
+    if (
+      this.redrawStrategy === "never" &&
+      !this.frameDirty &&
+      this.pipeline !== null
+    ) {
+      this.cachedFrameCount++;
+      return undefined;
+    }
+
     if (this.gaussianStore.needsPack) {
       this.gaussianStore.pack({ limits: webGpuDeviceLimits(renderer) });
     }
     const lodUpdate = this.gaussianStore.updateLod(this.camera);
+    if (
+      this.redrawStrategy === "auto" &&
+      this.autoInputsChanged(width, height)
+    ) {
+      this.frameDirty = true;
+    }
     const data = this.gaussianStore.getPackedData();
     if (this.requestedIntersectionCapacity === null) {
       this.resolvedIntersectionCapacity = Math.min(
@@ -392,8 +462,6 @@ export class GaussianPass extends PassNode {
         Math.max(1, data.count * 16),
       );
     }
-    renderer.initRenderTarget(this.renderTarget);
-
     if (
       this.pipeline === null ||
       this.pipelineLayoutVersion !== this.gaussianStore.layoutVersion
@@ -422,8 +490,10 @@ export class GaussianPass extends PassNode {
         this.rasterTransmittanceThreshold,
         this.rasterStats,
       );
+      this.pipelineDevice = device;
       this.pipelineLayoutVersion = this.gaussianStore.layoutVersion;
       this.dirtyStages = DirtyStage.None;
+      this.frameDirty = true;
     } else if (this.dirtyStages !== DirtyStage.None) {
       if ((this.dirtyStages & DirtyStage.Projection) !== 0) {
         this.pipeline.rebuildProjection(this.nodeSlots);
@@ -433,6 +503,11 @@ export class GaussianPass extends PassNode {
       }
       this.dirtyStages = DirtyStage.None;
     }
+    if (this.redrawStrategy !== "always" && !this.frameDirty) {
+      this.cachedFrameCount++;
+      return undefined;
+    }
+    renderer.initRenderTarget(this.renderTarget);
     this.pipeline.prepareFrame(
       width,
       height,
@@ -440,6 +515,11 @@ export class GaussianPass extends PassNode {
       this.depthTexture,
     );
     this.pipeline.render();
+    this.frameDirty = false;
+    this.successfulRenderCount++;
+    if (this.redrawStrategy === "auto") {
+      this.autoSnapshot = this.captureAutoSnapshot(width, height);
+    }
     if (this.debugListeners.size > 0) {
       const snapshot = {
         pass: this.getDebugInfo(),
@@ -502,6 +582,9 @@ export class GaussianPass extends PassNode {
     this.disposed = true;
     this.pipeline?.dispose();
     this.pipeline = null;
+    this.pipelineDevice = null;
+    this.frameDirty = true;
+    this.autoSnapshot = null;
     this.debugListeners.clear();
     this.depthTexture?.dispose();
     super.dispose();
@@ -542,6 +625,118 @@ export class GaussianPass extends PassNode {
     this.nodeSlots[key] = node;
     this.invalidateRasterizer();
   }
+
+  private invalidateAutomatically(): void {
+    if (this.redrawStrategy === "auto") this.frameDirty = true;
+  }
+
+  private autoInputsChanged(width: number, height: number): boolean {
+    const snapshot = this.autoSnapshot;
+    if (snapshot === null) return true;
+    const camera = this.camera as PerspectiveCamera;
+    camera.updateWorldMatrix(true, false);
+    if (
+      snapshot.width !== width ||
+      snapshot.height !== height ||
+      snapshot.cameraNear !== camera.near ||
+      snapshot.cameraFar !== camera.far ||
+      snapshot.cameraLayers !== camera.layers.mask ||
+      snapshot.storeContentVersion !== this.gaussianStore.contentVersion ||
+      !matrixEquals(
+        snapshot.projectionMatrix,
+        camera.projectionMatrix.elements,
+      ) ||
+      !matrixEquals(
+        snapshot.cameraMatrixWorldInverse,
+        camera.matrixWorldInverse.elements,
+      ) ||
+      snapshot.clouds.length !== this.gaussianStore.clouds.length
+    ) {
+      return true;
+    }
+    for (let index = 0; index < snapshot.clouds.length; index++) {
+      const previous = snapshot.clouds[index]!;
+      const cloud = this.gaussianStore.clouds[index]!;
+      cloud.updateWorldMatrix(true, false);
+      if (
+        previous.cloud !== cloud ||
+        previous.visible !== isEffectivelyVisible(cloud, camera) ||
+        !matrixEquals(previous.matrixWorld, cloud.matrixWorld.elements)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  private captureAutoSnapshot(
+    width: number,
+    height: number,
+  ): AutoRedrawSnapshot {
+    const camera = this.camera as PerspectiveCamera;
+    camera.updateWorldMatrix(true, false);
+    return {
+      width,
+      height,
+      cameraNear: camera.near,
+      cameraFar: camera.far,
+      cameraLayers: camera.layers.mask,
+      projectionMatrix: [...camera.projectionMatrix.elements],
+      cameraMatrixWorldInverse: [...camera.matrixWorldInverse.elements],
+      storeContentVersion: this.gaussianStore.contentVersion,
+      clouds: this.gaussianStore.clouds.map((cloud) => {
+        cloud.updateWorldMatrix(true, false);
+        return {
+          cloud,
+          visible: isEffectivelyVisible(cloud, camera),
+          matrixWorld: [...cloud.matrixWorld.elements],
+        };
+      }),
+    };
+  }
+}
+
+interface AutoRedrawSnapshot {
+  readonly width: number;
+  readonly height: number;
+  readonly cameraNear: number;
+  readonly cameraFar: number;
+  readonly cameraLayers: number;
+  readonly projectionMatrix: readonly number[];
+  readonly cameraMatrixWorldInverse: readonly number[];
+  readonly storeContentVersion: number;
+  readonly clouds: readonly AutoCloudSnapshot[];
+}
+
+interface AutoCloudSnapshot {
+  readonly cloud: GaussianStore["clouds"][number];
+  readonly visible: boolean;
+  readonly matrixWorld: readonly number[];
+}
+
+function matrixEquals(
+  previous: readonly number[],
+  current: readonly number[],
+): boolean {
+  for (let index = 0; index < 16; index++) {
+    if (previous[index] !== current[index]) return false;
+  }
+  return true;
+}
+
+function isEffectivelyVisible(
+  cloud: GaussianStore["clouds"][number],
+  camera: PerspectiveCamera,
+): boolean {
+  if (!cloud.layers.test(camera.layers)) return false;
+  let current: typeof cloud.parent | typeof cloud = cloud;
+  let root: typeof cloud.parent | typeof cloud = cloud;
+  while (current !== null) {
+    if (!current.visible) return false;
+    root = current;
+    current = current.parent;
+  }
+  return root instanceof Scene;
 }
 
 function assertNode(node: Node, field: string): void {
@@ -557,6 +752,7 @@ export type {
   GaussianPassDebugListener,
   GaussianPassDebugSnapshot,
   GaussianPassOptions,
+  GaussianPassRedrawStrategy,
   GaussianPassProfileStats,
   GaussianPassResources,
   GaussianPassStats,
@@ -567,11 +763,15 @@ export type {
 } from "./pipeline/types";
 
 function webGpuDeviceLimits(renderer: WebGPURenderer): GPUDevice["limits"] {
+  return webGpuDevice(renderer).limits;
+}
+
+function webGpuDevice(renderer: WebGPURenderer): GPUDevice {
   const backend = renderer.backend as unknown as { device?: GPUDevice };
   if (backend.device === undefined) {
     throw new Error(
       "GaussianPass requires an initialized WebGPURenderer before the first render",
     );
   }
-  return backend.device.limits;
+  return backend.device;
 }

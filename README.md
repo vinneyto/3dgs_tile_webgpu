@@ -127,6 +127,35 @@ pipeline.outputNode = pass;
 renderer.setAnimationLoop(() => pipeline.render());
 ```
 
+### Gaussian redraw caching
+
+`GaussianPassOptions.redrawStrategy` controls whether the Gaussian compute
+chain runs again when its output textures are already valid:
+
+```ts
+const pass = gaussianPass(renderer, camera, store, {
+  redrawStrategy: "auto",
+  outputDepth: true,
+});
+```
+
+- `"always"` (default) preserves the original behavior and runs projection,
+  culling, sorting, tiling and rasterization every frame.
+- `"auto"` reuses the last color/depth textures until a render-affecting input
+  changes. It tracks effective output resolution, camera view/projection and
+  layers, Store packed-data updates (including streaming LOD), and each
+  cloud's world transform and effective visibility.
+- `"never"` renders the first frame and then reuses the textures until
+  `pass.invalidate()` is called. A resize or GPU-device replacement still
+  forces a render because the old texture cache is no longer valid.
+
+Node-root replacement automatically invalidates `"auto"`. Values hidden
+inside a custom node graph, such as a changed uniform or updated external
+texture, cannot be discovered cheaply; call `pass.invalidate()` after changing
+them. With `"never"`, call `invalidate()` after every change that should become
+visible. `renderCount` and `cacheHitCount` are CPU-only diagnostic counters that
+can confirm whether Gaussian kernels were skipped.
+
 `maxGaussians: "auto"` is the default. It resolves against
 `maxStorageBufferBindingSize` and `maxBufferSize` after the renderer has a
 device. A numeric value sets a lower application cap while still respecting
