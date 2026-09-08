@@ -1,11 +1,12 @@
 import { PassNode, PerspectiveCamera, StorageTexture, type Node, type NodeBuilder, type NodeFrame, type ColorSpace, type Texture, type WebGPURenderer } from "three/webgpu";
 import { GaussianStore } from "./GaussianStore";
-import type { AntialiasMode, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassOptions, GaussianPassResources, GaussianPassStats, ResolvedRadixBackend } from "./pipeline/types";
+import type { AntialiasMode, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassResources, GaussianPassStats, ResolvedRadixBackend } from "./pipeline/types";
 /**
  * A multi-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
  */
 export declare class GaussianPass extends PassNode {
     readonly gaussianStore: GaussianStore;
+    readonly redrawStrategy: GaussianPassRedrawStrategy;
     readonly depthSortMode: DepthSortMode;
     readonly antialiasMode: AntialiasMode;
     readonly background: readonly [number, number, number, number];
@@ -29,12 +30,21 @@ export declare class GaussianPass extends PassNode {
     private pipelineLayoutVersion;
     private readonly nodeSlots;
     private dirtyStages;
+    private frameDirty;
+    private successfulRenderCount;
+    private cachedFrameCount;
+    private autoSnapshot;
+    private pipelineDevice;
     private disposed;
     constructor(renderer: WebGPURenderer, camera: PerspectiveCamera, gaussianStore: GaussianStore, options?: GaussianPassOptions);
     /** Resolved after the first render when omitted from GaussianPassOptions. */
     get intersectionCapacity(): number;
     getTexture(name: string): Texture;
     setSize(width: number, height: number): void;
+    /** Number of complete Gaussian kernel chains successfully encoded. */
+    get renderCount(): number;
+    /** Number of frames that reused the last valid output textures. */
+    get cacheHitCount(): number;
     /** Color-managed output in Three.js' linear working color space. */
     getColorNode(): Node;
     setup(builder: NodeBuilder): Node;
@@ -64,6 +74,8 @@ export declare class GaussianPass extends PassNode {
     set rasterDiscardNode(node: Node);
     invalidateProjection(): void;
     invalidateRasterizer(): void;
+    /** Force the next frame to run the complete Gaussian kernel chain. */
+    invalidate(): void;
     set needsUpdate(value: boolean);
     updateBefore(frame: NodeFrame): boolean | undefined;
     /** Subscribe to allocation, LOD and CPU-side pass diagnostics. */
@@ -77,5 +89,8 @@ export declare class GaussianPass extends PassNode {
     dispose(): void;
     private setProjectionNode;
     private setRasterNode;
+    private invalidateAutomatically;
+    private autoInputsChanged;
+    private captureAutoSnapshot;
 }
-export type { AntialiasMode, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassDebugSnapshot, GaussianPassOptions, GaussianPassProfileStats, GaussianPassResources, GaussianPassStats, GaussianTileLoadStats, GaussianTileCapStats, RadixBackend, ResolvedRadixBackend, } from "./pipeline/types";
+export type { AntialiasMode, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassDebugSnapshot, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassProfileStats, GaussianPassResources, GaussianPassStats, GaussianTileLoadStats, GaussianTileCapStats, RadixBackend, ResolvedRadixBackend, } from "./pipeline/types";

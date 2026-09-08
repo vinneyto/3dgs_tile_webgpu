@@ -215,6 +215,7 @@ export class GaussianStore {
 
   /** Changes only after a successful pack() replaces the shared layout. */
   layoutVersion = 0;
+  private packedContentVersion = 0;
 
   constructor(options: GaussianStoreOptions = {}) {
     this.loader = options.loader ?? new CanonicalGaussianPlyLoader();
@@ -238,6 +239,11 @@ export class GaussianStore {
 
   get lastPackStats(): GaussianStorePackStats | null {
     return this.latestPackStats;
+  }
+
+  /** Changes after a successful full or incremental packed-data update. */
+  get contentVersion(): number {
+    return this.packedContentVersion;
   }
 
   get count(): number {
@@ -461,6 +467,7 @@ export class GaussianStore {
       this.layoutVersion++;
       oldData?.dispose();
     }
+    this.packedContentVersion++;
   }
 
   /**
@@ -648,6 +655,7 @@ export class GaussianStore {
       planningMs,
       slotUpdateMs,
     };
+    this.packedContentVersion++;
     return { applied: true, pending: batch.pending };
   }
 

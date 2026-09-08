@@ -119,11 +119,14 @@ export declare class GaussianStore {
     private disposed;
     /** Changes only after a successful pack() replaces the shared layout. */
     layoutVersion: number;
+    private packedContentVersion;
     constructor(options?: GaussianStoreOptions);
     get maxGaussians(): number;
     /** True after registration changes and until pack() succeeds. */
     get needsPack(): boolean;
     get lastPackStats(): GaussianStorePackStats | null;
+    /** Changes after a successful full or incremental packed-data update. */
+    get contentVersion(): number;
     get count(): number;
     get shDegree(): 0 | 1 | 2 | 3;
     /** Number of stable object slots required by camera-specific pass state. */

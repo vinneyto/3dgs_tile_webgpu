@@ -89,6 +89,7 @@ export {
   type GaussianPassDebugListener,
   type GaussianPassDebugSnapshot,
   type GaussianPassOptions,
+  type GaussianPassRedrawStrategy,
   type GaussianPassProfileStats,
   type GaussianPassResources,
   type GaussianPassStats,
