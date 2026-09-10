@@ -7,6 +7,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
+  type Node,
   PassNode,
   PerspectiveCamera,
   Raycaster,
@@ -17,7 +18,13 @@ import {
   WebGPURenderer,
 } from "three/webgpu";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { pass as scenePass, perspectiveDepthToViewZ, uniform } from "three/tsl";
+import { dof } from "three/addons/tsl/display/DepthOfFieldNode.js";
+import {
+  min,
+  pass as scenePass,
+  perspectiveDepthToViewZ,
+  uniform,
+} from "three/tsl";
 import {
   CanonicalGaussianPlyLoader,
   gaussianPass,
@@ -41,6 +48,8 @@ import { DebugPanel } from "./DebugPanel";
 import { KernelTimingInspector } from "./KernelTimingInspector";
 import { readSandboxOptions, type SandboxOptions } from "./SandboxOptions";
 import { SpatialDebugHelpers } from "./SpatialDebugHelpers";
+
+type DofPassNode = ReturnType<typeof dof> & Node<"vec4">;
 
 export class GaussianSandbox {
   private readonly loader = new CanonicalGaussianPlyLoader();
@@ -76,6 +85,9 @@ export class GaussianSandbox {
   private readonly debugPanel: DebugPanel;
   private readonly spatialDebug = new SpatialDebugHelpers();
   private readonly cloudStatus: CloudStatus;
+  private readonly dofFocusDistance = uniform(1);
+  private readonly dofFocalLength = uniform(1);
+  private dofPass: DofPassNode | null = null;
   private pipeline: RenderPipeline | null = null;
   private pass: GaussianPass | null = null;
   private store: GaussianStore | null = null;
@@ -143,6 +155,9 @@ export class GaussianSandbox {
     renderer.setAnimationLoop((time) => {
       const encodeStart = performance.now();
       this.controls.update();
+      this.dofFocusDistance.value = this.camera.position.distanceTo(
+        this.controls.target,
+      );
       if (this.pipeline !== null && timingInspector !== null) {
         timingInspector.beginFrameSample(renderer);
         try {
@@ -292,12 +307,10 @@ export class GaussianSandbox {
     this.frameCloud(bounds);
     this.hoverMarker.scale.setScalar(Math.max(bounds.radius * 0.012, 0.005));
 
-    this.pass = gaussianPass(
-      this.renderer,
-      this.camera,
-      store,
-      this.options.pass,
-    );
+    this.pass = gaussianPass(this.renderer, this.camera, store, {
+      ...this.options.pass,
+      outputDepth: this.options.dofEnabled,
+    });
     this.opaquePass = scenePass(this.scene, this.camera);
     this.opaquePass.transparent = false;
     this.opaquePass.opaque = true;
@@ -338,8 +351,29 @@ export class GaussianSandbox {
       this.opaquePass.getViewZNode(),
       this.transparentPass.getViewZNode(),
     );
+    let sceneOutput = withTransparentScene;
+    if (this.options.dofEnabled) {
+      const combinedDepth = min(
+        this.opaquePass.getTextureNode("depth"),
+        this.pass.getTextureNode("depth"),
+      );
+      const combinedViewZ = perspectiveDepthToViewZ(
+        combinedDepth,
+        uniform(this.camera.near),
+        uniform(this.camera.far),
+      );
+      this.dofFocalLength.value = Math.max(bounds.radius * 0.25, 0.001);
+      this.dofPass = dof(
+        withTransparentScene,
+        combinedViewZ,
+        this.dofFocusDistance,
+        this.dofFocalLength,
+        1.5,
+      ) as DofPassNode;
+      sceneOutput = this.dofPass;
+    }
     this.pipeline.outputNode = compositePremultipliedOver(
-      withTransparentScene,
+      sceneOutput,
       this.overlayPass,
     );
     this.cloudStatus.preparing(source, data.count);
@@ -348,6 +382,7 @@ export class GaussianSandbox {
   private clearCloud(): void {
     this.debugPanel.setPass(null);
     this.spatialDebug.clear();
+    this.dofPass?.dispose();
     this.pass?.dispose();
     this.overlayPass?.dispose();
     this.transparentPass?.dispose();
@@ -355,6 +390,7 @@ export class GaussianSandbox {
     this.pipeline?.dispose();
     this.store?.dispose();
     this.cloud = null;
+    this.dofPass = null;
     this.hoverMarker.visible = false;
     this.pass = null;
     this.overlayPass = null;
