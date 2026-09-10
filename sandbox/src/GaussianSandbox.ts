@@ -356,8 +356,8 @@ export class GaussianSandbox {
     let sceneOutput: Node<"vec4"> = withTransparentScene;
     if (this.options.dofEnabled || this.options.depthDebugEnabled) {
       const combinedDepth = min(
-        this.opaquePass.getTextureNode("depth"),
-        this.pass.getTextureNode("depth"),
+        this.opaquePass.getTextureNode("depth").r,
+        this.pass.getTextureNode("depth").r,
       );
       const combinedViewZ = perspectiveDepthToViewZ(
         combinedDepth,
