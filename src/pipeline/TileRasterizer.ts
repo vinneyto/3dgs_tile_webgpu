@@ -435,8 +435,7 @@ export class TileRasterizer {
       });
       const accumulated = vec3(0).toVar("accumulated");
       const transmittance = float(1).toVar("transmittance");
-      const depth = float(1).toVar("depth");
-      const depthWritten = bool(false).toVar("depthWritten");
+      const weightedViewDepth = float(0).toVar("weightedViewDepth");
       const done = bool(false).toVar("done");
       const checked = counters === null ? null : uint(0).toVar("rasterChecked");
       const blended = counters === null ? null : uint(0).toVar("rasterBlended");
@@ -578,12 +577,12 @@ export class TileRasterizer {
                 If(alpha.lessThan(float(1 / 255)), () => {
                   Continue();
                 });
-                If(depthWritten.not(), () => {
-                  depth.assign(viewDepthToDeviceDepth(mean.z, frame));
-                  depthWritten.assign(bool(true));
-                });
                 const color = resolveNode(nodes.rasterColorNode, overrides);
-                accumulated.addAssign(color.mul(transmittance).mul(alpha));
+                const contribution = transmittance
+                  .mul(alpha)
+                  .toVar("rasterContribution");
+                accumulated.addAssign(color.mul(contribution));
+                weightedViewDepth.addAssign(mean.z.mul(contribution));
                 blended?.addAssign(1);
                 transmittance.mulAssign(float(1).sub(alpha));
                 If(transmittance.lessThan(this.transmittanceThreshold), () => {
@@ -655,7 +654,7 @@ export class TileRasterizer {
           storeFinalPixel(
             accumulated,
             transmittance,
-            depth,
+            weightedViewDepth,
             pixel,
             colorOutput!,
             this.depthTexture,
@@ -672,7 +671,7 @@ export class TileRasterizer {
           if (this.depthTexture !== null) {
             partialData!
               .element(partialIndex.add(1))
-              .assign(vec4(depth, 0, 0, 0));
+              .assign(vec4(weightedViewDepth, 0, 0, 0));
           }
         }
       });
@@ -728,8 +727,9 @@ export class TileRasterizer {
       If(activePixel.and(chunkCount.greaterThan(0)), () => {
         const accumulated = vec3(0).toVar("chunkCompositeColor");
         const transmittance = float(1).toVar("chunkCompositeTransmittance");
-        const depth = float(1).toVar("chunkCompositeDepth");
-        const depthWritten = bool(false).toVar("chunkCompositeDepthWritten");
+        const weightedViewDepth = float(0).toVar(
+          "chunkCompositeWeightedViewDepth",
+        );
         const firstChunk = chunkOffsets.element(tile);
         Loop(
           {
@@ -747,10 +747,9 @@ export class TileRasterizer {
             const partial = partialData.element(partialIndex);
             accumulated.addAssign(partial.xyz.mul(transmittance));
             if (this.depthTexture !== null) {
-              If(depthWritten.not().and(partial.w.lessThan(1)), () => {
-                depth.assign(partialData.element(partialIndex.add(1)).x);
-                depthWritten.assign(bool(true));
-              });
+              weightedViewDepth.addAssign(
+                partialData.element(partialIndex.add(1)).x.mul(transmittance),
+              );
             }
             transmittance.mulAssign(partial.w);
             If(transmittance.lessThan(this.transmittanceThreshold), () => {
@@ -761,7 +760,7 @@ export class TileRasterizer {
         storeFinalPixel(
           accumulated,
           transmittance,
-          depth,
+          weightedViewDepth,
           pixel,
           colorOutput,
           this.depthTexture,
@@ -820,7 +819,7 @@ function viewDepthToDeviceDepth(viewDepth: any, frame: FrameUniforms): any {
 function storeFinalPixel(
   accumulated: any,
   transmittance: any,
-  depth: any,
+  weightedViewDepth: any,
   pixel: any,
   colorOutput: any,
   depthTexture: StorageTexture | null,
@@ -835,10 +834,17 @@ function storeFinalPixel(
   const alpha = float(1).sub(transmittance.mul(float(1).sub(backgroundAlpha)));
   textureStore(colorOutput, ivec2(pixel), vec4(accumulated, alpha));
   if (depthTexture !== null) {
+    const gaussianAlpha = float(1).sub(transmittance);
+    const deviceDepth = gaussianAlpha
+      .greaterThan(0)
+      .select(
+        viewDepthToDeviceDepth(weightedViewDepth.div(gaussianAlpha), frame),
+        float(1),
+      );
     textureStore(
       storageTexture(depthTexture),
       ivec2(pixel),
-      vec4(depth, 0, 0, 1),
+      vec4(deviceDepth, 0, 0, 1),
     );
   }
 }

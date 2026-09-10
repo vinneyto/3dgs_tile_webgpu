@@ -101,6 +101,9 @@ export class GaussianSandbox {
   private cloud: GaussianCloud | null = null;
   private controlsActive = false;
   private focusRaycastPending = true;
+  private pointerDownId: number | null = null;
+  private pointerDownX = 0;
+  private pointerDownY = 0;
   private disposed = false;
   private readonly handleResize = () => this.resize();
   private readonly handleControlsStart = () => {
@@ -115,6 +118,29 @@ export class GaussianSandbox {
   };
   private readonly handlePointerMove = (event: PointerEvent) =>
     this.updateHoverMarker(event);
+  private readonly handlePointerDown = (event: PointerEvent) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    this.pointerDownId = event.pointerId;
+    this.pointerDownX = event.clientX;
+    this.pointerDownY = event.clientY;
+  };
+  private readonly handlePointerUp = (event: PointerEvent) => {
+    if (event.pointerId !== this.pointerDownId) return;
+    this.pointerDownId = null;
+    const dx = event.clientX - this.pointerDownX;
+    const dy = event.clientY - this.pointerDownY;
+    if (dx * dx + dy * dy > 16) return;
+    const hit = this.raycastCloudAtPointer(event);
+    if (hit === undefined) return;
+    this.controls.target.copy(hit.point);
+    this.controls.update();
+    this.hoverMarker.position.copy(hit.point);
+    this.hoverMarker.visible = true;
+    this.focusRaycastPending = true;
+  };
+  private readonly handlePointerCancel = () => {
+    this.pointerDownId = null;
+  };
   private readonly handlePointerLeave = () => {
     this.hoverMarker.visible = false;
   };
@@ -133,7 +159,13 @@ export class GaussianSandbox {
     this.controls.addEventListener("start", this.handleControlsStart);
     this.controls.addEventListener("end", this.handleControlsEnd);
     this.controls.addEventListener("change", this.handleControlsChange);
+    renderer.domElement.addEventListener("pointerdown", this.handlePointerDown);
     renderer.domElement.addEventListener("pointermove", this.handlePointerMove);
+    renderer.domElement.addEventListener("pointerup", this.handlePointerUp);
+    renderer.domElement.addEventListener(
+      "pointercancel",
+      this.handlePointerCancel,
+    );
     renderer.domElement.addEventListener(
       "pointerleave",
       this.handlePointerLeave,
@@ -240,8 +272,20 @@ export class GaussianSandbox {
     this.controls.removeEventListener("end", this.handleControlsEnd);
     this.controls.removeEventListener("change", this.handleControlsChange);
     this.renderer.domElement.removeEventListener(
+      "pointerdown",
+      this.handlePointerDown,
+    );
+    this.renderer.domElement.removeEventListener(
       "pointermove",
       this.handlePointerMove,
+    );
+    this.renderer.domElement.removeEventListener(
+      "pointerup",
+      this.handlePointerUp,
+    );
+    this.renderer.domElement.removeEventListener(
+      "pointercancel",
+      this.handlePointerCancel,
     );
     this.renderer.domElement.removeEventListener(
       "pointerleave",
@@ -437,27 +481,31 @@ export class GaussianSandbox {
   }
 
   private updateHoverMarker(event: PointerEvent): void {
-    const cloud = this.cloud;
-    if (this.controlsActive || cloud === null) {
+    if (this.controlsActive) {
       this.hoverMarker.visible = false;
       return;
     }
-
-    const bounds = this.renderer.domElement.getBoundingClientRect();
-    if (bounds.width <= 0 || bounds.height <= 0) return;
-    this.hoverPointer.set(
-      ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
-      -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
-    );
-    this.hoverRaycaster.setFromCamera(this.hoverPointer, this.camera);
-    cloud.updateWorldMatrix(true, false);
-    const hit = this.hoverRaycaster.intersectObject(cloud, false)[0];
+    const hit = this.raycastCloudAtPointer(event);
     if (hit === undefined) {
       this.hoverMarker.visible = false;
       return;
     }
     this.hoverMarker.position.copy(hit.point);
     this.hoverMarker.visible = true;
+  }
+
+  private raycastCloudAtPointer(event: PointerEvent) {
+    const cloud = this.cloud;
+    if (cloud === null) return undefined;
+    const bounds = this.renderer.domElement.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return undefined;
+    this.hoverPointer.set(
+      ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+      -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
+    );
+    this.hoverRaycaster.setFromCamera(this.hoverPointer, this.camera);
+    cloud.updateWorldMatrix(true, false);
+    return this.hoverRaycaster.intersectObject(cloud, false)[0];
   }
 
   private updateDofFocusDistance(): void {
