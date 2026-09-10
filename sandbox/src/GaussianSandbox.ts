@@ -24,6 +24,8 @@ import {
   pass as scenePass,
   perspectiveDepthToViewZ,
   uniform,
+  vec3,
+  vec4,
 } from "three/tsl";
 import {
   CanonicalGaussianPlyLoader,
@@ -309,7 +311,7 @@ export class GaussianSandbox {
 
     this.pass = gaussianPass(this.renderer, this.camera, store, {
       ...this.options.pass,
-      outputDepth: this.options.dofEnabled,
+      outputDepth: this.options.dofEnabled || this.options.depthDebugEnabled,
     });
     this.opaquePass = scenePass(this.scene, this.camera);
     this.opaquePass.transparent = false;
@@ -351,8 +353,8 @@ export class GaussianSandbox {
       this.opaquePass.getViewZNode(),
       this.transparentPass.getViewZNode(),
     );
-    let sceneOutput = withTransparentScene;
-    if (this.options.dofEnabled) {
+    let sceneOutput: Node<"vec4"> = withTransparentScene;
+    if (this.options.dofEnabled || this.options.depthDebugEnabled) {
       const combinedDepth = min(
         this.opaquePass.getTextureNode("depth"),
         this.pass.getTextureNode("depth"),
@@ -362,20 +364,27 @@ export class GaussianSandbox {
         uniform(this.camera.near),
         uniform(this.camera.far),
       );
-      this.dofFocalLength.value = Math.max(bounds.radius * 0.25, 0.001);
-      this.dofPass = dof(
-        withTransparentScene,
-        combinedViewZ,
-        this.dofFocusDistance,
-        this.dofFocalLength,
-        1.5,
-      ) as DofPassNode;
-      sceneOutput = this.dofPass;
+      if (this.options.depthDebugEnabled) {
+        const linearDepth = combinedViewZ
+          .negate()
+          .div(this.dofFocusDistance.mul(2))
+          .clamp(0, 1);
+        sceneOutput = vec4(vec3(linearDepth), 1);
+      } else {
+        this.dofFocalLength.value = Math.max(bounds.radius * 0.25, 0.001);
+        this.dofPass = dof(
+          withTransparentScene,
+          combinedViewZ,
+          this.dofFocusDistance,
+          this.dofFocalLength,
+          1.5,
+        ) as DofPassNode;
+        sceneOutput = this.dofPass;
+      }
     }
-    this.pipeline.outputNode = compositePremultipliedOver(
-      sceneOutput,
-      this.overlayPass,
-    );
+    this.pipeline.outputNode = this.options.depthDebugEnabled
+      ? sceneOutput
+      : compositePremultipliedOver(sceneOutput, this.overlayPass);
     this.cloudStatus.preparing(source, data.count);
   }
 

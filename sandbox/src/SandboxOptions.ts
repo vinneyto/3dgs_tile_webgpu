@@ -6,6 +6,7 @@ import type {
 
 export interface SandboxOptions {
   readonly debugEnabled: boolean;
+  readonly depthDebugEnabled: boolean;
   readonly dofEnabled: boolean;
   readonly profileEnabled: boolean;
   readonly statsEnabled: boolean;
@@ -21,6 +22,7 @@ export function readSandboxOptions(
   const rasterStats = parameters.get("rasterStats") === "1";
   return {
     debugEnabled: parameters.get("debug") !== "0",
+    depthDebugEnabled: parameters.get("depth") === "1",
     dofEnabled: parameters.get("dof") === "1",
     profileEnabled,
     statsEnabled:
