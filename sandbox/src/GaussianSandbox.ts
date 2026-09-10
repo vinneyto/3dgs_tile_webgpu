@@ -390,7 +390,7 @@ export class GaussianSandbox {
           combinedViewZ,
           this.dofFocusDistance,
           this.dofFocalLength,
-          1.5,
+          6,
         ) as DofPassNode;
         sceneOutput = this.dofPass;
       }
