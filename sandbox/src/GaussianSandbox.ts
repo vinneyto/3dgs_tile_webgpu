@@ -4,9 +4,11 @@ import {
   Group,
   HemisphereLight,
   Layers,
+  MathUtils,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
+  type Node,
   PassNode,
   PerspectiveCamera,
   Raycaster,
@@ -17,7 +19,15 @@ import {
   WebGPURenderer,
 } from "three/webgpu";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { pass as scenePass, perspectiveDepthToViewZ, uniform } from "three/tsl";
+import { dof } from "three/addons/tsl/display/DepthOfFieldNode.js";
+import {
+  min,
+  pass as scenePass,
+  perspectiveDepthToViewZ,
+  uniform,
+  vec3,
+  vec4,
+} from "three/tsl";
 import {
   CanonicalGaussianPlyLoader,
   gaussianPass,
@@ -34,6 +44,10 @@ import {
 } from "./cloudData";
 import { CloudStatus } from "./CloudStatus";
 import {
+  CENTER_WEIGHTED_AUTOFOCUS_PATTERN,
+  weightedMedianFocusDistance,
+} from "./centerWeightedAutofocus";
+import {
   compositeDepthTestedPremultipliedOver,
   compositePremultipliedOver,
 } from "./compositePremultipliedOver";
@@ -42,10 +56,14 @@ import { KernelTimingInspector } from "./KernelTimingInspector";
 import { readSandboxOptions, type SandboxOptions } from "./SandboxOptions";
 import { SpatialDebugHelpers } from "./SpatialDebugHelpers";
 
+type DofPassNode = ReturnType<typeof dof> & Node<"vec4">;
+
 export class GaussianSandbox {
   private readonly loader = new CanonicalGaussianPlyLoader();
   private readonly scene = new Scene();
   private readonly controls: OrbitControls;
+  private readonly focusRaycaster = new Raycaster();
+  private readonly focusPointer = new Vector2();
   private readonly hoverRaycaster = new Raycaster();
   private readonly hoverPointer = new Vector2();
   private readonly sceneLayers = new Layers();
@@ -76,6 +94,11 @@ export class GaussianSandbox {
   private readonly debugPanel: DebugPanel;
   private readonly spatialDebug = new SpatialDebugHelpers();
   private readonly cloudStatus: CloudStatus;
+  private readonly dofFocusDistance = uniform(1);
+  private readonly dofFocalLength = uniform(1);
+  private dofFocusTargetDistance = 1;
+  private previousFrameTime: number | null = null;
+  private dofPass: DofPassNode | null = null;
   private pipeline: RenderPipeline | null = null;
   private pass: GaussianPass | null = null;
   private store: GaussianStore | null = null;
@@ -84,6 +107,11 @@ export class GaussianSandbox {
   private overlayPass: PassNode | null = null;
   private cloud: GaussianCloud | null = null;
   private controlsActive = false;
+  private focusRaycastPending = true;
+  private nextAutofocusSampleTime = 0;
+  private pointerDownId: number | null = null;
+  private pointerDownX = 0;
+  private pointerDownY = 0;
   private disposed = false;
   private readonly handleResize = () => this.resize();
   private readonly handleControlsStart = () => {
@@ -93,8 +121,34 @@ export class GaussianSandbox {
   private readonly handleControlsEnd = () => {
     this.controlsActive = false;
   };
+  private readonly handleControlsChange = () => {
+    this.focusRaycastPending = true;
+  };
   private readonly handlePointerMove = (event: PointerEvent) =>
     this.updateHoverMarker(event);
+  private readonly handlePointerDown = (event: PointerEvent) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    this.pointerDownId = event.pointerId;
+    this.pointerDownX = event.clientX;
+    this.pointerDownY = event.clientY;
+  };
+  private readonly handlePointerUp = (event: PointerEvent) => {
+    if (event.pointerId !== this.pointerDownId) return;
+    this.pointerDownId = null;
+    const dx = event.clientX - this.pointerDownX;
+    const dy = event.clientY - this.pointerDownY;
+    if (dx * dx + dy * dy > 16) return;
+    const hit = this.raycastCloudAtPointer(event);
+    if (hit === undefined) return;
+    this.controls.target.copy(hit.point);
+    this.controls.update();
+    this.hoverMarker.position.copy(hit.point);
+    this.hoverMarker.visible = true;
+    this.focusRaycastPending = true;
+  };
+  private readonly handlePointerCancel = () => {
+    this.pointerDownId = null;
+  };
   private readonly handlePointerLeave = () => {
     this.hoverMarker.visible = false;
   };
@@ -112,7 +166,14 @@ export class GaussianSandbox {
     this.controls.enableDamping = true;
     this.controls.addEventListener("start", this.handleControlsStart);
     this.controls.addEventListener("end", this.handleControlsEnd);
+    this.controls.addEventListener("change", this.handleControlsChange);
+    renderer.domElement.addEventListener("pointerdown", this.handlePointerDown);
     renderer.domElement.addEventListener("pointermove", this.handlePointerMove);
+    renderer.domElement.addEventListener("pointerup", this.handlePointerUp);
+    renderer.domElement.addEventListener(
+      "pointercancel",
+      this.handlePointerCancel,
+    );
     renderer.domElement.addEventListener(
       "pointerleave",
       this.handlePointerLeave,
@@ -143,6 +204,22 @@ export class GaussianSandbox {
     renderer.setAnimationLoop((time) => {
       const encodeStart = performance.now();
       this.controls.update();
+      if (this.focusRaycastPending && time >= this.nextAutofocusSampleTime) {
+        this.updateDofFocusDistance();
+        this.focusRaycastPending = false;
+        this.nextAutofocusSampleTime = time + 50;
+      }
+      const deltaSeconds =
+        this.previousFrameTime === null
+          ? 0
+          : Math.min((time - this.previousFrameTime) / 1000, 0.1);
+      this.previousFrameTime = time;
+      this.dofFocusDistance.value = MathUtils.damp(
+        this.dofFocusDistance.value,
+        this.dofFocusTargetDistance,
+        12,
+        deltaSeconds,
+      );
       if (this.pipeline !== null && timingInspector !== null) {
         timingInspector.beginFrameSample(renderer);
         try {
@@ -213,9 +290,22 @@ export class GaussianSandbox {
     removeEventListener("resize", this.handleResize);
     this.controls.removeEventListener("start", this.handleControlsStart);
     this.controls.removeEventListener("end", this.handleControlsEnd);
+    this.controls.removeEventListener("change", this.handleControlsChange);
+    this.renderer.domElement.removeEventListener(
+      "pointerdown",
+      this.handlePointerDown,
+    );
     this.renderer.domElement.removeEventListener(
       "pointermove",
       this.handlePointerMove,
+    );
+    this.renderer.domElement.removeEventListener(
+      "pointerup",
+      this.handlePointerUp,
+    );
+    this.renderer.domElement.removeEventListener(
+      "pointercancel",
+      this.handlePointerCancel,
     );
     this.renderer.domElement.removeEventListener(
       "pointerleave",
@@ -290,14 +380,17 @@ export class GaussianSandbox {
     this.cloud = cloud;
     this.scene.add(cloud);
     this.frameCloud(bounds);
+    this.dofFocusDistance.value = this.camera.position.distanceTo(
+      this.controls.target,
+    );
+    this.dofFocusTargetDistance = this.dofFocusDistance.value;
+    this.focusRaycastPending = true;
     this.hoverMarker.scale.setScalar(Math.max(bounds.radius * 0.012, 0.005));
 
-    this.pass = gaussianPass(
-      this.renderer,
-      this.camera,
-      store,
-      this.options.pass,
-    );
+    this.pass = gaussianPass(this.renderer, this.camera, store, {
+      ...this.options.pass,
+      outputDepth: this.options.dofEnabled || this.options.depthDebugEnabled,
+    });
     this.opaquePass = scenePass(this.scene, this.camera);
     this.opaquePass.transparent = false;
     this.opaquePass.opaque = true;
@@ -338,16 +431,45 @@ export class GaussianSandbox {
       this.opaquePass.getViewZNode(),
       this.transparentPass.getViewZNode(),
     );
-    this.pipeline.outputNode = compositePremultipliedOver(
-      withTransparentScene,
-      this.overlayPass,
-    );
+    let sceneOutput: Node<"vec4"> = withTransparentScene;
+    if (this.options.dofEnabled || this.options.depthDebugEnabled) {
+      const combinedDepth = min(
+        this.opaquePass.getTextureNode("depth").r,
+        this.pass.getTextureNode("depth").r,
+      );
+      const combinedViewZ = perspectiveDepthToViewZ(
+        combinedDepth,
+        uniform(this.camera.near),
+        uniform(this.camera.far),
+      );
+      if (this.options.depthDebugEnabled) {
+        const linearDepth = combinedViewZ
+          .negate()
+          .div(this.dofFocusDistance.mul(2))
+          .clamp(0, 1);
+        sceneOutput = vec4(vec3(linearDepth), 1);
+      } else {
+        this.dofFocalLength.value = Math.max(bounds.radius * 0.25, 0.001);
+        this.dofPass = dof(
+          withTransparentScene,
+          combinedViewZ,
+          this.dofFocusDistance,
+          this.dofFocalLength,
+          6,
+        ) as DofPassNode;
+        sceneOutput = this.dofPass;
+      }
+    }
+    this.pipeline.outputNode = this.options.depthDebugEnabled
+      ? sceneOutput
+      : compositePremultipliedOver(sceneOutput, this.overlayPass);
     this.cloudStatus.preparing(source, data.count);
   }
 
   private clearCloud(): void {
     this.debugPanel.setPass(null);
     this.spatialDebug.clear();
+    this.dofPass?.dispose();
     this.pass?.dispose();
     this.overlayPass?.dispose();
     this.transparentPass?.dispose();
@@ -355,6 +477,7 @@ export class GaussianSandbox {
     this.pipeline?.dispose();
     this.store?.dispose();
     this.cloud = null;
+    this.dofPass = null;
     this.hoverMarker.visible = false;
     this.pass = null;
     this.overlayPass = null;
@@ -379,27 +502,56 @@ export class GaussianSandbox {
   }
 
   private updateHoverMarker(event: PointerEvent): void {
-    const cloud = this.cloud;
-    if (this.controlsActive || cloud === null) {
+    if (this.controlsActive) {
       this.hoverMarker.visible = false;
       return;
     }
-
-    const bounds = this.renderer.domElement.getBoundingClientRect();
-    if (bounds.width <= 0 || bounds.height <= 0) return;
-    this.hoverPointer.set(
-      ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
-      -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
-    );
-    this.hoverRaycaster.setFromCamera(this.hoverPointer, this.camera);
-    cloud.updateWorldMatrix(true, false);
-    const hit = this.hoverRaycaster.intersectObject(cloud, false)[0];
+    const hit = this.raycastCloudAtPointer(event);
     if (hit === undefined) {
       this.hoverMarker.visible = false;
       return;
     }
     this.hoverMarker.position.copy(hit.point);
     this.hoverMarker.visible = true;
+  }
+
+  private raycastCloudAtPointer(event: PointerEvent) {
+    const cloud = this.cloud;
+    if (cloud === null) return undefined;
+    const bounds = this.renderer.domElement.getBoundingClientRect();
+    if (bounds.width <= 0 || bounds.height <= 0) return undefined;
+    this.hoverPointer.set(
+      ((event.clientX - bounds.left) / bounds.width) * 2 - 1,
+      -((event.clientY - bounds.top) / bounds.height) * 2 + 1,
+    );
+    this.hoverRaycaster.setFromCamera(this.hoverPointer, this.camera);
+    cloud.updateWorldMatrix(true, false);
+    return this.hoverRaycaster.intersectObject(cloud, false)[0];
+  }
+
+  private updateDofFocusDistance(): void {
+    const cloud = this.cloud;
+    if (
+      cloud === null ||
+      (!this.options.dofEnabled && !this.options.depthDebugEnabled)
+    ) {
+      return;
+    }
+    cloud.updateWorldMatrix(true, false);
+    const distances = CENTER_WEIGHTED_AUTOFOCUS_PATTERN.flatMap((sample) => {
+      this.focusPointer.set(sample.x, sample.y);
+      this.focusRaycaster.setFromCamera(this.focusPointer, this.camera);
+      const hit = this.focusRaycaster.intersectObject(cloud, false)[0];
+      return hit === undefined
+        ? []
+        : [{ distance: hit.distance, weight: sample.weight }];
+    });
+    const distance = weightedMedianFocusDistance(distances);
+    if (distance === null) return;
+    const deadZone = Math.max(distance * 0.01, 0.0001);
+    if (Math.abs(distance - this.dofFocusTargetDistance) > deadZone) {
+      this.dofFocusTargetDistance = distance;
+    }
   }
 
   private resize(): void {

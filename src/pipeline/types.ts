@@ -27,7 +27,7 @@ export interface GaussianPassOptions {
   intersectionCapacity?: number;
   /** RGBA clear color composited behind the cloud. Defaults to transparent black. */
   background?: readonly [number, number, number, number];
-  /** Create a standard perspective-depth texture exposed as pass.getTextureNode("depth"). */
+  /** Create opacity-weighted perspective depth exposed as pass.getTextureNode("depth"). */
   outputDepth?: boolean;
   /** Encoding of reconstructed SH RGB values. The pass converts it to Three.js working-linear; canonical 3DGS PLY is sRGB. */
   colorSpace?: ColorSpace;

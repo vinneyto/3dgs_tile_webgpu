@@ -2,6 +2,22 @@ import { describe, expect, it } from "vitest";
 import { readSandboxOptions } from "../sandbox/src/SandboxOptions";
 
 describe("sandbox raster options", () => {
+  it("shows depth only when requested", () => {
+    expect(readSandboxOptions(new URLSearchParams()).depthDebugEnabled).toBe(
+      false,
+    );
+    expect(
+      readSandboxOptions(new URLSearchParams("depth=1")).depthDebugEnabled,
+    ).toBe(true);
+  });
+
+  it("enables depth of field only when requested", () => {
+    expect(readSandboxOptions(new URLSearchParams()).dofEnabled).toBe(false);
+    expect(readSandboxOptions(new URLSearchParams("dof=1")).dofEnabled).toBe(
+      true,
+    );
+  });
+
   it("keeps work counters independent of kernel timings", () => {
     expect(
       readSandboxOptions(new URLSearchParams("profile=kernels")).pass
