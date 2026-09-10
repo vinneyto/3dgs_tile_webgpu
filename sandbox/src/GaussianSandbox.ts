@@ -4,6 +4,7 @@ import {
   Group,
   HemisphereLight,
   Layers,
+  MathUtils,
   Mesh,
   MeshBasicMaterial,
   MeshStandardMaterial,
@@ -42,6 +43,10 @@ import {
   type CloudBounds,
 } from "./cloudData";
 import { CloudStatus } from "./CloudStatus";
+import {
+  CENTER_WEIGHTED_AUTOFOCUS_PATTERN,
+  weightedMedianFocusDistance,
+} from "./centerWeightedAutofocus";
 import {
   compositeDepthTestedPremultipliedOver,
   compositePremultipliedOver,
@@ -91,6 +96,8 @@ export class GaussianSandbox {
   private readonly cloudStatus: CloudStatus;
   private readonly dofFocusDistance = uniform(1);
   private readonly dofFocalLength = uniform(1);
+  private dofFocusTargetDistance = 1;
+  private previousFrameTime: number | null = null;
   private dofPass: DofPassNode | null = null;
   private pipeline: RenderPipeline | null = null;
   private pass: GaussianPass | null = null;
@@ -101,6 +108,7 @@ export class GaussianSandbox {
   private cloud: GaussianCloud | null = null;
   private controlsActive = false;
   private focusRaycastPending = true;
+  private nextAutofocusSampleTime = 0;
   private pointerDownId: number | null = null;
   private pointerDownX = 0;
   private pointerDownY = 0;
@@ -196,10 +204,22 @@ export class GaussianSandbox {
     renderer.setAnimationLoop((time) => {
       const encodeStart = performance.now();
       this.controls.update();
-      if (this.focusRaycastPending) {
+      if (this.focusRaycastPending && time >= this.nextAutofocusSampleTime) {
         this.updateDofFocusDistance();
         this.focusRaycastPending = false;
+        this.nextAutofocusSampleTime = time + 50;
       }
+      const deltaSeconds =
+        this.previousFrameTime === null
+          ? 0
+          : Math.min((time - this.previousFrameTime) / 1000, 0.1);
+      this.previousFrameTime = time;
+      this.dofFocusDistance.value = MathUtils.damp(
+        this.dofFocusDistance.value,
+        this.dofFocusTargetDistance,
+        12,
+        deltaSeconds,
+      );
       if (this.pipeline !== null && timingInspector !== null) {
         timingInspector.beginFrameSample(renderer);
         try {
@@ -363,6 +383,7 @@ export class GaussianSandbox {
     this.dofFocusDistance.value = this.camera.position.distanceTo(
       this.controls.target,
     );
+    this.dofFocusTargetDistance = this.dofFocusDistance.value;
     this.focusRaycastPending = true;
     this.hoverMarker.scale.setScalar(Math.max(bounds.radius * 0.012, 0.005));
 
@@ -517,10 +538,19 @@ export class GaussianSandbox {
       return;
     }
     cloud.updateWorldMatrix(true, false);
-    this.focusRaycaster.setFromCamera(this.focusPointer, this.camera);
-    const hit = this.focusRaycaster.intersectObject(cloud, false)[0];
-    if (hit !== undefined) {
-      this.dofFocusDistance.value = hit.distance;
+    const distances = CENTER_WEIGHTED_AUTOFOCUS_PATTERN.flatMap((sample) => {
+      this.focusPointer.set(sample.x, sample.y);
+      this.focusRaycaster.setFromCamera(this.focusPointer, this.camera);
+      const hit = this.focusRaycaster.intersectObject(cloud, false)[0];
+      return hit === undefined
+        ? []
+        : [{ distance: hit.distance, weight: sample.weight }];
+    });
+    const distance = weightedMedianFocusDistance(distances);
+    if (distance === null) return;
+    const deadZone = Math.max(distance * 0.01, 0.0001);
+    if (Math.abs(distance - this.dofFocusTargetDistance) > deadZone) {
+      this.dofFocusTargetDistance = distance;
     }
   }
 
