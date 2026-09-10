@@ -57,6 +57,8 @@ export class GaussianSandbox {
   private readonly loader = new CanonicalGaussianPlyLoader();
   private readonly scene = new Scene();
   private readonly controls: OrbitControls;
+  private readonly focusRaycaster = new Raycaster();
+  private readonly focusPointer = new Vector2();
   private readonly hoverRaycaster = new Raycaster();
   private readonly hoverPointer = new Vector2();
   private readonly sceneLayers = new Layers();
@@ -98,6 +100,7 @@ export class GaussianSandbox {
   private overlayPass: PassNode | null = null;
   private cloud: GaussianCloud | null = null;
   private controlsActive = false;
+  private focusRaycastPending = true;
   private disposed = false;
   private readonly handleResize = () => this.resize();
   private readonly handleControlsStart = () => {
@@ -106,6 +109,9 @@ export class GaussianSandbox {
   };
   private readonly handleControlsEnd = () => {
     this.controlsActive = false;
+  };
+  private readonly handleControlsChange = () => {
+    this.focusRaycastPending = true;
   };
   private readonly handlePointerMove = (event: PointerEvent) =>
     this.updateHoverMarker(event);
@@ -126,6 +132,7 @@ export class GaussianSandbox {
     this.controls.enableDamping = true;
     this.controls.addEventListener("start", this.handleControlsStart);
     this.controls.addEventListener("end", this.handleControlsEnd);
+    this.controls.addEventListener("change", this.handleControlsChange);
     renderer.domElement.addEventListener("pointermove", this.handlePointerMove);
     renderer.domElement.addEventListener(
       "pointerleave",
@@ -157,9 +164,10 @@ export class GaussianSandbox {
     renderer.setAnimationLoop((time) => {
       const encodeStart = performance.now();
       this.controls.update();
-      this.dofFocusDistance.value = this.camera.position.distanceTo(
-        this.controls.target,
-      );
+      if (this.focusRaycastPending) {
+        this.updateDofFocusDistance();
+        this.focusRaycastPending = false;
+      }
       if (this.pipeline !== null && timingInspector !== null) {
         timingInspector.beginFrameSample(renderer);
         try {
@@ -230,6 +238,7 @@ export class GaussianSandbox {
     removeEventListener("resize", this.handleResize);
     this.controls.removeEventListener("start", this.handleControlsStart);
     this.controls.removeEventListener("end", this.handleControlsEnd);
+    this.controls.removeEventListener("change", this.handleControlsChange);
     this.renderer.domElement.removeEventListener(
       "pointermove",
       this.handlePointerMove,
@@ -307,6 +316,10 @@ export class GaussianSandbox {
     this.cloud = cloud;
     this.scene.add(cloud);
     this.frameCloud(bounds);
+    this.dofFocusDistance.value = this.camera.position.distanceTo(
+      this.controls.target,
+    );
+    this.focusRaycastPending = true;
     this.hoverMarker.scale.setScalar(Math.max(bounds.radius * 0.012, 0.005));
 
     this.pass = gaussianPass(this.renderer, this.camera, store, {
@@ -445,6 +458,22 @@ export class GaussianSandbox {
     }
     this.hoverMarker.position.copy(hit.point);
     this.hoverMarker.visible = true;
+  }
+
+  private updateDofFocusDistance(): void {
+    const cloud = this.cloud;
+    if (
+      cloud === null ||
+      (!this.options.dofEnabled && !this.options.depthDebugEnabled)
+    ) {
+      return;
+    }
+    cloud.updateWorldMatrix(true, false);
+    this.focusRaycaster.setFromCamera(this.focusPointer, this.camera);
+    const hit = this.focusRaycaster.intersectObject(cloud, false)[0];
+    if (hit !== undefined) {
+      this.dofFocusDistance.value = hit.distance;
+    }
   }
 
   private resize(): void {
