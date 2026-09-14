@@ -138,6 +138,7 @@ describe("GaussianPass node slots", () => {
     expect(pass.rasterColorNode).toBe(rasterGaussianColor);
     expect(pass.maxRasterizedSplatsPerTile).toBeNull();
     expect(pass.rasterChunkSize).toBe(8_192);
+    expect(pass.depthAlphaThreshold).toBe(0.95);
 
     const capped = createPass({
       maxRasterizedSplatsPerTile: 8_192,
@@ -151,6 +152,18 @@ describe("GaussianPass node slots", () => {
     expect(() => createPass({ rasterChunkSize: 1_000 })).toThrow(
       /multiple of 256/,
     );
+  });
+
+  it("validates the depth alpha threshold", () => {
+    expect(() => createPass({ depthAlphaThreshold: -0.01 })).toThrow(
+      /depthAlphaThreshold/,
+    );
+    expect(() => createPass({ depthAlphaThreshold: 1.01 })).toThrow(
+      /depthAlphaThreshold/,
+    );
+    expect(
+      createPass({ depthAlphaThreshold: 0.8 }).pass.depthAlphaThreshold,
+    ).toBe(0.8);
   });
 
   it("rebuilds only the stage whose root node changed", () => {

@@ -136,6 +136,7 @@ chain runs again when its output textures are already valid:
 const pass = gaussianPass(renderer, camera, store, {
   redrawStrategy: "auto",
   outputDepth: true,
+  depthAlphaThreshold: 0.95,
 });
 ```
 
@@ -635,8 +636,11 @@ support requires a corresponding projection-domain change; contributions
 outside the emitted tile list cannot be recovered in rasterization.
 
 Depth is written in standard perspective-depth convention: `0` at the near plane, `1` at the far plane and
-`1` where no Gaussian contributes. The output is the center depth of the first contributing Gaussian in the
-front-to-back tile list. Disable it by omitting `outputDepth` to avoid allocating and writing the extra texture.
+`1` where the accumulated Gaussian alpha does not exceed `depthAlphaThreshold`. The default threshold is
+`0.95`, which prevents faint Gaussian tails from acting as opaque surfaces in downstream effects. Pixels that
+pass the threshold receive the opacity-weighted Gaussian surface depth. The threshold affects only the depth
+texture; color and alpha composition are unchanged. Set it in the inclusive `[0, 1]` range. Disable depth output
+entirely by omitting `outputDepth` to avoid allocating and writing the extra texture.
 
 ## `GaussianData` contract
 
