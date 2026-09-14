@@ -60,6 +60,7 @@ export class GaussianPass extends PassNode {
   readonly antialiasMode: AntialiasMode;
   readonly background: readonly [number, number, number, number];
   readonly outputDepth: boolean;
+  readonly depthAlphaThreshold: number;
   readonly colorSpace: ColorSpace;
   readonly profileKernels: boolean;
   readonly rasterStats: boolean;
@@ -166,6 +167,14 @@ export class GaussianPass extends PassNode {
     this.requestedIntersectionCapacity = intersectionCapacity;
     this.background = options.background ?? [0, 0, 0, 0];
     this.outputDepth = options.outputDepth ?? false;
+    this.depthAlphaThreshold = options.depthAlphaThreshold ?? 0.95;
+    if (
+      !Number.isFinite(this.depthAlphaThreshold) ||
+      this.depthAlphaThreshold < 0 ||
+      this.depthAlphaThreshold > 1
+    ) {
+      throw new RangeError("depthAlphaThreshold must be finite and in [0, 1]");
+    }
     this.colorSpace = options.colorSpace ?? SRGBColorSpace;
     this.profileKernels = options.profileKernels ?? false;
     this.rasterStats = options.rasterStats ?? false;
@@ -489,6 +498,7 @@ export class GaussianPass extends PassNode {
         this.nodeSlots,
         this.rasterTransmittanceThreshold,
         this.rasterStats,
+        this.depthAlphaThreshold,
       );
       this.pipelineDevice = device;
       this.pipelineLayoutVersion = this.gaussianStore.layoutVersion;

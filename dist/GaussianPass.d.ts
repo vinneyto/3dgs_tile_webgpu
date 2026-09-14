@@ -11,6 +11,7 @@ export declare class GaussianPass extends PassNode {
     readonly antialiasMode: AntialiasMode;
     readonly background: readonly [number, number, number, number];
     readonly outputDepth: boolean;
+    readonly depthAlphaThreshold: number;
     readonly colorSpace: ColorSpace;
     readonly profileKernels: boolean;
     readonly rasterStats: boolean;

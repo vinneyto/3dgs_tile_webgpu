@@ -74,7 +74,7 @@ describe("generated Gaussian WGSL", () => {
       records,
       offsets,
       new StorageTexture(16, 16),
-      null,
+      new StorageTexture(16, 16),
       frame,
       2_048,
       8_192,
@@ -82,6 +82,7 @@ describe("generated Gaussian WGSL", () => {
       nodes,
       true,
       0.001,
+      0.95,
     );
 
     const projectionSource = buildCompute(
@@ -112,6 +113,8 @@ describe("generated Gaussian WGSL", () => {
       expect(source).toContain("< 0.001");
       expect(source).not.toContain("< 0.0001");
     }
+    expect(rasterSource).toContain("> 0.95");
+    expect(compositeSource).toContain("> 0.95");
     const countChunksSource = buildCompute(rasterInternals.chunks.countNode);
     const prepareChunksSource = buildCompute(
       rasterInternals.chunks.prepareNode,

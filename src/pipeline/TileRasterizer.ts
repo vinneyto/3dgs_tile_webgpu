@@ -126,6 +126,7 @@ export class TileRasterizer {
     nodes: GaussianRasterNodeSlots,
     rasterStats = false,
     private readonly transmittanceThreshold = 1e-4,
+    private readonly depthAlphaThreshold = 0.95,
   ) {
     this.metrics = rasterStats
       ? this.attributes.createUint("3dgs.raster-work", tileCount * 4)
@@ -659,6 +660,7 @@ export class TileRasterizer {
             colorOutput!,
             this.depthTexture,
             frame,
+            this.depthAlphaThreshold,
           );
         } else {
           const partialIndex = taskIndex
@@ -765,6 +767,7 @@ export class TileRasterizer {
           colorOutput,
           this.depthTexture,
           frame,
+          this.depthAlphaThreshold,
         );
         if (counters !== null) {
           atomicAdd(counters.element(tile.mul(4).add(2)), uint(1));
@@ -824,6 +827,7 @@ function storeFinalPixel(
   colorOutput: any,
   depthTexture: StorageTexture | null,
   frame: FrameUniforms,
+  depthAlphaThreshold: number,
 ): void {
   const backgroundAlpha = clamp(float(frame.background[3]), 0, 1);
   accumulated.addAssign(
@@ -836,7 +840,7 @@ function storeFinalPixel(
   if (depthTexture !== null) {
     const gaussianAlpha = float(1).sub(transmittance);
     const deviceDepth = gaussianAlpha
-      .greaterThan(0)
+      .greaterThan(depthAlphaThreshold)
       .select(
         viewDepthToDeviceDepth(weightedViewDepth.div(gaussianAlpha), frame),
         float(1),
