@@ -1,6 +1,9 @@
 export { GaussianData, type GaussianBuffers, type GaussianDataOptions, } from "./GaussianData";
 export { FLOAT32_SH_BYTES_PER_COEFFICIENT, RGB8E8_SH_BYTES_PER_COEFFICIENT, packShRgb8e8, shBytesPerCoefficient, unpackShRgb8e8, type GaussianShFormat, } from "./GaussianSh";
 export { CanonicalGaussianPlyLoader } from "./CanonicalGaussianPlyLoader";
+export { GaussianDataBackend, type GaussianBackendResource, type GaussianBackendSelection, } from "./data-backend/GaussianDataBackend";
+export { GaussianRaycastIndex } from "./data-backend/GaussianRaycastIndex";
+export type { GaussianBackendTransport, GaussianBackendRequest, GaussianBackendResult, GaussianBackendLoadOptions, GaussianBackendPackedBuffers, GaussianRaycastBuffers, } from "./data-backend/GaussianBackendProtocol";
 export { GaussianCloud, type GaussianRaycastMode } from "./GaussianCloud";
 export { GaussianOctree, GaussianOctreeNode, type GaussianOctreeBuildOptions, type GaussianOctreeRaycastHit, type GaussianOctreeRaycastOptions, } from "./GaussianOctree";
 export { OctreeHelper, type OctreeHelperOptions } from "./OctreeHelper";

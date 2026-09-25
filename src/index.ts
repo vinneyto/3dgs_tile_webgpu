@@ -12,6 +12,20 @@ export {
   type GaussianShFormat,
 } from "./GaussianSh";
 export { CanonicalGaussianPlyLoader } from "./CanonicalGaussianPlyLoader";
+export {
+  GaussianDataBackend,
+  type GaussianBackendResource,
+  type GaussianBackendSelection,
+} from "./data-backend/GaussianDataBackend";
+export { GaussianRaycastIndex } from "./data-backend/GaussianRaycastIndex";
+export type {
+  GaussianBackendTransport,
+  GaussianBackendRequest,
+  GaussianBackendResult,
+  GaussianBackendLoadOptions,
+  GaussianBackendPackedBuffers,
+  GaussianRaycastBuffers,
+} from "./data-backend/GaussianBackendProtocol";
 export { GaussianCloud, type GaussianRaycastMode } from "./GaussianCloud";
 export {
   GaussianOctree,

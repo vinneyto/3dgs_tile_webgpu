@@ -9,6 +9,7 @@ import {
 import type { GaussianStore } from "./GaussianStore";
 import type { GaussianLod, GaussianLodPacking } from "./GaussianLod";
 import { alphaCompositeRaycastHit } from "./GaussianOctree";
+import type { GaussianRaycastIndex } from "./data-backend/GaussianRaycastIndex";
 
 export type GaussianRaycastMode = "rendered" | "full";
 
@@ -26,6 +27,7 @@ export class GaussianCloud extends Object3D {
   private packing: GaussianLodPacking | null;
   private packedGaussianCount: number;
   private priority: number;
+  private raycastIndex: GaussianRaycastIndex | null = null;
 
   constructor(
     store: GaussianStore,
@@ -82,21 +84,35 @@ export class GaussianCloud extends Object3D {
     this.priority = priority;
   }
 
+  /** Attach a transferable snapshot built by the data backend. Raycasts remain synchronous. */
+  setRaycastIndex(index: GaussianRaycastIndex | null): void {
+    this.raycastIndex = index;
+  }
+
   /** Raycast either the packed/rendered LOD or the complete source octree. */
   raycast(raycaster: Raycaster, intersections: Intersection[]): void {
-    if (this.lod === null || this.packing === null) return;
+    if (
+      this.raycastIndex === null &&
+      (this.lod === null || this.packing === null)
+    )
+      return;
     const inverseWorld = new Matrix4().copy(this.matrixWorld).invert();
     const localRay = new Ray().copy(raycaster.ray).applyMatrix4(inverseWorld);
-    const hits =
-      this.raycastMode === "full"
-        ? this.lod.octree.raycast(localRay)
-        : this.lod.raycast(localRay, this.packing);
-    const hit = alphaCompositeRaycastHit(
-      localRay,
-      this.lod.octree.data,
-      hits,
-      this.raycastAlphaThreshold,
-    );
+    const hit =
+      this.raycastIndex !== null
+        ? this.raycastIndex.raycast(
+            localRay,
+            this.raycastMode,
+            this.raycastAlphaThreshold,
+          )
+        : alphaCompositeRaycastHit(
+            localRay,
+            this.lod!.octree.data,
+            this.raycastMode === "full"
+              ? this.lod!.octree.raycast(localRay)
+              : this.lod!.raycast(localRay, this.packing!),
+            this.raycastAlphaThreshold,
+          );
     if (hit !== null) {
       const point = hit.point.clone().applyMatrix4(this.matrixWorld);
       const distance = raycaster.ray.origin.distanceTo(point);

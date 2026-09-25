@@ -34,7 +34,11 @@ const MIN_GAUSSIAN_SCALE = 1e-12;
  */
 export function alphaCompositeRaycastHit(
   ray: Ray,
-  data: GaussianData,
+  data: {
+    readonly means: { readonly array: ArrayLike<number> };
+    readonly scalesOpacity: { readonly array: ArrayLike<number> };
+    readonly rotations: { readonly array: ArrayLike<number> };
+  },
   hits: readonly GaussianOctreeRaycastHit[],
   alphaThreshold: number,
 ): GaussianOctreeRaycastHit | null {
@@ -44,9 +48,9 @@ export function alphaCompositeRaycastHit(
     );
   }
 
-  const means = data.means.array as Float32Array;
-  const scalesOpacity = data.scalesOpacity.array as Float32Array;
-  const rotations = data.rotations.array as Float32Array;
+  const means = data.means.array;
+  const scalesOpacity = data.scalesOpacity.array;
+  const rotations = data.rotations.array;
   const relativeOrigin = new Vector3();
   const scaledDirection = new Vector3();
   const closest = new Vector3();
