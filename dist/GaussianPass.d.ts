@@ -37,6 +37,7 @@ export declare class GaussianPass extends PassNode {
     private autoSnapshot;
     private pipelineDevice;
     private disposed;
+    private unsubscribeStore;
     constructor(renderer: WebGPURenderer, camera: PerspectiveCamera, gaussianStore: GaussianStore, options?: GaussianPassOptions);
     /** Resolved after the first render when omitted from GaussianPassOptions. */
     get intersectionCapacity(): number;

@@ -35,6 +35,7 @@ import {
   type GaussianCloud,
   type GaussianPass,
   GaussianStore,
+  WorkerGaussianStore,
 } from "../../src/index";
 import {
   addDataWithSandboxLod,
@@ -344,6 +345,18 @@ export class GaussianSandbox {
     this.cloudStatus.parsing(file.name);
     const store = this.createStore();
     try {
+      if (store instanceof WorkerGaussianStore) {
+        const cloud = await store.loadBuffer(await file.arrayBuffer(), {
+          name: `${file.name} Gaussian cloud`,
+          lod: { levels: SANDBOX_LOD_LEVELS },
+        });
+        if (this.disposed) {
+          store.dispose();
+          return;
+        }
+        this.show(store, file.name, cloud);
+        return;
+      }
       const data = this.loader.parse(await file.arrayBuffer());
       const cloud = addDataWithSandboxLod(
         store,
@@ -362,6 +375,10 @@ export class GaussianSandbox {
   }
 
   private createStore(): GaussianStore {
+    if (this.options.workerBackend)
+      return new WorkerGaussianStore({
+        defaultStreamingLod: this.options.streamingLod,
+      });
     return new GaussianStore({
       loader: this.loader,
       defaultStreamingLod: this.options.streamingLod,
@@ -374,8 +391,14 @@ export class GaussianSandbox {
     cloud: GaussianCloud,
   ): void {
     this.clearCloud();
-    const data = cloud.lod!.octree.data;
-    const bounds = measureCloud(data);
+    const sourceCount =
+      store instanceof WorkerGaussianStore
+        ? store.getSourceCount(cloud)
+        : cloud.lod!.octree.data.count;
+    const bounds =
+      store instanceof WorkerGaussianStore
+        ? boundsFromWorker(store.getBounds(cloud))
+        : measureCloud(cloud.lod!.octree.data);
     this.store = store;
     this.cloud = cloud;
     this.scene.add(cloud);
@@ -418,7 +441,7 @@ export class GaussianSandbox {
     this.spatialDebug.attach(cloud, this.pass);
     this.debugPanel.setPass(this.pass, {
       cloud,
-      onPack: () => this.cloudStatus.packed(source, data.count, cloud, store),
+      onPack: () => this.cloudStatus.packed(source, sourceCount, cloud, store),
     });
     this.pipeline = new RenderPipeline(this.renderer);
     const opaqueWithGaussians = compositePremultipliedOver(
@@ -463,7 +486,7 @@ export class GaussianSandbox {
     this.pipeline.outputNode = this.options.depthDebugEnabled
       ? sceneOutput
       : compositePremultipliedOver(sceneOutput, this.overlayPass);
-    this.cloudStatus.preparing(source, data.count);
+    this.cloudStatus.preparing(source, sourceCount);
   }
 
   private clearCloud(): void {
@@ -561,4 +584,23 @@ export class GaussianSandbox {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
   }
+}
+
+function boundsFromWorker([minX, minY, minZ, maxX, maxY, maxZ]: readonly [
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+]): CloudBounds {
+  return {
+    centerX: (minX + maxX) * 0.5,
+    centerY: (minY + maxY) * 0.5,
+    centerZ: (minZ + maxZ) * 0.5,
+    radius: Math.max(
+      Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.5,
+      0.1,
+    ),
+  };
 }

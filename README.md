@@ -80,9 +80,10 @@ src/
 └── demo.ts                         RenderPipeline example
 ```
 
-The repository also contains a full-screen Vite sandbox in `sandbox/`. The package includes a canonical 3DGS
-PLY loader for the default `GaussianStore.load()` path, while custom loaders can still return the same
-parser-agnostic `GaussianData` boundary.
+The repository also contains a full-screen Vite sandbox in `sandbox/`. It loads URLs and local files through
+`WorkerGaussianStore` by default; `?backend=main` selects the original synchronous Store for comparison. The
+package includes a canonical 3DGS PLY loader for `GaussianStore.load()`, while custom loaders can still return
+the same parser-agnostic `GaussianData` boundary.
 
 ## Usage
 
@@ -94,10 +95,10 @@ to install the package's development toolchain or run a local build:
 npm install github:vinneyto/3dgs_tile_webgpu
 ```
 
-The default path needs only a Store, a pass and a PLY URL. Loading is CPU-side;
-GPU buffers, the device-sized Gaussian budget and the render pipeline are
-created lazily on the first render. Camera-relative LOD updates and bounded
-streaming uploads are also driven by the pass.
+The worker path needs only a Store, a pass and a PLY URL. Parsing, octree and
+LOD construction run in the worker; GPU buffers, the device-sized Gaussian
+budget and the render pipeline are created lazily on the first render.
+Camera-relative LOD updates and bounded streaming uploads are driven by the pass.
 
 ```ts
 import {
@@ -105,7 +106,7 @@ import {
   RenderPipeline,
   WebGPURenderer,
 } from "three/webgpu";
-import { GaussianStore, gaussianPass } from "3dgs-tile-webgpu";
+import { WorkerGaussianStore, gaussianPass } from "3dgs-tile-webgpu";
 
 const renderer = new WebGPURenderer();
 await renderer.init();
@@ -116,7 +117,7 @@ const camera = new PerspectiveCamera(
   0.01,
   10_000,
 );
-const store = new GaussianStore();
+const store = new WorkerGaussianStore();
 const cloud = await store.load("scene.ply");
 scene.add(cloud);
 
@@ -239,6 +240,38 @@ pipeline.outputNode = pass;
 
 renderer.setAnimationLoop(() => pipeline.render());
 ```
+
+### Worker-owned Store
+
+`WorkerGaussianStore` is a `GaussianStore` compatible with `gaussianPass()`.
+It parses PLY, builds the octree and LOD, and runs global packing and bounded
+streaming LOD batches in a worker. The UI thread retains transferable GPU
+attribute buffers and a separate BVH/attribute snapshot for **synchronous**
+`GaussianCloud.raycast()`. A render before the first worker pack finishes is
+skipped; the pass invalidates itself when the buffers arrive.
+
+```ts
+import { WorkerGaussianStore, gaussianPass } from "3dgs-tile-webgpu";
+
+const store = new WorkerGaussianStore();
+const cloud = await store.load("scene.ply");
+scene.add(cloud);
+const pass = gaussianPass(renderer, camera, store);
+// RenderPipeline can now render the pass. Call store.dispose() at teardown.
+```
+
+For a browser `File`, use `await store.loadBuffer(await file.arrayBuffer())`.
+The URL path fetches inside the worker; the buffer path transfers ownership of
+the buffer. `WorkerGaussianStore` supports
+the built-in loader and budgeting/packing strategies; `add()`, `addLod()` and
+custom strategy instances remain on the synchronous `GaussianStore` path.
+Its `subscribe()` callback is available for demand-driven render loops.
+
+The worker protocol uses structured-clone messages and transferable buffers.
+`WorkerGaussianStoreOptions.transport` can supply another transport adapter;
+the renderer and synchronous raycast API do not depend on where the backend runs.
+
+### Synchronous Store
 
 The store uses the canonical 3DGS PLY loader by default:
 

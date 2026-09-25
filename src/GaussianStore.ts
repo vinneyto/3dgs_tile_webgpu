@@ -101,6 +101,9 @@ export interface GaussianStoreLodUpdate {
   readonly appliedBatches: number;
   readonly pending: boolean;
   readonly clouds: readonly GaussianStoreCloudLodUpdate[];
+  /** Combined GPU slot ranges touched by all clouds in this frame. */
+  readonly writtenSlotRanges?: readonly GaussianStoreSlotRange[];
+  readonly clearedSlotRanges?: readonly GaussianStoreSlotRange[];
 }
 
 export interface GaussianStoreCloudLodUpdate {
@@ -235,6 +238,10 @@ export class GaussianStore {
   /** True after registration changes and until pack() succeeds. */
   get needsPack(): boolean {
     return this.packingInvalid;
+  }
+
+  get hasPackedData(): boolean {
+    return this.packedData !== null;
   }
 
   get lastPackStats(): GaussianStorePackStats | null {
@@ -769,6 +776,8 @@ export class GaussianStore {
     const boundsCenter = new Vector3();
     let appliedBatches = 0;
     let pending = false;
+    const writtenSlotRanges: GaussianStoreSlotRange[] = [];
+    const clearedSlotRanges: GaussianStoreSlotRange[] = [];
     const clouds: GaussianStoreCloudLodUpdate[] = [];
     for (const entry of this.entries) {
       const strategy = entry.packingStrategy;
@@ -797,7 +806,15 @@ export class GaussianStore {
       if (strategy.needsPack) {
         const result = this.packLodBatch(entry.cloud);
         applied = result.applied;
-        if (applied) appliedBatches++;
+        if (applied) {
+          appliedBatches++;
+          writtenSlotRanges.push(
+            ...(this.latestPackStats?.writtenSlotRanges ?? []),
+          );
+          clearedSlotRanges.push(
+            ...(this.latestPackStats?.clearedSlotRanges ?? []),
+          );
+        }
       }
       const cloudPending = strategy.needsPack;
       pending ||= cloudPending;
@@ -810,7 +827,13 @@ export class GaussianStore {
         targetStats: strategy.targetStats,
       });
     }
-    return { appliedBatches, pending, clouds };
+    return {
+      appliedBatches,
+      pending,
+      clouds,
+      writtenSlotRanges,
+      clearedSlotRanges,
+    };
   }
 
   /** Current packed attributes. pack() must have resolved all invalidations. */

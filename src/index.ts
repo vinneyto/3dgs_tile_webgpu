@@ -18,6 +18,15 @@ export {
   type GaussianBackendSelection,
 } from "./data-backend/GaussianDataBackend";
 export { GaussianRaycastIndex } from "./data-backend/GaussianRaycastIndex";
+export {
+  WorkerGaussianStore,
+  type WorkerGaussianStoreOptions,
+} from "./data-backend/WorkerGaussianStore";
+export type {
+  WorkerStoreTransport,
+  WorkerStoreRequest,
+  WorkerStoreResult,
+} from "./data-backend/WorkerGaussianStoreProtocol";
 export type {
   GaussianBackendTransport,
   GaussianBackendRequest,

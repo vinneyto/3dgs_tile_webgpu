@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { readSandboxOptions } from "../sandbox/src/SandboxOptions";
 
 describe("sandbox raster options", () => {
+  it("loads Gaussians in the worker by default", () => {
+    expect(readSandboxOptions(new URLSearchParams()).workerBackend).toBe(true);
+    expect(
+      readSandboxOptions(new URLSearchParams("backend=main")).workerBackend,
+    ).toBe(false);
+  });
   it("shows depth only when requested", () => {
     expect(readSandboxOptions(new URLSearchParams()).depthDebugEnabled).toBe(
       false,

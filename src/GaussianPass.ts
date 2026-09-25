@@ -19,6 +19,7 @@ import {
 } from "three/webgpu";
 import { colorSpaceToWorking } from "three/tsl";
 import { GaussianStore } from "./GaussianStore";
+import { WorkerGaussianStore } from "./data-backend/WorkerGaussianStore";
 import {
   createDefaultGaussianNodeSlots,
   type GaussianNodeSlots,
@@ -87,6 +88,7 @@ export class GaussianPass extends PassNode {
   private autoSnapshot: AutoRedrawSnapshot | null = null;
   private pipelineDevice: GPUDevice | null = null;
   private disposed = false;
+  private unsubscribeStore: (() => void) | null = null;
 
   constructor(
     renderer: WebGPURenderer,
@@ -161,6 +163,9 @@ export class GaussianPass extends PassNode {
     this.name = "GaussianPass";
     this.ownerRenderer = renderer;
     this.gaussianStore = gaussianStore;
+    if (gaussianStore instanceof WorkerGaussianStore) {
+      this.unsubscribeStore = gaussianStore.subscribe(() => this.invalidate());
+    }
     this.redrawStrategy = redrawStrategy;
     this.depthSortMode = depthSortMode;
     this.antialiasMode = antialiasMode;
@@ -457,6 +462,7 @@ export class GaussianPass extends PassNode {
     if (this.gaussianStore.needsPack) {
       this.gaussianStore.pack({ limits: webGpuDeviceLimits(renderer) });
     }
+    if (!this.gaussianStore.hasPackedData) return undefined;
     const lodUpdate = this.gaussianStore.updateLod(this.camera);
     if (
       this.redrawStrategy === "auto" &&
@@ -590,6 +596,8 @@ export class GaussianPass extends PassNode {
   override dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.unsubscribeStore?.();
+    this.unsubscribeStore = null;
     this.pipeline?.dispose();
     this.pipeline = null;
     this.pipelineDevice = null;

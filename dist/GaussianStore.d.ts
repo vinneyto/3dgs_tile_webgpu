@@ -54,6 +54,9 @@ export interface GaussianStoreLodUpdate {
     readonly appliedBatches: number;
     readonly pending: boolean;
     readonly clouds: readonly GaussianStoreCloudLodUpdate[];
+    /** Combined GPU slot ranges touched by all clouds in this frame. */
+    readonly writtenSlotRanges?: readonly GaussianStoreSlotRange[];
+    readonly clearedSlotRanges?: readonly GaussianStoreSlotRange[];
 }
 export interface GaussianStoreCloudLodUpdate {
     readonly cloud: GaussianCloud;
@@ -124,6 +127,7 @@ export declare class GaussianStore {
     get maxGaussians(): number;
     /** True after registration changes and until pack() succeeds. */
     get needsPack(): boolean;
+    get hasPackedData(): boolean;
     get lastPackStats(): GaussianStorePackStats | null;
     /** Changes after a successful full or incremental packed-data update. */
     get contentVersion(): number;

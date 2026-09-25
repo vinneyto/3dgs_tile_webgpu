@@ -5,6 +5,7 @@ import type {
 } from "../../src/index";
 
 export interface SandboxOptions {
+  readonly workerBackend: boolean;
   readonly debugEnabled: boolean;
   readonly depthDebugEnabled: boolean;
   readonly dofEnabled: boolean;
@@ -21,6 +22,7 @@ export function readSandboxOptions(
   const profileEnabled = parameters.get("profile") === "kernels";
   const rasterStats = parameters.get("rasterStats") === "1";
   return {
+    workerBackend: parameters.get("backend") !== "main",
     debugEnabled: parameters.get("debug") !== "0",
     depthDebugEnabled: parameters.get("depth") === "1",
     dofEnabled: parameters.get("dof") === "1",
