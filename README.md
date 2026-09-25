@@ -81,7 +81,7 @@ src/
 ```
 
 The repository also contains a full-screen Vite sandbox in `sandbox/`. It loads URLs and local files through
-`WorkerGaussianStore` by default; `?backend=main` selects the original synchronous Store for comparison. The
+`GaussianStore` with its default worker backend; `?backend=main` selects the synchronous backend for comparison. The
 package includes a canonical 3DGS PLY loader for `GaussianStore.load()`, while custom loaders can still return
 the same parser-agnostic `GaussianData` boundary.
 
@@ -106,7 +106,7 @@ import {
   RenderPipeline,
   WebGPURenderer,
 } from "three/webgpu";
-import { WorkerGaussianStore, gaussianPass } from "3dgs-tile-webgpu";
+import { GaussianStore, gaussianPass } from "3dgs-tile-webgpu";
 
 const renderer = new WebGPURenderer();
 await renderer.init();
@@ -117,7 +117,7 @@ const camera = new PerspectiveCamera(
   0.01,
   10_000,
 );
-const store = new WorkerGaussianStore();
+const store = new GaussianStore();
 const cloud = await store.load("scene.ply");
 scene.add(cloud);
 
@@ -164,7 +164,9 @@ device. A numeric value sets a lower application cap while still respecting
 the device limit:
 
 ```ts
-const store = new GaussianStore({ maxGaussians: 1_000_000 });
+const store = new GaussianStore(
+  new WorkerGaussianBackend({ maxGaussians: 1_000_000 }),
+);
 ```
 
 The built-in default is remaining-capacity budgeting plus a separate streaming
@@ -173,12 +175,14 @@ cloud-local space, plans newest-target-only updates in a worker and uploads at
 most 1 MiB / 16 changed cells per cloud and frame.
 
 ```ts
-const store = new GaussianStore({
-  defaultStreamingLod: {
-    maxUploadBytesPerPack: 2 * 1024 * 1024,
-    maxChangedCellsPerPack: 32,
-  },
-});
+const store = new GaussianStore(
+  new WorkerGaussianBackend({
+    defaultStreamingLod: {
+      maxUploadBytesPerPack: 2 * 1024 * 1024,
+      maxChangedCellsPerPack: 32,
+    },
+  }),
+);
 ```
 
 Pass diagnostics can be observed without GPU readback. Detailed counters remain
@@ -221,7 +225,7 @@ const data = new GaussianData(
   { count: gaussianCount, shDegree: 3 },
 );
 
-const store = new GaussianStore();
+const store = new GaussianStore(new LocalGaussianBackend());
 const cloud = store.add(data, { name: "cat" });
 scene.add(cloud); // GaussianCloud is an ordinary transformable Object3D
 
@@ -241,42 +245,48 @@ pipeline.outputNode = pass;
 renderer.setAnimationLoop(() => pipeline.render());
 ```
 
-### Worker-owned Store
+### Replaceable computation backend
 
-`WorkerGaussianStore` is a `GaussianStore` compatible with `gaussianPass()`.
-It parses PLY, builds the octree and LOD, and runs global packing and bounded
-streaming LOD batches in a worker. The UI thread retains transferable GPU
-attribute buffers and a separate BVH/attribute snapshot for **synchronous**
-`GaussianCloud.raycast()`. A render before the first worker pack finishes is
-skipped; the pass invalidates itself when the buffers arrive.
+`GaussianStore` delegates data operations to a `GaussianBackend`; by default it
+constructs `WorkerGaussianBackend`. The worker parses PLY, builds the octree and
+LOD, and runs global packing and streaming LOD batches. The UI thread retains
+transferable GPU attribute buffers and a separate BVH/attribute snapshot for
+**synchronous** `GaussianCloud.raycast()`. The pass subscribes to backend changes
+through the interface and waits for the first asynchronous pack.
 
 ```ts
-import { WorkerGaussianStore, gaussianPass } from "3dgs-tile-webgpu";
+import {
+  GaussianStore,
+  WorkerGaussianBackend,
+  gaussianPass,
+} from "3dgs-tile-webgpu";
 
-const store = new WorkerGaussianStore();
+const store = new GaussianStore(
+  new WorkerGaussianBackend({ transport: myTransport }),
+);
 const cloud = await store.load("scene.ply");
 scene.add(cloud);
 const pass = gaussianPass(renderer, camera, store);
-// RenderPipeline can now render the pass. Call store.dispose() at teardown.
 ```
 
-For a browser `File`, use `await store.loadBuffer(await file.arrayBuffer())`.
-The URL path fetches inside the worker; the buffer path transfers ownership of
-the buffer. `WorkerGaussianStore` supports
-the built-in loader and budgeting/packing strategies; `add()`, `addLod()` and
-custom strategy instances remain on the synchronous `GaussianStore` path.
-Its `subscribe()` callback is available for demand-driven render loops.
+Without a custom `backend`, use `new GaussianStore()`. For a browser `File`, use
+`await store.loadBuffer(await file.arrayBuffer())`: the URL path fetches inside
+the worker and the buffer path transfers ownership. The built-in worker backend
+supports the default loader and strategies. Source `add()`, `addLod()`, custom
+loaders and strategy instances require `new LocalGaussianBackend(...)` as the
+injected backend.
 
-The worker protocol uses structured-clone messages and transferable buffers.
-`WorkerGaussianStoreOptions.transport` can supply another transport adapter;
-the renderer and synchronous raycast API do not depend on where the backend runs.
+`GaussianBackend.ts` defines the backend methods; `GaussianBackendEvents.ts`
+defines the `changed` (clouds, layout, content) and `error` events. The worker message protocol uses
+structured-clone messages and transferable buffers; a transport adapter can
+implement it for a remote service without changing the Store or pass.
 
 ### Synchronous Store
 
-The store uses the canonical 3DGS PLY loader by default:
+Use the local backend when you need direct access to source GaussianData, custom loaders or strategies:
 
 ```ts
-const store = new GaussianStore();
+const store = new GaussianStore(new LocalGaussianBackend());
 const cat = await store.load("cat.ply");
 const dog = await store.load("dog.ply");
 
@@ -314,6 +324,7 @@ import {
   GaussianLod,
   GaussianOctree,
   GaussianStore,
+  LocalGaussianBackend,
   RadialLodPackingStrategy,
 } from "3dgs-tile-webgpu";
 
@@ -322,9 +333,9 @@ const radialPacking = new RadialLodPackingStrategy({
   lodLevel: "finest",
 });
 
-const store = new GaussianStore({
-  defaultPackingStrategy: radialPacking,
-});
+const store = new GaussianStore(
+  new LocalGaussianBackend({ defaultPackingStrategy: radialPacking }),
+);
 
 const mug = await store.load("mug.ply", {
   lod: {
@@ -546,7 +557,7 @@ lodHelper.setLevels([1]);
 instanced, translucent volume set per active LOD level and can update its compact
 packing with `setPacking()`. Call `dispose()` on helpers when they are removed.
 
-A different source format can be injected with `new GaussianStore({ loader })` as long as its loader returns
+A different source format can be injected with `new GaussianStore(new LocalGaussianBackend({ loader }))` as long as its loader returns
 `GaussianData`.
 
 All clouds share one projection, global depth sort, intersection list and tile rasterizer, so transparent

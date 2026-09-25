@@ -3,8 +3,11 @@ export { FLOAT32_SH_BYTES_PER_COEFFICIENT, RGB8E8_SH_BYTES_PER_COEFFICIENT, pack
 export { CanonicalGaussianPlyLoader } from "./CanonicalGaussianPlyLoader";
 export { GaussianDataBackend, type GaussianBackendResource, type GaussianBackendSelection, } from "./data-backend/GaussianDataBackend";
 export { GaussianRaycastIndex } from "./data-backend/GaussianRaycastIndex";
-export { WorkerGaussianStore, type WorkerGaussianStoreOptions, } from "./data-backend/WorkerGaussianStore";
-export type { WorkerStoreTransport, WorkerStoreRequest, WorkerStoreResult, } from "./data-backend/WorkerGaussianStoreProtocol";
+export { WorkerGaussianBackend, type WorkerGaussianBackendOptions, } from "./data-backend/WorkerGaussianBackend";
+export { LocalGaussianBackend } from "./data-backend/LocalGaussianBackend";
+export type { GaussianBackend } from "./GaussianBackend";
+export type { GaussianBackendEvent, GaussianBackendEvents, GaussianBackendListener, } from "./GaussianBackendEvents";
+export type { WorkerStoreTransport, WorkerStoreRequest, WorkerStoreResult, } from "./data-backend/WorkerGaussianBackendProtocol";
 export type { GaussianBackendTransport, GaussianBackendRequest, GaussianBackendResult, GaussianBackendLoadOptions, GaussianBackendPackedBuffers, GaussianRaycastBuffers, } from "./data-backend/GaussianBackendProtocol";
 export { GaussianCloud, type GaussianRaycastMode } from "./GaussianCloud";
 export { GaussianOctree, GaussianOctreeNode, type GaussianOctreeBuildOptions, type GaussianOctreeRaycastHit, type GaussianOctreeRaycastOptions, } from "./GaussianOctree";

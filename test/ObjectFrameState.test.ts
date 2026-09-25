@@ -7,7 +7,7 @@ import {
 } from "three/webgpu";
 
 import { GaussianData } from "../src/GaussianData";
-import { GaussianStore } from "../src/GaussianStore";
+import { LocalGaussianBackend as GaussianStore } from "../src/data-backend/LocalGaussianBackend";
 import { ObjectFrameState } from "../src/pipeline/ObjectFrameState";
 
 const TEST_LIMITS = {

@@ -11,7 +11,7 @@ import {
 import { GaussianCloud } from "../src/GaussianCloud";
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLod } from "../src/GaussianLod";
-import type { GaussianStore } from "../src/GaussianStore";
+import type { GaussianBackend as GaussianStore } from "../src/GaussianBackend";
 import {
   DistanceAwareRadialLodPackingStrategy,
   MaximumLodPackingStrategy,

@@ -1,20 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PerspectiveCamera, Raycaster, Vector3 } from "three/webgpu";
-import { WorkerGaussianStore } from "../src/data-backend/WorkerGaussianStore";
+import { GaussianStore } from "../src/GaussianStore";
 import type {
   WorkerStoreRequest,
   WorkerStoreResult,
-} from "../src/data-backend/WorkerGaussianStoreProtocol";
+} from "../src/data-backend/WorkerGaussianBackendProtocol";
 
 afterEach(() => {
   vi.unstubAllGlobals();
   FakeWorker.failFirstLoad = false;
 });
 
-describe("WorkerGaussianStore client", () => {
+describe("worker-backed GaussianStore client", () => {
   it("uses worker buffers for rendering and a local synchronous raycast index", async () => {
     vi.stubGlobal("Worker", FakeWorker);
-    const store = new WorkerGaussianStore();
+    const store = new GaussianStore();
     const changes = vi.fn();
     store.subscribe(changes);
     const cloud = await store.load("sample.ply");
@@ -59,8 +59,11 @@ describe("WorkerGaussianStore client", () => {
   it("uses worker object IDs after a failed load without confusing resource IDs", async () => {
     vi.stubGlobal("Worker", FakeWorker);
     FakeWorker.failFirstLoad = true;
-    const store = new WorkerGaussianStore();
+    const store = new GaussianStore();
+    const events: string[] = [];
+    store.subscribe((event) => events.push(event.type));
     await expect(store.load("bad.ply")).rejects.toThrow("invalid PLY");
+    expect(events).toEqual(["error"]);
     const cloud = await store.load("good.ply");
     expect(cloud.objectId).toBe(0);
     cloud.packingPriority = 2;

@@ -1,19 +1,25 @@
 import { Camera, StorageBufferAttribute, Vector3 } from "three/webgpu";
 import { GaussianCloud } from "../GaussianCloud";
 import { GaussianData } from "../GaussianData";
+import type { GaussianBackend } from "../GaussianBackend";
+import type { GaussianBackendListener } from "../GaussianBackendEvents";
 import {
-  GaussianStore,
   type GaussianStoreAddLodOptions,
+  type GaussianStoreLodBatchResult,
   type GaussianStoreLoadOptions,
   type GaussianStoreLodUpdate,
   type GaussianStoreOptions,
   type GaussianStorePackOptions,
   type GaussianStorePackStats,
-} from "../GaussianStore";
+} from "../GaussianStoreTypes";
 import type { GaussianLod } from "../GaussianLod";
 import { GaussianRaycastIndex } from "./GaussianRaycastIndex";
 import { markSlotRangesUpdated } from "../utils/slotRanges";
-import { enableGaussianStoreAttribute } from "../store-attributes/GaussianStoreAttributes";
+import {
+  disposeGaussianStoreAttributes,
+  enableGaussianStoreAttribute,
+  GaussianStoreAttributes,
+} from "../store-attributes/GaussianStoreAttributes";
 import {
   replaceGaussianStoreAttribute,
   updateGaussianStoreAttribute,
@@ -24,8 +30,8 @@ import type {
   WorkerStoreRequest,
   WorkerStoreResult,
   WorkerStoreTransport,
-} from "./WorkerGaussianStoreProtocol";
-import WorkerGaussianStoreWorker from "./WorkerGaussianStoreWorker?worker&inline";
+} from "./WorkerGaussianBackendProtocol";
+import WorkerGaussianBackendWorker from "./WorkerGaussianBackendWorker?worker&inline";
 
 type RequestBody = WorkerStoreRequest extends infer T
   ? T extends { requestId: number }
@@ -42,7 +48,7 @@ interface RemoteCloud {
   readonly bounds: readonly [number, number, number, number, number, number];
 }
 
-export interface WorkerGaussianStoreOptions extends GaussianStoreOptions {
+export interface WorkerGaussianBackendOptions extends GaussianStoreOptions {
   /** Custom transport can translate the structured-clone protocol to a remote backend. */
   readonly transport?: WorkerStoreTransport;
 }
@@ -52,7 +58,11 @@ export interface WorkerGaussianStoreOptions extends GaussianStoreOptions {
  * packing, and streaming LOD running in a dedicated worker. Only transferable
  * GPU arrays and a synchronous raycast snapshot live in the UI thread.
  */
-export class WorkerGaussianStore extends GaussianStore {
+export class WorkerGaussianBackend implements GaussianBackend {
+  readonly attributes = new GaussianStoreAttributes();
+  readonly packedShFormat = "rgb8e8" as const;
+  readonly maxGaussiansOption: number | "auto";
+  layoutVersion = 0;
   private readonly worker: WorkerStoreTransport;
   private readonly ownsTransport: boolean;
   private readonly pending = new Map<
@@ -63,7 +73,7 @@ export class WorkerGaussianStore extends GaussianStore {
     }
   >();
   private readonly remoteClouds = new Map<number, RemoteCloud>();
-  private readonly changeListeners = new Set<() => void>();
+  private readonly changeListeners = new Set<GaussianBackendListener>();
   private readonly initialized: Promise<void>;
   private nextRequestId = 0;
   private nextCloudId = 0;
@@ -81,21 +91,21 @@ export class WorkerGaussianStore extends GaussianStore {
   private lastCameraKey = "";
   private lastError: Error | null = null;
 
-  constructor(options: WorkerGaussianStoreOptions = {}) {
+  constructor(options: WorkerGaussianBackendOptions = {}) {
     if (
       options.loader ||
       options.budgetingStrategy ||
       options.defaultPackingStrategy
     ) {
       throw new Error(
-        "WorkerGaussianStore currently supports the built-in loader and packing strategies",
+        "WorkerGaussianBackend currently supports the built-in loader and packing strategies",
       );
     }
-    super(options);
+    this.maxGaussiansOption = options.maxGaussians ?? "auto";
     this.ownsTransport = options.transport === undefined;
     this.worker =
       options.transport ??
-      new WorkerGaussianStoreWorker({ name: "3dgs-store" });
+      new WorkerGaussianBackendWorker({ name: "3dgs-store" });
     this.worker.addEventListener("message", this.handleMessage);
     this.worker.addEventListener("error", this.handleError);
     this.initialized = this.send({
@@ -108,39 +118,39 @@ export class WorkerGaussianStore extends GaussianStore {
     });
   }
 
-  override get clouds(): readonly GaussianCloud[] {
+  get clouds(): readonly GaussianCloud[] {
     return [...this.remoteClouds.values()].map(({ cloud }) => cloud);
   }
-  override get count(): number {
+  get count(): number {
     return this.clouds.reduce((sum, cloud) => sum + cloud.gaussianCount, 0);
   }
-  override get shDegree(): 0 | 1 | 2 | 3 {
+  get shDegree(): 0 | 1 | 2 | 3 {
     let degree: 0 | 1 | 2 | 3 = 0;
     for (const item of this.remoteClouds.values())
       if (item.degree > degree) degree = item.degree;
     return degree;
   }
-  override get needsPack(): boolean {
+  get needsPack(): boolean {
     return this.remoteInvalid;
   }
-  override get hasPackedData(): boolean {
+  get hasPackedData(): boolean {
     return this.remoteData !== null && !this.remoteInvalid;
   }
-  override get maxGaussians(): number {
+  get maxGaussians(): number {
     return this.remoteCapacity;
   }
-  override get objectCapacity(): number {
+  get objectCapacity(): number {
     return this.remoteObjectCapacity;
   }
-  override get lastPackStats(): GaussianStorePackStats | null {
+  get lastPackStats(): GaussianStorePackStats | null {
     return this.remoteStats;
   }
-  override get contentVersion(): number {
+  get contentVersion(): number {
     return this.remoteVersion;
   }
 
   /** Allow a demand-driven renderer to redraw when a worker result arrives. */
-  subscribe(listener: () => void): () => void {
+  subscribe(listener: GaussianBackendListener): () => void {
     this.changeListeners.add(listener);
     return () => {
       this.changeListeners.delete(listener);
@@ -163,7 +173,7 @@ export class WorkerGaussianStore extends GaussianStore {
     return item.sourceCount;
   }
 
-  override async load(
+  async load(
     url: string,
     options: GaussianStoreLoadOptions = {},
   ): Promise<GaussianCloud> {
@@ -179,6 +189,9 @@ export class WorkerGaussianStore extends GaussianStore {
       priority: options.priority,
       octree: options.octree,
       lod: options.lod,
+    }).catch((error: unknown) => {
+      this.emitError(toError(error));
+      throw error;
     });
     return this.attachLoaded(
       result,
@@ -207,7 +220,10 @@ export class WorkerGaussianStore extends GaussianStore {
         lod: options.lod,
       },
       [buffer],
-    );
+    ).catch((error: unknown) => {
+      this.emitError(toError(error));
+      throw error;
+    });
     return this.attachLoaded(
       result,
       cloudId,
@@ -216,19 +232,23 @@ export class WorkerGaussianStore extends GaussianStore {
     );
   }
 
-  override add(): GaussianCloud {
+  add(): GaussianCloud {
     throw new Error(
-      "Use loadBuffer() to transfer source data to WorkerGaussianStore",
+      "Use loadBuffer() to transfer source data to WorkerGaussianBackend",
     );
   }
-  override addLod(
+  addLod(
     _lod: GaussianLod,
     _options?: GaussianStoreAddLodOptions,
   ): GaussianCloud {
     throw new Error("Build the LOD in the worker with load() or loadBuffer()");
   }
 
-  override enablePackedLodLevelAttribute(): GaussianStorePackedAttribute {
+  packLodBatch(_cloud: GaussianCloud): GaussianStoreLodBatchResult {
+    throw new Error("Streaming LOD batches are scheduled by the worker");
+  }
+
+  enablePackedLodLevelAttribute(): GaussianStorePackedAttribute {
     const existing = this.attributes.get("lodLevel");
     if (existing !== undefined) return existing;
     const attribute = this.attributes[enableGaussianStoreAttribute](
@@ -244,17 +264,16 @@ export class WorkerGaussianStore extends GaussianStore {
           attribute[replaceGaussianStoreAttribute](
             new Uint32Array(result.lodLevel),
           );
-          this.notify();
+          this.notify("content");
         }
       })
       .catch((error: unknown) => {
-        this.lastError = toError(error);
-        this.notify();
+        this.fail(error);
       });
     return attribute;
   }
 
-  override pack({ limits }: GaussianStorePackOptions): void {
+  pack({ limits }: GaussianStorePackOptions): void {
     this.checkError();
     if (!this.remoteInvalid || this.packInFlight || this.remoteDisposed) return;
     this.packInFlight = true;
@@ -308,18 +327,17 @@ export class WorkerGaussianStore extends GaussianStore {
         this.lastCameraKey = "";
         this.layoutVersion++;
         this.remoteVersion++;
-        this.notify();
+        this.notify("layout");
       })
       .catch((error: unknown) => {
-        this.lastError = toError(error);
-        this.notify();
+        this.fail(error);
       })
       .finally(() => {
         this.packInFlight = false;
       });
   }
 
-  override updateLod(camera: Camera): GaussianStoreLodUpdate {
+  updateLod(camera: Camera): GaussianStoreLodUpdate {
     this.checkError();
     if (this.remoteData === null || this.remoteInvalid || this.remoteDisposed)
       return { appliedBatches: 0, pending: this.remoteInvalid, clouds: [] };
@@ -360,11 +378,10 @@ export class WorkerGaussianStore extends GaussianStore {
           this.applyCloudStates(result.clouds);
           this.remoteStats = result.stats;
           this.remoteVersion++;
-          this.notify();
+          this.notify("content");
         })
         .catch((error: unknown) => {
-          this.lastError = toError(error);
-          this.notify();
+          this.fail(error);
         })
         .finally(() => {
           this.updateInFlight = false;
@@ -377,30 +394,31 @@ export class WorkerGaussianStore extends GaussianStore {
     };
   }
 
-  override getPackedData(): GaussianData {
+  getPackedData(): GaussianData {
     this.checkError();
     if (this.remoteData === null || this.remoteInvalid)
       throw new Error(
-        "WorkerGaussianStore is not packed yet or its layout has changed",
+        "WorkerGaussianBackend is not packed yet or its layout has changed",
       );
     return this.remoteData;
   }
 
-  override remove(cloud: GaussianCloud): void {
+  remove(cloud: GaussianCloud): void {
     const item = this.findCloud(cloud);
     if (item === undefined) return;
     this.remoteClouds.delete(item.remoteId);
     cloud.removeFromParent();
     this.generation++;
     this.remoteInvalid = true;
+    this.notify("clouds");
     void this.send({ type: "remove", cloudId: item.remoteId }).catch(
       (error: unknown) => {
-        this.lastError = toError(error);
+        this.fail(error);
       },
     );
   }
 
-  override updatePackingPriority(cloud: GaussianCloud, priority: number): void {
+  updatePackingPriority(cloud: GaussianCloud, priority: number): void {
     const item = this.findCloud(cloud);
     if (item === undefined)
       throw new Error("Cloud does not belong to this Store");
@@ -409,36 +427,38 @@ export class WorkerGaussianStore extends GaussianStore {
     cloud.updatePackingPriority(priority);
     this.generation++;
     this.remoteInvalid = true;
+    this.notify("layout");
     void this.send({
       type: "priority",
       cloudId: item.remoteId,
       priority,
     }).catch((error: unknown) => {
-      this.lastError = toError(error);
+      this.fail(error);
     });
   }
 
-  override invalidateCloudPacking(cloud: GaussianCloud): void {
+  invalidateCloudPacking(cloud: GaussianCloud): void {
     const item = this.findCloud(cloud);
     if (item === undefined)
       throw new Error("Cloud does not belong to this Store");
     this.generation++;
     this.remoteInvalid = true;
+    this.notify("layout");
     void this.send({ type: "invalidate", cloudId: item.remoteId }).catch(
       (error: unknown) => {
-        this.lastError = toError(error);
+        this.fail(error);
       },
     );
   }
 
-  override dispose(): void {
+  dispose(): void {
     if (this.remoteDisposed) return;
     this.remoteDisposed = true;
     this.worker.removeEventListener("message", this.handleMessage);
     this.worker.removeEventListener("error", this.handleError);
     if (this.ownsTransport) this.worker.terminate?.();
     for (const pending of this.pending.values())
-      pending.reject(new Error("WorkerGaussianStore disposed"));
+      pending.reject(new Error("WorkerGaussianBackend disposed"));
     this.pending.clear();
     for (const { cloud } of this.remoteClouds.values())
       cloud.removeFromParent();
@@ -446,7 +466,7 @@ export class WorkerGaussianStore extends GaussianStore {
     this.remoteData?.dispose();
     this.remoteData = null;
     this.changeListeners.clear();
-    super.dispose();
+    this.attributes[disposeGaussianStoreAttributes]();
   }
 
   private attachLoaded(
@@ -457,7 +477,7 @@ export class WorkerGaussianStore extends GaussianStore {
   ): GaussianCloud {
     if (result.type !== "loaded" || result.cloudId !== cloudId)
       throw new Error("Unexpected Store load result");
-    if (this.remoteDisposed) throw new Error("WorkerGaussianStore disposed");
+    if (this.remoteDisposed) throw new Error("WorkerGaussianBackend disposed");
     const cloud = new GaussianCloud(
       this,
       result.objectId,
@@ -479,7 +499,7 @@ export class WorkerGaussianStore extends GaussianStore {
     });
     this.generation++;
     this.remoteInvalid = true;
-    this.notify();
+    this.notify("clouds");
     return cloud;
   }
 
@@ -554,7 +574,7 @@ export class WorkerGaussianStore extends GaussianStore {
     transfer?: Transferable[],
   ): Promise<WorkerStoreResult> {
     if (this.remoteDisposed)
-      return Promise.reject(new Error("WorkerGaussianStore disposed"));
+      return Promise.reject(new Error("WorkerGaussianBackend disposed"));
     const requestId = ++this.nextRequestId;
     return new Promise((resolve, reject) => {
       this.pending.set(requestId, { resolve, reject });
@@ -578,18 +598,29 @@ export class WorkerGaussianStore extends GaussianStore {
   };
 
   private readonly handleError = (event: ErrorEvent): void => {
-    this.lastError = new Error(event.message);
-    for (const pending of this.pending.values()) pending.reject(this.lastError);
+    const error = new Error(event.message);
+    this.fail(error);
+    for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
-    this.notify();
   };
 
   private checkError(): void {
     if (this.lastError !== null) throw this.lastError;
   }
 
-  private notify(): void {
-    for (const listener of this.changeListeners) listener();
+  private notify(reason: "clouds" | "layout" | "content"): void {
+    for (const listener of this.changeListeners)
+      listener({ type: "changed", reason });
+  }
+
+  private fail(error: unknown): void {
+    this.lastError = toError(error);
+    this.emitError(this.lastError);
+  }
+
+  private emitError(error: Error): void {
+    for (const listener of this.changeListeners)
+      listener({ type: "error", error });
   }
 }
 

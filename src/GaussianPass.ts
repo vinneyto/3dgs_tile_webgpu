@@ -18,8 +18,7 @@ import {
   type WebGPURenderer,
 } from "three/webgpu";
 import { colorSpaceToWorking } from "three/tsl";
-import { GaussianStore } from "./GaussianStore";
-import { WorkerGaussianStore } from "./data-backend/WorkerGaussianStore";
+import type { GaussianBackend } from "./GaussianBackend";
 import {
   createDefaultGaussianNodeSlots,
   type GaussianNodeSlots,
@@ -55,7 +54,7 @@ const enum DirtyStage {
  * A multi-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
  */
 export class GaussianPass extends PassNode {
-  readonly gaussianStore: GaussianStore;
+  readonly gaussianStore: GaussianBackend;
   readonly redrawStrategy: GaussianPassRedrawStrategy;
   readonly depthSortMode: DepthSortMode;
   readonly antialiasMode: AntialiasMode;
@@ -93,7 +92,7 @@ export class GaussianPass extends PassNode {
   constructor(
     renderer: WebGPURenderer,
     camera: PerspectiveCamera,
-    gaussianStore: GaussianStore,
+    gaussianStore: GaussianBackend,
     options: GaussianPassOptions = {},
   ) {
     super(PassNode.COLOR, new Scene(), camera, {
@@ -163,9 +162,7 @@ export class GaussianPass extends PassNode {
     this.name = "GaussianPass";
     this.ownerRenderer = renderer;
     this.gaussianStore = gaussianStore;
-    if (gaussianStore instanceof WorkerGaussianStore) {
-      this.unsubscribeStore = gaussianStore.subscribe(() => this.invalidate());
-    }
+    this.unsubscribeStore = gaussianStore.subscribe(() => this.invalidate());
     this.redrawStrategy = redrawStrategy;
     this.depthSortMode = depthSortMode;
     this.antialiasMode = antialiasMode;
@@ -727,7 +724,7 @@ interface AutoRedrawSnapshot {
 }
 
 interface AutoCloudSnapshot {
-  readonly cloud: GaussianStore["clouds"][number];
+  readonly cloud: GaussianBackend["clouds"][number];
   readonly visible: boolean;
   readonly matrixWorld: readonly number[];
 }
@@ -743,7 +740,7 @@ function matrixEquals(
 }
 
 function isEffectivelyVisible(
-  cloud: GaussianStore["clouds"][number],
+  cloud: GaussianBackend["clouds"][number],
   camera: PerspectiveCamera,
 ): boolean {
   if (!cloud.layers.test(camera.layers)) return false;

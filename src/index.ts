@@ -19,14 +19,21 @@ export {
 } from "./data-backend/GaussianDataBackend";
 export { GaussianRaycastIndex } from "./data-backend/GaussianRaycastIndex";
 export {
-  WorkerGaussianStore,
-  type WorkerGaussianStoreOptions,
-} from "./data-backend/WorkerGaussianStore";
+  WorkerGaussianBackend,
+  type WorkerGaussianBackendOptions,
+} from "./data-backend/WorkerGaussianBackend";
+export { LocalGaussianBackend } from "./data-backend/LocalGaussianBackend";
+export type { GaussianBackend } from "./GaussianBackend";
+export type {
+  GaussianBackendEvent,
+  GaussianBackendEvents,
+  GaussianBackendListener,
+} from "./GaussianBackendEvents";
 export type {
   WorkerStoreTransport,
   WorkerStoreRequest,
   WorkerStoreResult,
-} from "./data-backend/WorkerGaussianStoreProtocol";
+} from "./data-backend/WorkerGaussianBackendProtocol";
 export type {
   GaussianBackendTransport,
   GaussianBackendRequest,

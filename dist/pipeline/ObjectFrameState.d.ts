@@ -1,5 +1,5 @@
 import { PerspectiveCamera, StorageBufferAttribute } from "three/webgpu";
-import type { GaussianStore } from "../GaussianStore";
+import type { GaussianBackend } from "../GaussianBackend";
 export declare const OBJECT_FRAME_VEC4S = 10;
 /** Camera-specific object transforms shared by every Gaussian of one cloud. */
 export declare class ObjectFrameState {
@@ -13,7 +13,7 @@ export declare class ObjectFrameState {
     private readonly inverseModel;
     private readonly cameraWorldPosition;
     private readonly cameraLocalPosition;
-    constructor(camera: PerspectiveCamera, store: GaussianStore, gaussianCount: number);
+    constructor(camera: PerspectiveCamera, store: GaussianBackend, gaussianCount: number);
     update(): void;
     dispose(): void;
     private writeCloud;

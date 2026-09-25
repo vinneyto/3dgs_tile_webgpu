@@ -7,7 +7,7 @@ import {
 } from "three/webgpu";
 
 import type { GaussianCloud } from "../GaussianCloud";
-import type { GaussianStore } from "../GaussianStore";
+import type { GaussianBackend } from "../GaussianBackend";
 
 // matrixWorld, modelView, camera position in object-local space, visibility.
 export const OBJECT_FRAME_VEC4S = 10;
@@ -26,7 +26,7 @@ export class ObjectFrameState {
 
   constructor(
     private readonly camera: PerspectiveCamera,
-    private readonly store: GaussianStore,
+    private readonly store: GaussianBackend,
     gaussianCount: number,
   ) {
     this.frameComponentOffset = gaussianCount * 4;

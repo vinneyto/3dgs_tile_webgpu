@@ -29,20 +29,15 @@ import {
   vec4,
 } from "three/tsl";
 import {
-  CanonicalGaussianPlyLoader,
   gaussianPass,
   rasterPixelCoordinate,
   type GaussianCloud,
   type GaussianPass,
   GaussianStore,
-  WorkerGaussianStore,
+  LocalGaussianBackend,
+  WorkerGaussianBackend,
 } from "../../src/index";
-import {
-  addDataWithSandboxLod,
-  measureCloud,
-  SANDBOX_LOD_LEVELS,
-  type CloudBounds,
-} from "./cloudData";
+import { SANDBOX_LOD_LEVELS, type CloudBounds } from "./cloudData";
 import { CloudStatus } from "./CloudStatus";
 import {
   CENTER_WEIGHTED_AUTOFOCUS_PATTERN,
@@ -60,7 +55,6 @@ import { SpatialDebugHelpers } from "./SpatialDebugHelpers";
 type DofPassNode = ReturnType<typeof dof> & Node<"vec4">;
 
 export class GaussianSandbox {
-  private readonly loader = new CanonicalGaussianPlyLoader();
   private readonly scene = new Scene();
   private readonly controls: OrbitControls;
   private readonly focusRaycaster = new Raycaster();
@@ -345,24 +339,10 @@ export class GaussianSandbox {
     this.cloudStatus.parsing(file.name);
     const store = this.createStore();
     try {
-      if (store instanceof WorkerGaussianStore) {
-        const cloud = await store.loadBuffer(await file.arrayBuffer(), {
-          name: `${file.name} Gaussian cloud`,
-          lod: { levels: SANDBOX_LOD_LEVELS },
-        });
-        if (this.disposed) {
-          store.dispose();
-          return;
-        }
-        this.show(store, file.name, cloud);
-        return;
-      }
-      const data = this.loader.parse(await file.arrayBuffer());
-      const cloud = addDataWithSandboxLod(
-        store,
-        data,
-        `${file.name} Gaussian cloud`,
-      );
+      const cloud = await store.loadBuffer(await file.arrayBuffer(), {
+        name: `${file.name} Gaussian cloud`,
+        lod: { levels: SANDBOX_LOD_LEVELS },
+      });
       if (this.disposed) {
         store.dispose();
         return;
@@ -375,14 +355,12 @@ export class GaussianSandbox {
   }
 
   private createStore(): GaussianStore {
-    if (this.options.workerBackend)
-      return new WorkerGaussianStore({
-        defaultStreamingLod: this.options.streamingLod,
-      });
-    return new GaussianStore({
-      loader: this.loader,
-      defaultStreamingLod: this.options.streamingLod,
-    });
+    const options = { defaultStreamingLod: this.options.streamingLod };
+    return new GaussianStore(
+      this.options.workerBackend
+        ? new WorkerGaussianBackend(options)
+        : new LocalGaussianBackend(options),
+    );
   }
 
   private show(
@@ -391,14 +369,8 @@ export class GaussianSandbox {
     cloud: GaussianCloud,
   ): void {
     this.clearCloud();
-    const sourceCount =
-      store instanceof WorkerGaussianStore
-        ? store.getSourceCount(cloud)
-        : cloud.lod!.octree.data.count;
-    const bounds =
-      store instanceof WorkerGaussianStore
-        ? boundsFromWorker(store.getBounds(cloud))
-        : measureCloud(cloud.lod!.octree.data);
+    const sourceCount = store.getSourceCount(cloud);
+    const bounds = boundsFromWorker(store.getBounds(cloud));
     this.store = store;
     this.cloud = cloud;
     this.scene.add(cloud);

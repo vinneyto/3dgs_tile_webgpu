@@ -1,5 +1,5 @@
 import { Object3D, type Intersection, type Raycaster } from "three/webgpu";
-import type { GaussianStore } from "./GaussianStore";
+import type { GaussianBackend } from "./GaussianBackend";
 import type { GaussianLod, GaussianLodPacking } from "./GaussianLod";
 import type { GaussianRaycastIndex } from "./data-backend/GaussianRaycastIndex";
 export type GaussianRaycastMode = "rendered" | "full";
@@ -16,7 +16,7 @@ export declare class GaussianCloud extends Object3D {
     private packedGaussianCount;
     private priority;
     private raycastIndex;
-    constructor(store: GaussianStore, objectId: number, gaussianCount: number, name?: string, lod?: GaussianLod | null, packing?: GaussianLodPacking | null, priority?: number);
+    constructor(store: GaussianBackend, objectId: number, gaussianCount: number, name?: string, lod?: GaussianLod | null, packing?: GaussianLodPacking | null, priority?: number);
     get lodPacking(): GaussianLodPacking | null;
     get gaussianCount(): number;
     /** Lower priorities receive Store budget first. Defaults to 0. */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Ray, Raycaster, StorageBufferAttribute, Vector3 } from "three/webgpu";
 import { GaussianCloud } from "../src/GaussianCloud";
-import type { GaussianStore } from "../src/GaussianStore";
+import type { GaussianBackend as GaussianStore } from "../src/GaussianBackend";
 import { GaussianData } from "../src/GaussianData";
 import {
   GaussianOctree,

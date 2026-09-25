@@ -8,7 +8,7 @@ import {
 import { GaussianData } from "../src/GaussianData";
 import { GaussianLodColorHelper } from "../src/GaussianLodColorHelper";
 import { GaussianPass } from "../src/GaussianPass";
-import { GaussianStore } from "../src/GaussianStore";
+import { LocalGaussianBackend as GaussianStore } from "../src/data-backend/LocalGaussianBackend";
 
 const TEST_LIMITS = {
   maxStorageBufferBindingSize: 1_073_741_824,

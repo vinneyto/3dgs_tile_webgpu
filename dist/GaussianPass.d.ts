@@ -1,11 +1,11 @@
 import { PassNode, PerspectiveCamera, StorageTexture, type Node, type NodeBuilder, type NodeFrame, type ColorSpace, type Texture, type WebGPURenderer } from "three/webgpu";
-import { GaussianStore } from "./GaussianStore";
+import type { GaussianBackend } from "./GaussianBackend";
 import type { AntialiasMode, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassResources, GaussianPassStats, ResolvedRadixBackend } from "./pipeline/types";
 /**
  * A multi-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
  */
 export declare class GaussianPass extends PassNode {
-    readonly gaussianStore: GaussianStore;
+    readonly gaussianStore: GaussianBackend;
     readonly redrawStrategy: GaussianPassRedrawStrategy;
     readonly depthSortMode: DepthSortMode;
     readonly antialiasMode: AntialiasMode;
@@ -38,7 +38,7 @@ export declare class GaussianPass extends PassNode {
     private pipelineDevice;
     private disposed;
     private unsubscribeStore;
-    constructor(renderer: WebGPURenderer, camera: PerspectiveCamera, gaussianStore: GaussianStore, options?: GaussianPassOptions);
+    constructor(renderer: WebGPURenderer, camera: PerspectiveCamera, gaussianStore: GaussianBackend, options?: GaussianPassOptions);
     /** Resolved after the first render when omitted from GaussianPassOptions. */
     get intersectionCapacity(): number;
     getTexture(name: string): Texture;

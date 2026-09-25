@@ -1,0 +1,40 @@
+import type { Camera } from "three/webgpu";
+import type { GaussianCloud } from "./GaussianCloud";
+import type { GaussianData } from "./GaussianData";
+import type { GaussianLod } from "./GaussianLod";
+import type { GaussianStoreAttributes } from "./store-attributes/GaussianStoreAttributes";
+import type { GaussianStorePackedAttribute } from "./store-attributes/GaussianStorePackedAttribute";
+import type { GaussianBackendListener } from "./GaussianBackendEvents";
+import type { GaussianStoreAddLodOptions, GaussianStoreAddOptions, GaussianStoreLoadOptions, GaussianStoreLodBatchResult, GaussianStoreLodUpdate, GaussianStorePackOptions, GaussianStorePackStats } from "./GaussianStoreTypes";
+/** The client-facing computation contract, independent of the worker transport. */
+export interface GaussianBackend {
+    readonly attributes: GaussianStoreAttributes;
+    readonly maxGaussiansOption: number | "auto";
+    readonly packedShFormat: "rgb8e8";
+    readonly layoutVersion: number;
+    readonly contentVersion: number;
+    readonly maxGaussians: number;
+    readonly objectCapacity: number;
+    readonly count: number;
+    readonly shDegree: 0 | 1 | 2 | 3;
+    readonly clouds: readonly GaussianCloud[];
+    readonly needsPack: boolean;
+    readonly hasPackedData: boolean;
+    readonly lastPackStats: GaussianStorePackStats | null;
+    subscribe(listener: GaussianBackendListener): () => void;
+    load(url: string, options?: GaussianStoreLoadOptions): Promise<GaussianCloud>;
+    loadBuffer(buffer: ArrayBuffer, options?: GaussianStoreLoadOptions): Promise<GaussianCloud>;
+    add(data: GaussianData, options?: GaussianStoreAddOptions): GaussianCloud;
+    addLod(lod: GaussianLod, options?: GaussianStoreAddLodOptions): GaussianCloud;
+    remove(cloud: GaussianCloud): void;
+    updatePackingPriority(cloud: GaussianCloud, priority: number): void;
+    invalidateCloudPacking(cloud: GaussianCloud): void;
+    enablePackedLodLevelAttribute(): GaussianStorePackedAttribute;
+    pack(options: GaussianStorePackOptions): void;
+    packLodBatch(cloud: GaussianCloud): GaussianStoreLodBatchResult;
+    updateLod(camera: Camera): GaussianStoreLodUpdate;
+    getPackedData(): GaussianData;
+    getBounds(cloud: GaussianCloud): readonly [number, number, number, number, number, number];
+    getSourceCount(cloud: GaussianCloud): number;
+    dispose(): void;
+}

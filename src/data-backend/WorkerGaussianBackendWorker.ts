@@ -1,5 +1,5 @@
 import { Matrix4, PerspectiveCamera } from "three/webgpu";
-import { GaussianStore } from "../GaussianStore";
+import { LocalGaussianBackend } from "./LocalGaussianBackend";
 import type { GaussianCloud } from "../GaussianCloud";
 import { CanonicalGaussianPlyLoader } from "../CanonicalGaussianPlyLoader";
 import { GaussianOctree } from "../GaussianOctree";
@@ -11,13 +11,13 @@ import type {
   WorkerStorePatch,
   WorkerStoreRequest,
   WorkerStoreResult,
-} from "./WorkerGaussianStoreProtocol";
+} from "./WorkerGaussianBackendProtocol";
 
 const scope = globalThis as unknown as {
   onmessage: ((event: MessageEvent<WorkerStoreRequest>) => void) | null;
   postMessage(message: WorkerStoreResult, transfer?: Transferable[]): void;
 };
-let store: GaussianStore | null = null;
+let store: LocalGaussianBackend | null = null;
 const clouds = new Map<number, GaussianCloud>();
 const camera = new PerspectiveCamera();
 
@@ -34,7 +34,7 @@ scope.onmessage = ({ data: request }) => {
 async function handle(request: WorkerStoreRequest): Promise<void> {
   if (request.type === "init") {
     if (store !== null) throw new Error("Gaussian Store already initialized");
-    store = new GaussianStore({
+    store = new LocalGaussianBackend({
       maxGaussians: request.maxGaussians,
       defaultStreamingLod: request.defaultStreamingLod,
     });
@@ -236,7 +236,7 @@ function cloudStates(): WorkerStoreCloudState[] {
 }
 
 function copyAttributes(
-  data: ReturnType<GaussianStore["getPackedData"]>,
+  data: ReturnType<LocalGaussianBackend["getPackedData"]>,
 ): WorkerStoreAttributes {
   return {
     means: (data.means.array as Float32Array).slice().buffer,
@@ -248,7 +248,7 @@ function copyAttributes(
 }
 
 function patchForRange(
-  data: ReturnType<GaussianStore["getPackedData"]>,
+  data: ReturnType<LocalGaussianBackend["getPackedData"]>,
   start: number,
   count: number,
 ): WorkerStorePatch {

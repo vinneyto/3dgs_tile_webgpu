@@ -4,7 +4,7 @@ import type {
   WebGPURenderer,
 } from "three/webgpu";
 import type { GaussianData } from "../GaussianData";
-import type { GaussianStore } from "../GaussianStore";
+import type { GaussianBackend } from "../GaussianBackend";
 import type {
   GaussianNodeSlots,
   GaussianProjectionNodeSlots,
@@ -56,7 +56,7 @@ export class TiledGaussianPipeline {
     private readonly renderer: WebGPURenderer,
     camera: PerspectiveCamera,
     private readonly data: GaussianData,
-    store: GaussianStore,
+    store: GaussianBackend,
     private readonly mode: DepthSortMode,
     antialiasMode: AntialiasMode,
     private readonly capacity: number,

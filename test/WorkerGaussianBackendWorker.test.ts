@@ -4,7 +4,7 @@ import { GaussianRaycastIndex } from "../src/data-backend/GaussianRaycastIndex";
 import type {
   WorkerStoreRequest,
   WorkerStoreResult,
-} from "../src/data-backend/WorkerGaussianStoreProtocol";
+} from "../src/data-backend/WorkerGaussianBackendProtocol";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -18,7 +18,7 @@ describe("worker-owned GaussianStore", () => {
     vi.stubGlobal("postMessage", (response: WorkerStoreResult) => {
       replies.push(response);
     });
-    await import("../src/data-backend/WorkerGaussianStoreWorker");
+    await import("../src/data-backend/WorkerGaussianBackendWorker");
     const dispatch = (request: WorkerStoreRequest) => {
       const scope = globalThis as {
         onmessage: (event: MessageEvent<WorkerStoreRequest>) => void;

@@ -10,7 +10,8 @@ import { float, vec3 } from "three/tsl";
 
 import { GaussianData } from "../src/GaussianData";
 import { GaussianPass } from "../src/GaussianPass";
-import { GaussianStore } from "../src/GaussianStore";
+import { LocalGaussianBackend as GaussianStore } from "../src/data-backend/LocalGaussianBackend";
+import { GaussianStore as GaussianStoreClient } from "../src/GaussianStore";
 import type { GaussianPassOptions } from "../src/pipeline/types";
 import {
   gaussianColor,
@@ -25,6 +26,26 @@ const TEST_LIMITS = {
 };
 
 describe("GaussianPass node slots", () => {
+  it("subscribes to the backend contract through a composed Store", () => {
+    const backend = new GaussianStore();
+    const store = new GaussianStoreClient(backend);
+    const pass = new GaussianPass(
+      createRenderer(),
+      new PerspectiveCamera(),
+      store,
+    );
+    const invalidate = vi.spyOn(pass, "invalidate");
+    const events: string[] = [];
+    const unsubscribe = store.subscribe((event) => events.push(event.type));
+    backend.add(oneGaussian());
+    expect(events).toEqual(["changed"]);
+    expect(invalidate).toHaveBeenCalledOnce();
+    unsubscribe();
+    pass.dispose();
+    backend.add(oneGaussian());
+    expect(invalidate).toHaveBeenCalledOnce();
+    store.dispose();
+  });
   it("packs an uninitialized Store lazily on the first render", () => {
     const store = new GaussianStore();
     store.add(oneGaussian());

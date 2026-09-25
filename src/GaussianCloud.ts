@@ -6,7 +6,7 @@ import {
   type Raycaster,
 } from "three/webgpu";
 
-import type { GaussianStore } from "./GaussianStore";
+import type { GaussianBackend } from "./GaussianBackend";
 import type { GaussianLod, GaussianLodPacking } from "./GaussianLod";
 import { alphaCompositeRaycastHit } from "./GaussianOctree";
 import type { GaussianRaycastIndex } from "./data-backend/GaussianRaycastIndex";
@@ -23,14 +23,14 @@ export class GaussianCloud extends Object3D {
   /** Accumulated alpha required for a pointer hit. Must be in (0, 1). */
   raycastAlphaThreshold = 0.5;
 
-  private readonly ownerStore: GaussianStore;
+  private readonly ownerStore: GaussianBackend;
   private packing: GaussianLodPacking | null;
   private packedGaussianCount: number;
   private priority: number;
   private raycastIndex: GaussianRaycastIndex | null = null;
 
   constructor(
-    store: GaussianStore,
+    store: GaussianBackend,
     objectId: number,
     gaussianCount: number,
     name = "GaussianCloud",

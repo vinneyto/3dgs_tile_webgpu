@@ -10,7 +10,7 @@ import {
 } from "../src/lod-packing";
 import { GaussianOctree } from "../src/GaussianOctree";
 import { unpackShRgb8e8 } from "../src/GaussianSh";
-import { GaussianStore } from "../src/GaussianStore";
+import { LocalGaussianBackend as GaussianStore } from "../src/data-backend/LocalGaussianBackend";
 import { SourceFractionBudgetStrategy } from "../src/store-budgeting";
 
 const TEST_LIMITS = {
