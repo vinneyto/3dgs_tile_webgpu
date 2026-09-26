@@ -85,7 +85,7 @@ export class GaussianStore implements GaussianRenderStore {
   private pendingLod = false;
   private packStats: GaussianStorePackStats | null = null;
   private disposed = false;
-  private awaitingLayout = false;
+  private awaitingCapabilities = false;
   private frontendCapabilities: FrontendCapabilities | null = null;
 
   constructor(
@@ -119,7 +119,7 @@ export class GaussianStore implements GaussianRenderStore {
     return this.packedVersion;
   }
   get hasPackedData(): boolean {
-    return this.data !== null && !this.awaitingLayout;
+    return this.data !== null && !this.awaitingCapabilities;
   }
   get lastPackStats(): GaussianStorePackStats | null {
     return this.packStats;
@@ -146,7 +146,6 @@ export class GaussianStore implements GaussianRenderStore {
     const id = this.nextCommandId();
     const cloudId = this.nextCloudId();
     const result = this.awaitLoad(id, options, signal);
-    this.awaitingLayout = true;
     try {
       this.backend.dispatch({
         type: "load-cloud",
@@ -170,7 +169,6 @@ export class GaussianStore implements GaussianRenderStore {
     const id = this.nextCommandId();
     const cloudId = this.nextCloudId();
     const result = this.awaitLoad(id, options, signal);
-    this.awaitingLayout = true;
     try {
       this.backend.dispatch({
         type: "load-cloud-from-buffer",
@@ -192,7 +190,6 @@ export class GaussianStore implements GaussianRenderStore {
     this.cloudIds.delete(cloud);
     cloud.setRaycastIndex(null);
     cloud.removeFromParent();
-    this.awaitingLayout = true;
     this.notify("clouds");
     this.backend.dispatch({
       type: "unload-cloud",
@@ -209,7 +206,6 @@ export class GaussianStore implements GaussianRenderStore {
     const previous = item.priority;
     item.priority = priority;
     cloud.updatePackingPriority(priority);
-    this.awaitingLayout = true;
     const commandId = this.nextCommandId();
     this.pendingMutations.set(commandId, () => {
       if (item.priority === priority) {
@@ -227,7 +223,6 @@ export class GaussianStore implements GaussianRenderStore {
     } catch (error) {
       this.pendingMutations.get(commandId)?.();
       this.pendingMutations.delete(commandId);
-      this.awaitingLayout = this.pendingLoads.size > 0;
       throw error;
     }
   }
@@ -240,7 +235,6 @@ export class GaussianStore implements GaussianRenderStore {
     const item = this.cloudMap.get(cloudId)!;
     const previous = item.packingStrategy;
     item.packingStrategy = packingStrategy;
-    this.awaitingLayout = true;
     const commandId = this.nextCommandId();
     this.pendingMutations.set(commandId, () => {
       if (item.packingStrategy === packingStrategy)
@@ -256,7 +250,6 @@ export class GaussianStore implements GaussianRenderStore {
     } catch (error) {
       this.pendingMutations.get(commandId)?.();
       this.pendingMutations.delete(commandId);
-      this.awaitingLayout = this.pendingLoads.size > 0;
       throw error;
     }
   }
@@ -323,8 +316,8 @@ export class GaussianStore implements GaussianRenderStore {
         capabilities.supportsPartialBufferUpdates
     )
       return;
-    const wasAwaitingLayout = this.awaitingLayout;
-    this.awaitingLayout = true;
+    const wasAwaitingCapabilities = this.awaitingCapabilities;
+    this.awaitingCapabilities = true;
     this.frontendCapabilities = { ...capabilities };
     try {
       this.backend.dispatch({
@@ -334,7 +327,7 @@ export class GaussianStore implements GaussianRenderStore {
       });
     } catch (error) {
       this.frontendCapabilities = previous;
-      this.awaitingLayout = wasAwaitingLayout;
+      this.awaitingCapabilities = wasAwaitingCapabilities;
       throw error;
     }
   }
@@ -402,7 +395,7 @@ export class GaussianStore implements GaussianRenderStore {
 
   getPackedData(): GaussianData {
     if (this.lastError) throw this.lastError;
-    if (!this.data || this.awaitingLayout)
+    if (!this.data || this.awaitingCapabilities)
       throw new Error("Gaussian buffers are not ready");
     return this.data;
   }
@@ -503,7 +496,7 @@ export class GaussianStore implements GaussianRenderStore {
           this.pendingMutations.get(event.commandId)?.();
           this.pendingMutations.delete(event.commandId);
           this.commandError = error;
-          this.awaitingLayout = this.pendingLoads.size > 0;
+          this.awaitingCapabilities = false;
         } else this.lastError = error;
         this.notify("content");
         break;
@@ -515,7 +508,7 @@ export class GaussianStore implements GaussianRenderStore {
         for (const rollback of this.pendingMutations.values()) rollback();
         this.pendingMutations.clear();
         this.lastError = error;
-        this.awaitingLayout = false;
+        this.awaitingCapabilities = false;
         this.notify("content");
         break;
       }
@@ -629,7 +622,7 @@ export class GaussianStore implements GaussianRenderStore {
       planningMs: 0,
       slotUpdateMs: 0,
     };
-    this.awaitingLayout = false;
+    this.awaitingCapabilities = false;
     this.notify("layout");
   }
 
@@ -767,7 +760,6 @@ export class GaussianStore implements GaussianRenderStore {
     if (!pending) return;
     pending.cleanup();
     this.pendingLoads.delete(id);
-    this.awaitingLayout = this.pendingLoads.size > 0;
     pending.reject(error);
   }
 }

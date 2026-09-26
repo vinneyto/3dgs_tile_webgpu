@@ -199,6 +199,32 @@ describe("message backend", () => {
     store.dispose();
   });
 
+  it("keeps the previous packed buffers renderable while another cloud loads", async () => {
+    const port = new InMemoryWorker();
+    const store = readyStore(
+      new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
+    );
+    await store.loadBuffer(ply(0));
+    await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
+    const previous = store.getPackedData();
+    let finishFetch!: (response: Response) => void;
+    const fetcher = vi.fn(() => new Promise<Response>((resolve) => {
+      finishFetch = resolve;
+    }));
+    vi.stubGlobal("fetch", fetcher);
+
+    const loading = store.load("http://example.test/second.ply");
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledOnce());
+    expect(store.hasPackedData).toBe(true);
+    expect(store.getPackedData()).toBe(previous);
+    finishFetch(new Response(ply(2)));
+    await loading;
+    await vi.waitFor(() => expect(store.layoutVersion).toBeGreaterThan(1));
+    expect(store.hasPackedData).toBe(true);
+    expect(store.getPackedData()).not.toBe(previous);
+    store.dispose();
+  });
+
   it("transfers source data, keeps full raycast on client, and patches custom attributes", async () => {
     const port = new InMemoryWorker();
     const store = readyStore(
