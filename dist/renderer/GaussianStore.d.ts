@@ -1,9 +1,9 @@
 import { Camera, StorageBufferAttribute } from "three/webgpu";
-export type { GaussianDataLoader, GaussianStoreAddLodOptions, GaussianStoreAddOptions, GaussianStoreCloudLodUpdate, GaussianStoreDefaultLodOptions, GaussianStoreLoadOptions, GaussianStoreLodBatchResult, GaussianStoreLodUpdate, GaussianStoreOptions, GaussianStorePackLimits, GaussianStorePackOptions, GaussianStorePackStats, GaussianStoreSlotRange, } from "./legacy/GaussianStoreTypes";
+export type { GaussianStoreCloudLodUpdate, GaussianStoreLodUpdate, GaussianStorePackStats, GaussianStoreSlotRange, } from "./GaussianStoreTypes";
 import { GaussianCloud } from "./GaussianCloud";
 import { GaussianData } from "./GaussianData";
-import type { GaussianBackendListener } from "./legacy/GaussianBackendEvents";
-import type { GaussianStoreLodUpdate, GaussianStorePackOptions, GaussianStorePackStats } from "./legacy/GaussianStoreTypes";
+import type { GaussianStoreListener } from "./GaussianStoreEvents";
+import type { GaussianStoreLodUpdate, GaussianStorePackStats } from "./GaussianStoreTypes";
 import { GaussianStoreAttributes } from "./store-attributes/GaussianStoreAttributes";
 import { type GaussianStorePackedAttribute } from "./store-attributes/GaussianStorePackedAttribute";
 import type { BackendConfig } from "../streaming-backend/BackendConfig";
@@ -55,11 +55,10 @@ export declare class GaussianStore implements GaussianRenderStore {
     get objectCapacity(): number;
     get layoutVersion(): number;
     get contentVersion(): number;
-    get needsPack(): boolean;
     get hasPackedData(): boolean;
     get lastPackStats(): GaussianStorePackStats | null;
     get lastCommandError(): Error | null;
-    subscribe(listener: GaussianBackendListener): () => void;
+    subscribe(listener: GaussianStoreListener): () => void;
     load(url: string, options?: CloudLoadOptions, signal?: AbortSignal): Promise<GaussianCloud>;
     loadBuffer(buffer: ArrayBuffer, options?: CloudLoadOptions, signal?: AbortSignal): Promise<GaussianCloud>;
     remove(cloud: GaussianCloud): void;
@@ -70,7 +69,6 @@ export declare class GaussianStore implements GaussianRenderStore {
     invalidateCloudPacking(cloud: GaussianCloud): void;
     enablePackedLodLevelAttribute(): GaussianStorePackedAttribute;
     getPackedAttribute(name: string): StorageBufferAttribute | undefined;
-    pack(_options: GaussianStorePackOptions): void;
     setFrontendCapabilities(capabilities: FrontendCapabilities): void;
     updateLod(camera: Camera): GaussianStoreLodUpdate;
     getPackedData(): GaussianData;

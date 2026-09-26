@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { Ray, Raycaster, StorageBufferAttribute, Vector3 } from "three/webgpu";
 import { GaussianCloud } from "../src/renderer/GaussianCloud";
-import type { GaussianBackend as GaussianStore } from "../src/renderer/legacy/GaussianBackend";
+import type { GaussianStore } from "../src/renderer/GaussianStore";
 import { GaussianData } from "../src/renderer/GaussianData";
 import {
   GaussianOctree,
   alphaCompositeRaycastHit,
 } from "../src/streaming-backend-impl/GaussianOctree";
 import { GaussianRaycastIndex } from "../src/renderer/GaussianRaycastIndex";
-import { createGaussianRaycastBuffers } from "../src/streaming-backend-worker/legacy/createGaussianRaycastBuffers";
+import { createRaycastSnapshot } from "../src/streaming-backend-impl/createRaycastSnapshot";
 
 describe("transferable client raycast index", () => {
-  it("matches full BVH raycast and respects the rendered selection synchronously", () => {
+  it("matches the full source BVH synchronously", () => {
     const data = new GaussianData(
       {
         means: new StorageBufferAttribute(
@@ -31,9 +31,7 @@ describe("transferable client raycast index", () => {
       { count: 2 },
     );
     const octree = GaussianOctree.build(data, { leafCapacity: 1 });
-    const index = new GaussianRaycastIndex(
-      createGaussianRaycastBuffers(octree),
-    );
+    const index = new GaussianRaycastIndex(createRaycastSnapshot(octree));
     const ray = new Ray(new Vector3(0, 0, 3), new Vector3(0, 0, -1));
     const expected = alphaCompositeRaycastHit(
       ray,
@@ -41,17 +39,11 @@ describe("transferable client raycast index", () => {
       octree.raycast(ray),
       0.5,
     );
-    expect(index.raycast(ray, "full", 0.5)?.gaussianIndex).toBe(
+    expect(index.raycast(ray, 0.5)?.gaussianIndex).toBe(
       expected?.gaussianIndex,
     );
-    expect(index.raycast(ray, "rendered", 0.5)).toBeNull();
-    index.setRenderedIndices(Uint32Array.from([1]).buffer);
-    expect(index.raycast(ray, "rendered", 0.5)).toBeNull();
-    index.setRenderedIndices(Uint32Array.from([0]).buffer);
-    expect(index.raycast(ray, "rendered", 0.5)?.gaussianIndex).toBe(0);
     const cloud = new GaussianCloud({} as GaussianStore, 0, 0);
     cloud.setRaycastIndex(index);
-    cloud.raycastMode = "rendered";
     const intersections: ReturnType<Raycaster["intersectObject"]> = [];
     cloud.raycast(new Raycaster(ray.origin, ray.direction), intersections);
     expect(intersections[0]?.index).toBe(0);

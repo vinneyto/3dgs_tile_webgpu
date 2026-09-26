@@ -7,19 +7,12 @@ import {
 } from "three/webgpu";
 
 import { GaussianData } from "../src/renderer/GaussianData";
-import { LocalGaussianBackend as GaussianStore } from "../src/streaming-backend-impl/legacy/LocalGaussianBackend";
+import { packedStore } from "./helpers/packedStore";
 import { ObjectFrameState } from "../src/renderer/pipeline/ObjectFrameState";
-
-const TEST_LIMITS = {
-  maxStorageBufferBindingSize: 1_073_741_824,
-  maxBufferSize: 1_073_741_824,
-};
 
 describe("ObjectFrameState", () => {
   it("tracks scene hierarchy visibility without changing the store layout", () => {
-    const store = new GaussianStore();
-    const cloud = store.add(oneGaussian());
-    store.pack({ limits: TEST_LIMITS });
+    const { store, cloud } = packedStore(oneGaussian());
     const group = new Group();
     const scene = new Scene();
     scene.add(group);
@@ -43,9 +36,7 @@ describe("ObjectFrameState", () => {
   });
 
   it("creates independent camera-specific buffers for the same store", () => {
-    const store = new GaussianStore();
-    const cloud = store.add(oneGaussian());
-    store.pack({ limits: TEST_LIMITS });
+    const { store, cloud } = packedStore(oneGaussian());
     new Scene().add(cloud);
     const leftCamera = new PerspectiveCamera();
     leftCamera.position.x = -2;

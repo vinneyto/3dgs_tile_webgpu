@@ -15,7 +15,6 @@ export {
   DistanceAwareRadialLodPackingStrategy,
   type DistanceAwareRadialLodPackingOptions,
 } from "./DistanceAwareRadialLodPackingStrategy";
-export { RadialLodWorkerPlanner } from "../../streaming-backend-worker/lod-planner/RadialLodWorkerPlanner";
 export {
   StreamingLodPackingStrategy,
   isStreamingLodPackingStrategy,

@@ -11,7 +11,7 @@ A tiled 3D Gaussian Splatting pass for Three.js WebGPU. The renderer consumes pa
 | `src/streaming-backend-impl` | `StreamingGaussianBackend`: PLY parsing, source attributes, octree, LOD, packing, budgets, and versioned buffer updates. It does not own WebGPU objects or a worker transport. |
 | `src/streaming-backend-worker` | Worker endpoint and client proxy. ArrayBuffers cross the worker boundary with transferable ownership. |
 
-`GaussianStore` takes a `GaussianBackend` in its constructor and uses the worker implementation by default. `GaussianPass` takes the smaller `GaussianRenderStore` interface; it does not inspect the backend implementation. A separate `3dgs-tile-webgpu/backend` entry exports the protocol and computation engine for a future server transport, without importing the renderer or browser worker.
+`GaussianStore` takes a `GaussianBackend` in its constructor and uses the worker implementation by default. `GaussianPass` takes the renderer-facing `GaussianRenderStore` interface, which requires `setFrontendCapabilities`. A separate `3dgs-tile-webgpu/backend` entry exports the protocol and computation engine for a future server transport, without importing the renderer or browser worker.
 
 The backend API is `dispatch(command)`, `subscribe(listener)` and `dispose()`. Commands carry IDs; buffer events carry scene, layout and content versions. Camera and cloud transforms drive LOD selection inside the backend. After the WebGPU device is initialized, `GaussianPass` sends `set-frontend-capabilities` with its actual buffer limits. The backend can load clouds and send raycast snapshots before that command, but sends no render buffers until it receives the capabilities. It then initiates full buffers and LOD patches as before. When raycasting is enabled, the client also receives a transferable snapshot of the **full source octree**, so pointer raycasts remain synchronous and independent of rendered LOD. There is no rendered-LOD raycast synchronization.
 
@@ -50,7 +50,7 @@ renderer.setAnimationLoop(() => pipeline.render());
 
 The optional config supplied to `new WorkerStreamingGaussianBackend(config)` specifies the maximum Gaussian count, default packing strategy and per-update upload budget. Device limits are supplied later by the pass. `new StreamingGaussianBackend(config)` runs the same engine without a worker, useful for tests and transport adapters; without a pass, send `set-frontend-capabilities` explicitly to receive render buffers. The browser sandbox at `npm run sandbox` supports `?backend=main` for that direct engine.
 
-The legacy `LocalGaussianBackend` and `WorkerGaussianBackend` remain exported for applications that still create `GaussianData` directly. The new `GaussianStore` accepts the message-based `GaussianBackend` contract.
+`GaussianStore` accepts the message-based `GaussianBackend` contract. The previous local and worker LOD backends have been removed; use `StreamingGaussianBackend` or `WorkerStreamingGaussianBackend`.
 
 ## Development
 

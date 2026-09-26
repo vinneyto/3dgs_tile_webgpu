@@ -1,4 +1,4 @@
-import { BufferGeometry, LineBasicMaterial, LineSegments, type ColorRepresentation } from "three/webgpu";
+import { BufferGeometry, LineBasicMaterial, LineSegments, type Box3, type ColorRepresentation } from "three/webgpu";
 import type { GaussianOctree } from "../streaming-backend-impl/GaussianOctree";
 export interface OctreeHelperOptions {
     color?: ColorRepresentation;
@@ -10,11 +10,16 @@ export interface OctreeHelperOptions {
     /** Defaults to false so the complete local grid remains visible. */
     depthTest?: boolean;
 }
-/** Local-space wireframe visualization of a GaussianOctree. */
+export interface OctreeDebugCell {
+    readonly bounds: Box3;
+    readonly depth: number;
+    readonly isLeaf: boolean;
+}
+/** Local-space wireframe visualization of octree cells or a client snapshot. */
 export declare class OctreeHelper extends LineSegments<BufferGeometry, LineBasicMaterial> {
-    readonly octree: GaussianOctree;
+    readonly octree: GaussianOctree | readonly OctreeDebugCell[];
     readonly isOctreeHelper = true;
     readonly cellCount: number;
-    constructor(octree: GaussianOctree, options?: OctreeHelperOptions);
+    constructor(octree: GaussianOctree | readonly OctreeDebugCell[], options?: OctreeHelperOptions);
     dispose(): void;
 }

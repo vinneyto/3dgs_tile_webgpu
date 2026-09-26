@@ -1,27 +1,17 @@
 import { Camera, StorageBufferAttribute, Vector3 } from "three/webgpu";
 export type {
-  GaussianDataLoader,
-  GaussianStoreAddLodOptions,
-  GaussianStoreAddOptions,
   GaussianStoreCloudLodUpdate,
-  GaussianStoreDefaultLodOptions,
-  GaussianStoreLoadOptions,
-  GaussianStoreLodBatchResult,
   GaussianStoreLodUpdate,
-  GaussianStoreOptions,
-  GaussianStorePackLimits,
-  GaussianStorePackOptions,
   GaussianStorePackStats,
   GaussianStoreSlotRange,
-} from "./legacy/GaussianStoreTypes";
+} from "./GaussianStoreTypes";
 import { GaussianCloud } from "./GaussianCloud";
 import { GaussianData } from "./GaussianData";
-import type { GaussianBackendListener } from "./legacy/GaussianBackendEvents";
+import type { GaussianStoreListener } from "./GaussianStoreEvents";
 import type {
   GaussianStoreLodUpdate,
-  GaussianStorePackOptions,
   GaussianStorePackStats,
-} from "./legacy/GaussianStoreTypes";
+} from "./GaussianStoreTypes";
 import { GaussianRaycastIndex } from "./GaussianRaycastIndex";
 import { markSlotRangesUpdated } from "./utils/slotRanges";
 import {
@@ -75,7 +65,7 @@ export class GaussianStore implements GaussianRenderStore {
   private readonly cloudIds = new Map<GaussianCloud, string>();
   private readonly pendingLoads = new Map<string, PendingCloud>();
   private readonly pendingMutations = new Map<string, () => void>();
-  private readonly listeners = new Set<GaussianBackendListener>();
+  private readonly listeners = new Set<GaussianStoreListener>();
   private readonly schemas = new Map<string, PackedAttributeBuffer>();
   private readonly extraBuffers = new Map<string, StorageBufferAttribute>();
   private readonly unsubscribe: () => void;
@@ -127,9 +117,6 @@ export class GaussianStore implements GaussianRenderStore {
   get contentVersion(): number {
     return this.packedVersion;
   }
-  get needsPack(): boolean {
-    return false;
-  }
   get hasPackedData(): boolean {
     return this.data !== null && !this.awaitingLayout;
   }
@@ -140,7 +127,7 @@ export class GaussianStore implements GaussianRenderStore {
     return this.commandError;
   }
 
-  subscribe(listener: GaussianBackendListener): () => void {
+  subscribe(listener: GaussianStoreListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -310,10 +297,6 @@ export class GaussianStore implements GaussianRenderStore {
       : this.extraBuffers.get(name);
   }
 
-  pack(_options: GaussianStorePackOptions): void {
-    // The backend responds to commands and sends buffers without a frame request.
-  }
-
   setFrontendCapabilities(capabilities: FrontendCapabilities): void {
     if (this.disposed) throw new Error("GaussianStore disposed");
     const previous = this.frontendCapabilities;
@@ -450,11 +433,8 @@ export class GaussianStore implements GaussianRenderStore {
           event.objectId,
           0,
           options.name ?? event.cloudId,
-          null,
-          null,
           priority,
         );
-        cloud.raycastMode = "full";
         if (event.raycast)
           cloud.setRaycastIndex(new GaussianRaycastIndex(event.raycast));
         this.cloudMap.set(event.cloudId, {
@@ -717,7 +697,7 @@ export class GaussianStore implements GaussianRenderStore {
     for (const state of states)
       this.cloudMap
         .get(state.cloudId)
-        ?.cloud.updatePacking(state.renderedCount, null);
+        ?.cloud.updatePacking(state.renderedCount);
   }
   private notify(reason: "clouds" | "layout" | "content"): void {
     for (const listener of this.listeners)
