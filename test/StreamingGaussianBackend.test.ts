@@ -23,34 +23,101 @@ const TEST_CAPABILITIES = {
 let nextCapabilityId = 0;
 function readyBackend(): StreamingGaussianBackend {
   const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
-  backend.dispatch({ type: "set-frontend-capabilities", id: `capabilities-${++nextCapabilityId}`, capabilities: TEST_CAPABILITIES });
+  backend.dispatch({
+    type: "set-frontend-capabilities",
+    id: `capabilities-${++nextCapabilityId}`,
+    capabilities: TEST_CAPABILITIES,
+  });
   return backend;
 }
-function readyStore(backend: ConstructorParameters<typeof GaussianStore>[0]): GaussianStore {
+function readyStore(
+  backend: ConstructorParameters<typeof GaussianStore>[0],
+): GaussianStore {
   const store = new GaussianStore(backend);
   store.setFrontendCapabilities(TEST_CAPABILITIES);
   return store;
 }
 
 describe("message backend", () => {
+  it("reports worker failures as backend-failure and rejects pending loads", async () => {
+    const port = new InMemoryWorker();
+    const backend = new WorkerStreamingGaussianBackend(
+      DEFAULT_BACKEND_CONFIG,
+      port as never,
+    );
+    const events: BackendEvent[] = [];
+    backend.subscribe((event) => events.push(event));
+    const store = new GaussianStore(backend);
+    const pending = store.load("http://example.test/slow.ply");
+    port.fail("Worker crashed");
+    await expect(pending).rejects.toThrow("Worker crashed");
+    expect(events).toContainEqual({
+      type: "backend-failure",
+      code: "worker-error",
+      message: "Worker crashed",
+    });
+    store.dispose();
+  });
+
+  it("reports worker message deserialization failures", () => {
+    const port = new InMemoryWorker();
+    const backend = new WorkerStreamingGaussianBackend(
+      DEFAULT_BACKEND_CONFIG,
+      port as never,
+    );
+    const events: BackendEvent[] = [];
+    backend.subscribe((event) => events.push(event));
+    port.failMessage();
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "backend-failure",
+        code: "worker-message-error",
+      }),
+    ]);
+    backend.dispose();
+  });
+
   it("parses, builds the octree and LOD, and packs once before the first buffers", async () => {
-    const { CanonicalGaussianPlyLoader } = await import("../src/streaming-backend-impl/CanonicalGaussianPlyLoader");
-    const { GaussianOctree } = await import("../src/streaming-backend-impl/GaussianOctree");
-    const { GaussianLod } = await import("../src/streaming-backend-impl/GaussianLod");
+    const { CanonicalGaussianPlyLoader } =
+      await import("../src/streaming-backend-impl/CanonicalGaussianPlyLoader");
+    const { GaussianOctree } =
+      await import("../src/streaming-backend-impl/GaussianOctree");
+    const { GaussianLod } =
+      await import("../src/streaming-backend-impl/GaussianLod");
     const parse = vi.spyOn(CanonicalGaussianPlyLoader.prototype, "parse");
     const octree = vi.spyOn(GaussianOctree, "build");
     const lod = vi.spyOn(GaussianLod, "build");
     const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
-    const compute = vi.spyOn(backend as unknown as { compute: () => unknown }, "compute");
+    const compute = vi.spyOn(
+      backend as unknown as { compute: () => unknown },
+      "compute",
+    );
     const events: BackendEvent[] = [];
     backend.subscribe((event) => events.push(event));
 
-    backend.dispatch({ type: "load-cloud-from-buffer", id: "load", cloudId: "cloud", buffer: ply(0) });
-    await vi.waitFor(() => expect(events.some((event) => event.type === "cloud-loaded")).toBe(true));
-    expect(events.some((event) => event.type.startsWith("buffers-"))).toBe(false);
+    backend.dispatch({
+      type: "load-cloud-from-buffer",
+      id: "load",
+      cloudId: "cloud",
+      buffer: ply(0),
+    });
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.type === "cloud-loaded")).toBe(true),
+    );
+    expect(events.some((event) => event.type.startsWith("buffers-"))).toBe(
+      false,
+    );
     expect(compute).not.toHaveBeenCalled();
-    backend.dispatch({ type: "set-frontend-capabilities", id: "capabilities", capabilities: TEST_CAPABILITIES });
-    await vi.waitFor(() => expect(events.some((event) => event.type === "buffers-replaced")).toBe(true));
+    backend.dispatch({
+      type: "set-frontend-capabilities",
+      id: "capabilities",
+      capabilities: TEST_CAPABILITIES,
+    });
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.type === "buffers-replaced")).toBe(
+        true,
+      ),
+    );
     expect(parse).toHaveBeenCalledTimes(1);
     expect(octree).toHaveBeenCalledTimes(1);
     expect(lod).toHaveBeenCalledTimes(1);
@@ -66,16 +133,52 @@ describe("message backend", () => {
     const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
     const events: BackendEvent[] = [];
     backend.subscribe((event) => events.push(event));
-    backend.dispatch({ type: "load-cloud-from-buffer", id: "first", cloudId: "one", buffer: ply(0) });
-    backend.dispatch({ type: "load-cloud-from-buffer", id: "second", cloudId: "two", buffer: ply(3) });
-    await vi.waitFor(() => expect(events.filter((event) => event.type === "cloud-loaded")).toHaveLength(2));
-    expect(events.filter((event) => event.type.startsWith("buffers-"))).toHaveLength(0);
-    expect(events.filter((event) => event.type === "cloud-loaded").every((event) => "raycast" in event && event.raycast !== undefined)).toBe(true);
-    backend.dispatch({ type: "set-frontend-capabilities", id: "capabilities", capabilities: TEST_CAPABILITIES });
-    await vi.waitFor(() => expect(events.some((event) => event.type === "buffers-replaced")).toBe(true));
-    const replacement = events.find((event) => event.type === "buffers-replaced");
-    expect(replacement && "clouds" in replacement ? replacement.clouds.map((cloud) => cloud.cloudId) : []).toEqual(["one", "two"]);
-    expect(events.filter((event) => event.type === "buffers-replaced")).toHaveLength(1);
+    backend.dispatch({
+      type: "load-cloud-from-buffer",
+      id: "first",
+      cloudId: "one",
+      buffer: ply(0),
+    });
+    backend.dispatch({
+      type: "load-cloud-from-buffer",
+      id: "second",
+      cloudId: "two",
+      buffer: ply(3),
+    });
+    await vi.waitFor(() =>
+      expect(
+        events.filter((event) => event.type === "cloud-loaded"),
+      ).toHaveLength(2),
+    );
+    expect(
+      events.filter((event) => event.type.startsWith("buffers-")),
+    ).toHaveLength(0);
+    expect(
+      events
+        .filter((event) => event.type === "cloud-loaded")
+        .every((event) => "raycast" in event && event.raycast !== undefined),
+    ).toBe(true);
+    backend.dispatch({
+      type: "set-frontend-capabilities",
+      id: "capabilities",
+      capabilities: TEST_CAPABILITIES,
+    });
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.type === "buffers-replaced")).toBe(
+        true,
+      ),
+    );
+    const replacement = events.find(
+      (event) => event.type === "buffers-replaced",
+    );
+    expect(
+      replacement && "clouds" in replacement
+        ? replacement.clouds.map((cloud) => cloud.cloudId)
+        : [],
+    ).toEqual(["one", "two"]);
+    expect(
+      events.filter((event) => event.type === "buffers-replaced"),
+    ).toHaveLength(1);
     backend.dispose();
   });
 
@@ -218,11 +321,15 @@ describe("message backend", () => {
 
   it("leaves a client buffer untouched when cancellation precedes dispatch", async () => {
     const port = new InMemoryWorker();
-    const store = readyStore(new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never));
+    const store = readyStore(
+      new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
+    );
     const controller = new AbortController();
     controller.abort();
     const input = ply(0);
-    await expect(store.loadBuffer(input, {}, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    await expect(
+      store.loadBuffer(input, {}, controller.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
     expect(input.byteLength).toBeGreaterThan(0);
     expect(port.commands.map((command) => command.type)).toEqual([
       "set-frontend-capabilities",
@@ -299,12 +406,31 @@ describe("message backend", () => {
     const backend = readyBackend();
     const events: BackendEvent[] = [];
     backend.subscribe((event) => events.push(event));
-    backend.dispatch({ type: "load-cloud-from-buffer", id: "load", cloudId: "cloud", buffer: ply(0) });
-    await vi.waitFor(() => expect(events.some((event) => event.type === "buffers-replaced")).toBe(true));
+    backend.dispatch({
+      type: "load-cloud-from-buffer",
+      id: "load",
+      cloudId: "cloud",
+      buffer: ply(0),
+    });
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.type === "buffers-replaced")).toBe(
+        true,
+      ),
+    );
     const matrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 4, 0, 0, 1];
-    backend.dispatch({ type: "set-cloud-transform", id: "transform", cloudId: "cloud",
-      sceneRevision: 1, worldMatrix: matrix });
-    await vi.waitFor(() => expect(events).toContainEqual({ type: "command-completed", commandId: "transform" }));
+    backend.dispatch({
+      type: "set-cloud-transform",
+      id: "transform",
+      cloudId: "cloud",
+      sceneRevision: 1,
+      worldMatrix: matrix,
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "command-completed",
+        commandId: "transform",
+      }),
+    );
     backend.dispose();
   });
 
@@ -456,6 +582,8 @@ class InMemoryWorker {
   private core: StreamingGaussianBackend | null = null;
   private listener: ((event: MessageEvent<WorkerOutbound>) => void) | null =
     null;
+  private errorListener: ((event: ErrorEvent) => void) | null = null;
+  private messageErrorListener: (() => void) | null = null;
   readonly events: BackendEvent[] = [];
   readonly commands: BackendCommand[] = [];
   terminated = false;
@@ -465,9 +593,16 @@ class InMemoryWorker {
     listener: (event: MessageEvent<WorkerOutbound>) => void,
   ): void {
     if (type === "message") this.listener = listener;
+    if (type === "error")
+      this.errorListener = listener as unknown as (event: ErrorEvent) => void;
+    if (type === "messageerror")
+      this.messageErrorListener = () =>
+        listener({} as MessageEvent<WorkerOutbound>);
   }
   removeEventListener(): void {
     this.listener = null;
+    this.errorListener = null;
+    this.messageErrorListener = null;
   }
   terminate(): void {
     this.terminated = true;
@@ -476,6 +611,12 @@ class InMemoryWorker {
     this.listener?.({
       data: { type: "event", event },
     } as MessageEvent<WorkerOutbound>);
+  }
+  fail(message: string): void {
+    this.errorListener?.({ message } as ErrorEvent);
+  }
+  failMessage(): void {
+    this.messageErrorListener?.();
   }
   postMessage(message: WorkerInbound, transfer: ArrayBuffer[] = []): void {
     const cloned = structuredClone(message, { transfer });

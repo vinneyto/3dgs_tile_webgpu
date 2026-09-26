@@ -18,6 +18,7 @@ export type { FrontendCapabilities } from "./streaming-backend/FrontendCapabilit
 export type { BackendCommand } from "./streaming-backend/commands/BackendCommand";
 export type { Command } from "./streaming-backend/commands/Command";
 export type { BackendEvent } from "./streaming-backend/events/BackendEvent";
+export type { BackendFailureEvent } from "./streaming-backend/events/BackendFailureEvent";
 export type { CloudLoadOptions } from "./streaming-backend/CloudLoadOptions";
 export type {
   AttributeInit,

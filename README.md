@@ -15,6 +15,8 @@ A tiled 3D Gaussian Splatting pass for Three.js WebGPU. The renderer consumes pa
 
 The backend API is `dispatch(command)`, `subscribe(listener)` and `dispose()`. Commands carry IDs; buffer events carry scene, layout and content versions. Camera and cloud transforms drive LOD selection inside the backend. After the WebGPU device is initialized, `GaussianPass` sends `set-frontend-capabilities` with its actual buffer limits. The backend can load clouds and send raycast snapshots before that command, but sends no render buffers until it receives the capabilities. It then initiates full buffers and LOD patches as before. When raycasting is enabled, the client also receives a transferable snapshot of the **full source octree**, so pointer raycasts remain synchronous and independent of rendered LOD. There is no rendered-LOD raycast synchronization.
 
+An `error` event reports a failed command with its `commandId`. A `backend-failure` event reports a worker or transport failure outside normal command handling (`code`, `message`, and an optional `commandId`). `GaussianStore` rejects pending loads when it receives a backend failure.
+
 ## Install and render
 
 ```bash

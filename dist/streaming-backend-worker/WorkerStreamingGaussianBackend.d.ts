@@ -14,5 +14,6 @@ export declare class WorkerStreamingGaussianBackend implements GaussianBackend {
     dispose(): void;
     private readonly onMessage;
     private readonly onError;
+    private readonly onMessageError;
 }
 export {};

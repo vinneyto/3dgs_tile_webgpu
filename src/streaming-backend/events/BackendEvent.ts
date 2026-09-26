@@ -7,6 +7,7 @@ import type { BuffersPatchedEvent } from "./BuffersPatchedEvent";
 import type { CommandCompletedEvent } from "./CommandCompletedEvent";
 import type { CommandCancelledEvent } from "./CommandCancelledEvent";
 import type { BackendErrorEvent } from "./BackendErrorEvent";
+import type { BackendFailureEvent } from "./BackendFailureEvent";
 
 export type BackendEvent =
   | CloudLoadedEvent
@@ -17,4 +18,5 @@ export type BackendEvent =
   | BuffersPatchedEvent
   | CommandCompletedEvent
   | CommandCancelledEvent
-  | BackendErrorEvent;
+  | BackendErrorEvent
+  | BackendFailureEvent;

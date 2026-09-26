@@ -217,7 +217,12 @@ export class GaussianStore implements GaussianRenderStore {
       }
     });
     try {
-      this.backend.dispatch({ type: "set-cloud-priority", id: commandId, cloudId: id, priority });
+      this.backend.dispatch({
+        type: "set-cloud-priority",
+        id: commandId,
+        cloudId: id,
+        priority,
+      });
     } catch (error) {
       this.pendingMutations.get(commandId)?.();
       this.pendingMutations.delete(commandId);
@@ -237,10 +242,16 @@ export class GaussianStore implements GaussianRenderStore {
     this.awaitingLayout = true;
     const commandId = this.nextCommandId();
     this.pendingMutations.set(commandId, () => {
-      if (item.packingStrategy === packingStrategy) item.packingStrategy = previous;
+      if (item.packingStrategy === packingStrategy)
+        item.packingStrategy = previous;
     });
     try {
-      this.backend.dispatch({ type: "set-cloud-packing", id: commandId, cloudId, packingStrategy });
+      this.backend.dispatch({
+        type: "set-cloud-packing",
+        id: commandId,
+        cloudId,
+        packingStrategy,
+      });
     } catch (error) {
       this.pendingMutations.get(commandId)?.();
       this.pendingMutations.delete(commandId);
@@ -488,6 +499,17 @@ export class GaussianStore implements GaussianRenderStore {
           this.commandError = error;
           this.awaitingLayout = this.pendingLoads.size > 0;
         } else this.lastError = error;
+        this.notify("content");
+        break;
+      }
+      case "backend-failure": {
+        const error = new Error(event.message);
+        for (const id of [...this.pendingLoads.keys()])
+          this.rejectLoad(id, error);
+        for (const rollback of this.pendingMutations.values()) rollback();
+        this.pendingMutations.clear();
+        this.lastError = error;
+        this.awaitingLayout = false;
         this.notify("content");
         break;
       }
