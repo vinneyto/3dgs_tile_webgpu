@@ -1,5 +1,24 @@
+export interface MaximumPackingStrategy {
+  type: "maximum";
+}
+
+export interface RadialPackingStrategy {
+  type: "radial";
+  lodLevel?: number | "finest";
+}
+
+export interface TieredRadialPackingStrategy {
+  type: "tiered-radial";
+  budgetShares?: readonly [number, number, number];
+}
+
+export interface DistanceAwareRadialPackingStrategy {
+  type: "distance-aware-radial";
+  levelDistance?: number;
+}
+
 export type PackingStrategy =
-  | { type: "maximum" }
-  | { type: "radial"; lodLevel?: number | "finest" }
-  | { type: "tiered-radial"; budgetShares?: readonly [number, number, number] }
-  | { type: "distance-aware-radial"; levelDistance?: number };
+  | MaximumPackingStrategy
+  | RadialPackingStrategy
+  | TieredRadialPackingStrategy
+  | DistanceAwareRadialPackingStrategy;

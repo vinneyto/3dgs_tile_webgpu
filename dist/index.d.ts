@@ -13,7 +13,7 @@ export type { BackendCommand } from "./streaming-backend/commands/BackendCommand
 export type { BackendEvent } from "./streaming-backend/events/BackendEvent";
 export type { CloudLoadOptions } from "./streaming-backend/CloudLoadOptions";
 export type { AttributeInit, AttributeSource, BufferAttributeSource, FillAttributeSource, } from "./streaming-backend/AttributeInit";
-export type { PackingStrategy } from "./streaming-backend/PackingStrategy";
+export type { PackingStrategy, MaximumPackingStrategy, RadialPackingStrategy, TieredRadialPackingStrategy, DistanceAwareRadialPackingStrategy, } from "./streaming-backend/PackingStrategy";
 export { StreamingGaussianBackend } from "./streaming-backend-impl/StreamingGaussianBackend";
 export { DirectStreamingGaussianBackendFactory } from "./streaming-backend-impl/DirectStreamingGaussianBackendFactory";
 export { WorkerStreamingGaussianBackend, WorkerStreamingGaussianBackendFactory } from "./streaming-backend-worker/WorkerStreamingGaussianBackend";

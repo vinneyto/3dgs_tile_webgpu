@@ -11,6 +11,12 @@ export type {
   BufferAttributeSource,
   FillAttributeSource,
 } from "./streaming-backend/AttributeInit";
-export type { PackingStrategy } from "./streaming-backend/PackingStrategy";
+export type {
+  PackingStrategy,
+  MaximumPackingStrategy,
+  RadialPackingStrategy,
+  TieredRadialPackingStrategy,
+  DistanceAwareRadialPackingStrategy,
+} from "./streaming-backend/PackingStrategy";
 export { StreamingGaussianBackend } from "./streaming-backend-impl/StreamingGaussianBackend";
 export { DirectStreamingGaussianBackendFactory } from "./streaming-backend-impl/DirectStreamingGaussianBackendFactory";
