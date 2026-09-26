@@ -1,7 +1,27 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PerspectiveCamera, Raycaster, Vector3 } from "three/webgpu";
 import { GaussianStore } from "../src/renderer/GaussianStore";
-import { DEFAULT_BACKEND_CONFIG } from "../src/renderer/GaussianStore";
+const DEFAULT_BACKEND_CONFIG = { maxGaussians: "auto" as const };
+const FRONTEND = {
+  maxStorageBufferBindingSize: 128 * 1024 * 1024,
+  maxBufferSize: 256 * 1024 * 1024,
+  maxStorageBuffersPerShaderStage: 8,
+  supportsPartialBufferUpdates: true,
+};
+const MATRIX = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+function request(backend: StreamingGaussianBackend, id = "request") {
+  backend.dispatch({
+    type: "request-gaussians",
+    id,
+    sceneRevision: 1,
+    worldMatrix: MATRIX,
+    projectionMatrix: MATRIX,
+    frontend: FRONTEND,
+  });
+}
+function requestStore(store: GaussianStore) {
+  store.updateLod(new PerspectiveCamera(), FRONTEND);
+}
 import { StreamingGaussianBackend } from "../src/streaming-backend-impl/StreamingGaussianBackend";
 import { WorkerStreamingGaussianBackend } from "../src/streaming-backend-worker/WorkerStreamingGaussianBackend";
 import {
@@ -15,20 +35,108 @@ import type { BackendCommand } from "../src/streaming-backend/commands/BackendCo
 afterEach(() => vi.unstubAllGlobals());
 
 describe("message backend", () => {
-  it("parses, builds the octree and LOD, and packs once before the first buffers", async () => {
-    const { CanonicalGaussianPlyLoader } = await import("../src/streaming-backend-impl/CanonicalGaussianPlyLoader");
-    const { GaussianOctree } = await import("../src/streaming-backend-impl/GaussianOctree");
-    const { GaussianLod } = await import("../src/streaming-backend-impl/GaussianLod");
+  it("emits one LOD patch per request and leaves further changes until the next request", async () => {
+    const backend = new StreamingGaussianBackend({
+      maxGaussians: 2,
+      streamingLod: { maxUploadBytesPerUpdate: 1 },
+    });
+    const events: BackendEvent[] = [];
+    backend.subscribe((event) => events.push(event));
+    backend.dispatch({
+      type: "load-cloud-from-buffer",
+      id: "a",
+      cloudId: "a",
+      buffer: ply(0),
+    });
+    backend.dispatch({
+      type: "load-cloud-from-buffer",
+      id: "b",
+      cloudId: "b",
+      buffer: ply(3),
+    });
+    await vi.waitFor(() =>
+      expect(
+        events.filter((event) => event.type === "cloud-loaded"),
+      ).toHaveLength(2),
+    );
+    request(backend, "initial");
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.type === "buffers-replaced")).toBe(
+        true,
+      ),
+    );
+    backend.dispatch({
+      type: "set-cloud-priority",
+      id: "priority",
+      cloudId: "b",
+      priority: -1,
+    });
+    request(backend, "first-delta");
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.type === "buffers-patched")).toBe(
+        true,
+      ),
+    );
+    const first = events.filter((event) => event.type === "buffers-patched");
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({
+      requestId: "first-delta",
+      lodPending: true,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      events.filter((event) => event.type === "buffers-patched"),
+    ).toHaveLength(1);
+    request(backend, "second-delta");
+    await vi.waitFor(() =>
+      expect(
+        events.filter((event) => event.type === "buffers-patched"),
+      ).toHaveLength(2),
+    );
+    expect(events.at(-2)).toMatchObject({
+      requestId: "second-delta",
+      lodPending: false,
+    });
+    backend.dispose();
+  });
+
+  it("loads without packing, then packs once on the first rendering request", async () => {
+    const { CanonicalGaussianPlyLoader } =
+      await import("../src/streaming-backend-impl/CanonicalGaussianPlyLoader");
+    const { GaussianOctree } =
+      await import("../src/streaming-backend-impl/GaussianOctree");
+    const { GaussianLod } =
+      await import("../src/streaming-backend-impl/GaussianLod");
     const parse = vi.spyOn(CanonicalGaussianPlyLoader.prototype, "parse");
     const octree = vi.spyOn(GaussianOctree, "build");
     const lod = vi.spyOn(GaussianLod, "build");
     const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
-    const compute = vi.spyOn(backend as unknown as { compute: () => unknown }, "compute");
+    const compute = vi.spyOn(
+      backend as unknown as { compute: () => unknown },
+      "compute",
+    );
     const events: BackendEvent[] = [];
     backend.subscribe((event) => events.push(event));
 
-    backend.dispatch({ type: "load-cloud-from-buffer", id: "load", cloudId: "cloud", buffer: ply(0) });
-    await vi.waitFor(() => expect(events.some((event) => event.type === "buffers-replaced")).toBe(true));
+    backend.dispatch({
+      type: "load-cloud-from-buffer",
+      id: "load",
+      cloudId: "cloud",
+      buffer: ply(0),
+    });
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.type === "cloud-loaded")).toBe(true),
+    );
+    expect(events.some((event) => event.type === "buffers-replaced")).toBe(
+      false,
+    );
+    expect(compute).not.toHaveBeenCalled();
+    request(backend);
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.type === "buffers-replaced")).toBe(
+        true,
+      ),
+    );
     expect(parse).toHaveBeenCalledTimes(1);
     expect(octree).toHaveBeenCalledTimes(1);
     expect(lod).toHaveBeenCalledTimes(1);
@@ -53,6 +161,7 @@ describe("message backend", () => {
       "http://localhost:5173/sandbox/mug.ply",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    requestStore(store);
     await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
     store.dispose();
   });
@@ -74,6 +183,7 @@ describe("message backend", () => {
       ],
     });
     expect(input.byteLength).toBe(0); // The input was transferred, not cloned.
+    requestStore(store);
     await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
     expect(store.getPackedData().count).toBeGreaterThan(0);
     expect((store.getPackedAttribute("weight")!.array as Uint32Array)[0]).toBe(
@@ -91,6 +201,20 @@ describe("message backend", () => {
 
     const changed = new Uint32Array([7]).buffer;
     store.writeAttributeRange(cloud, "weight", 0, 1, changed);
+    await vi.waitFor(() =>
+      expect(
+        port.commands.some(
+          (command) => command.type === "write-attribute-range",
+        ),
+      ).toBe(true),
+    );
+    expect((store.getPackedAttribute("weight")!.array as Uint32Array)[0]).toBe(
+      1,
+    );
+    expect(port.events.some((event) => event.type === "buffers-patched")).toBe(
+      false,
+    );
+    requestStore(store);
     await vi.waitFor(() =>
       expect(
         (store.getPackedAttribute("weight")!.array as Uint32Array)[0],
@@ -179,11 +303,15 @@ describe("message backend", () => {
 
   it("leaves a client buffer untouched when cancellation precedes dispatch", async () => {
     const port = new InMemoryWorker();
-    const store = new GaussianStore(new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never));
+    const store = new GaussianStore(
+      new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
+    );
     const controller = new AbortController();
     controller.abort();
     const input = ply(0);
-    await expect(store.loadBuffer(input, {}, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    await expect(
+      store.loadBuffer(input, {}, controller.signal),
+    ).rejects.toMatchObject({ name: "AbortError" });
     expect(input.byteLength).toBeGreaterThan(0);
     expect(port.commands).toHaveLength(0);
     store.dispose();
@@ -230,7 +358,8 @@ describe("message backend", () => {
       worldMatrix: matrix,
     });
     backend.dispatch({
-      type: "set-camera",
+      type: "request-gaussians",
+      frontend: FRONTEND,
       id: "camera",
       sceneRevision: 1,
       worldMatrix: matrix,
@@ -258,12 +387,29 @@ describe("message backend", () => {
     const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
     const events: BackendEvent[] = [];
     backend.subscribe((event) => events.push(event));
-    backend.dispatch({ type: "load-cloud-from-buffer", id: "load", cloudId: "cloud", buffer: ply(0) });
-    await vi.waitFor(() => expect(events.some((event) => event.type === "buffers-replaced")).toBe(true));
+    backend.dispatch({
+      type: "load-cloud-from-buffer",
+      id: "load",
+      cloudId: "cloud",
+      buffer: ply(0),
+    });
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.type === "cloud-loaded")).toBe(true),
+    );
     const matrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 4, 0, 0, 1];
-    backend.dispatch({ type: "set-cloud-transform", id: "transform", cloudId: "cloud",
-      sceneRevision: 1, worldMatrix: matrix });
-    await vi.waitFor(() => expect(events).toContainEqual({ type: "command-completed", commandId: "transform" }));
+    backend.dispatch({
+      type: "set-cloud-transform",
+      id: "transform",
+      cloudId: "cloud",
+      sceneRevision: 1,
+      worldMatrix: matrix,
+    });
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "command-completed",
+        commandId: "transform",
+      }),
+    );
     backend.dispose();
   });
 
@@ -273,13 +419,16 @@ describe("message backend", () => {
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
     const cloud = await store.loadBuffer(ply(0));
+    requestStore(store);
     await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
     const previous = store.getPackedData();
     store.setCloudPacking(cloud, { type: "radial", lodLevel: 100 });
+    requestStore(store);
     await vi.waitFor(() => expect(store.lastCommandError).not.toBeNull());
     expect(store.hasPackedData).toBe(true);
     expect(store.getPackedData()).toBe(previous);
     store.setCloudPacking(cloud, { type: "maximum" });
+    requestStore(store);
     await vi.waitFor(() => expect(store.lastCommandError).toBeNull());
     expect(store.hasPackedData).toBe(true);
     expect(store.getPackedData().count).toBeGreaterThan(0);
@@ -310,6 +459,7 @@ describe("message backend", () => {
       name: "second",
       priority: 1,
     });
+    requestStore(store);
     await vi.waitFor(() => expect(store.count).toBe(2));
     expect([first.name, second.name]).toEqual(["first", "second"]);
     expect(first.packingPriority).toBe(2);
@@ -325,6 +475,7 @@ describe("message backend", () => {
       1,
       new Float32Array([2, 2, 2, 1]).buffer,
     );
+    requestStore(store);
     await vi.waitFor(() =>
       expect(
         port.events
@@ -351,6 +502,7 @@ describe("message backend", () => {
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
     await store.loadBuffer(ply(0));
+    requestStore(store);
     await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
     const version = store.contentVersion;
     const layout = store.layoutVersion;
@@ -359,6 +511,7 @@ describe("message backend", () => {
       baseContentVersion: number,
     ): BackendEvent => ({
       type: "buffers-patched",
+      requestId: "forged",
       sceneRevision: 0,
       layoutVersion,
       baseContentVersion,
@@ -387,21 +540,36 @@ describe("message backend", () => {
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
     await store.loadBuffer(ply(0));
+    requestStore(store);
     await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
     const camera = new PerspectiveCamera(50, 1, 0.1, 100);
     camera.position.set(3, 4, 5);
-    store.updateLod(camera);
+    const previousCommands = port.commands.length;
+    store.updateLod(camera, FRONTEND);
     const commands = () =>
-      port.commands.filter((command) => command.type === "set-camera");
+      port.commands
+        .slice(previousCommands)
+        .filter((command) => command.type === "request-gaussians");
     expect(commands()).toHaveLength(1);
     expect(commands()[0]?.worldMatrix.slice(12, 15)).toEqual([3, 4, 5]);
     expect(commands()[0]?.projectionMatrix).toEqual(
       camera.projectionMatrix.elements,
     );
 
+    await vi.waitFor(() =>
+      expect(
+        port.events.some(
+          (event) =>
+            event.type === "command-completed" &&
+            event.commandId === commands()[0]?.id,
+        ),
+      ).toBe(true),
+    );
+    await Promise.resolve();
+
     camera.fov = 60;
     camera.updateProjectionMatrix();
-    store.updateLod(camera);
+    store.updateLod(camera, FRONTEND);
     expect(commands()).toHaveLength(2);
     expect(commands()[1]?.worldMatrix).toEqual(commands()[0]?.worldMatrix);
     expect(commands()[1]?.projectionMatrix).not.toEqual(

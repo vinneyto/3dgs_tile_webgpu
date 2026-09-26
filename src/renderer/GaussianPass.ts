@@ -439,6 +439,13 @@ export class GaussianPass extends PassNode {
       this.setSize(drawingBufferWidth, drawingBufferHeight);
     }
     const device = webGpuDevice(renderer);
+    const lodUpdate = this.gaussianStore.updateLod(this.camera, {
+      maxStorageBufferBindingSize: device.limits.maxStorageBufferBindingSize,
+      maxBufferSize: device.limits.maxBufferSize,
+      maxStorageBuffersPerShaderStage:
+        device.limits.maxStorageBuffersPerShaderStage,
+      supportsPartialBufferUpdates: true,
+    });
     if (this.pipelineDevice !== null && this.pipelineDevice !== device) {
       this.pipeline?.dispose();
       this.pipeline = null;
@@ -456,11 +463,7 @@ export class GaussianPass extends PassNode {
       return undefined;
     }
 
-    if (this.gaussianStore.needsPack) {
-      this.gaussianStore.pack({ limits: webGpuDeviceLimits(renderer) });
-    }
     if (!this.gaussianStore.hasPackedData) return undefined;
-    const lodUpdate = this.gaussianStore.updateLod(this.camera);
     if (
       this.redrawStrategy === "auto" &&
       this.autoInputsChanged(width, height)
@@ -776,10 +779,6 @@ export type {
   RadixBackend,
   ResolvedRadixBackend,
 } from "./pipeline/types";
-
-function webGpuDeviceLimits(renderer: WebGPURenderer): GPUDevice["limits"] {
-  return webGpuDevice(renderer).limits;
-}
 
 function webGpuDevice(renderer: WebGPURenderer): GPUDevice {
   const backend = renderer.backend as unknown as { device?: GPUDevice };

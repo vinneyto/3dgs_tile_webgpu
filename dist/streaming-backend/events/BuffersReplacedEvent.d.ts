@@ -2,6 +2,7 @@ import type { CloudRenderState } from "../CloudRenderState";
 import type { PackedAttributeBuffer } from "../PackedAttributeBuffer";
 export interface BuffersReplacedEvent {
     type: "buffers-replaced";
+    requestId: string;
     sceneRevision: number;
     layoutVersion: number;
     contentVersion: number;

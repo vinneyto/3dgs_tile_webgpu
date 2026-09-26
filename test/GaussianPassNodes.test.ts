@@ -10,7 +10,8 @@ import { float, vec3 } from "three/tsl";
 
 import { GaussianData } from "../src/renderer/GaussianData";
 import { GaussianPass } from "../src/renderer/GaussianPass";
-import { LocalGaussianBackend as GaussianStore } from "../src/streaming-backend-impl/legacy/LocalGaussianBackend";
+import { GaussianStore } from "../src/renderer/GaussianStore";
+import { packedStore, TEST_FRONTEND } from "./helpers/packedStore";
 import { GaussianStore as GaussianStoreClient } from "../src/renderer/GaussianStore";
 import type { BackendEvent } from "../src/streaming-backend/events/BackendEvent";
 import type { GaussianBackend } from "../src/streaming-backend/GaussianBackend";
@@ -25,48 +26,66 @@ import {
 const TEST_LIMITS = {
   maxStorageBufferBindingSize: 1_073_741_824,
   maxBufferSize: 1_073_741_824,
+  maxStorageBuffersPerShaderStage:
+    TEST_FRONTEND.maxStorageBuffersPerShaderStage,
 };
 
 describe("GaussianPass node slots", () => {
   it("subscribes to the backend contract through a composed Store", () => {
     const backendEvents: { listener?: (event: BackendEvent) => void } = {};
+    const dispatch = vi.fn();
     const backend: GaussianBackend = {
-      dispatch: () => {},
+      dispatch,
       subscribe: (listener) => {
         backendEvents.listener = listener;
-        return () => { backendEvents.listener = undefined; };
+        return () => {
+          backendEvents.listener = undefined;
+        };
       },
       dispose: () => {},
     };
     const store = new GaussianStoreClient(backend);
-    const pass = new GaussianPass(
-      createRenderer(),
-      new PerspectiveCamera(),
-      store,
-    );
+    const renderer = createRenderer();
+    const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
     const invalidate = vi.spyOn(pass, "invalidate");
     const events: string[] = [];
     const unsubscribe = store.subscribe((event) => events.push(event.type));
     backendEvents.listener?.({
-      type: "cloud-loaded", commandId: "load", cloudId: "cloud",
-      objectId: 0, sourceCount: 1, shDegree: 0,
+      type: "cloud-loaded",
+      commandId: "load",
+      cloudId: "cloud",
+      objectId: 0,
+      sourceCount: 1,
+      shDegree: 0,
       bounds: [0, 0, 0, 0, 0, 0],
     });
     expect(events).toEqual(["changed"]);
     expect(invalidate).toHaveBeenCalledOnce();
+    pass.updateBefore({ renderer } as unknown as NodeFrame);
+    const requests = dispatch.mock.calls
+      .map(
+        ([command]) =>
+          command as { type: string; frontend?: typeof TEST_FRONTEND },
+      )
+      .filter((command) => command.type === "request-gaussians");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.frontend).toMatchObject(TEST_FRONTEND);
     unsubscribe();
     pass.dispose();
     backendEvents.listener?.({
-      type: "cloud-loaded", commandId: "load-2", cloudId: "cloud-2",
-      objectId: 1, sourceCount: 1, shDegree: 0,
+      type: "cloud-loaded",
+      commandId: "load-2",
+      cloudId: "cloud-2",
+      objectId: 1,
+      sourceCount: 1,
+      shDegree: 0,
       bounds: [0, 0, 0, 0, 0, 0],
     });
     expect(invalidate).toHaveBeenCalledOnce();
     store.dispose();
   });
-  it("packs an uninitialized Store lazily on the first render", () => {
-    const store = new GaussianStore();
-    store.add(oneGaussian());
+  it("requests initial buffers before a Store has packed data", () => {
+    const { store } = packedStore(oneGaussian(), false);
     const renderer = createRenderer();
     const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
     const pipeline = {
@@ -81,10 +100,10 @@ describe("GaussianPass node slots", () => {
       pipelineLayoutVersion: 1,
     });
 
-    expect(store.needsPack).toBe(true);
+    expect(store.hasPackedData).toBe(false);
     pass.updateBefore({ renderer } as unknown as NodeFrame);
 
-    expect(store.needsPack).toBe(false);
+    expect(store.hasPackedData).toBe(true);
     expect(store.maxGaussians).toBeGreaterThan(0);
     expect(pass.intersectionCapacity).toBe(16);
     expect(pipeline.render).toHaveBeenCalledOnce();
@@ -401,9 +420,7 @@ function createPass(options: GaussianPassOptions = {}): {
   camera: PerspectiveCamera;
   cloud: GaussianStore["clouds"][number];
 } {
-  const store = new GaussianStore();
-  const cloud = store.add(oneGaussian());
-  store.pack({ limits: TEST_LIMITS });
+  const { store, cloud } = packedStore(oneGaussian());
   const renderer = createRenderer();
   const camera = new PerspectiveCamera();
   const pass = new GaussianPass(renderer, camera, store, options);

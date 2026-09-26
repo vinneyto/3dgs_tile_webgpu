@@ -11,7 +11,9 @@ import {
 import { GaussianCloud } from "../src/renderer/GaussianCloud";
 import { GaussianData } from "../src/renderer/GaussianData";
 import { GaussianLod } from "../src/streaming-backend-impl/GaussianLod";
-import type { GaussianBackend as GaussianStore } from "../src/renderer/legacy/GaussianBackend";
+import type { GaussianStore } from "../src/renderer/GaussianStore";
+import { GaussianRaycastIndex } from "../src/renderer/GaussianRaycastIndex";
+import { createRaycastSnapshot } from "../src/streaming-backend-impl/createRaycastSnapshot";
 import {
   DistanceAwareRadialLodPackingStrategy,
   MaximumLodPackingStrategy,
@@ -142,7 +144,7 @@ describe("GaussianLod", () => {
     ).toThrow(/leaf nodes/);
   });
 
-  it("raycasts selected leaf prefixes without building one candidate list", () => {
+  it("raycasts the client snapshot of the full octree", () => {
     const octree = GaussianOctree.build(
       gaussianData(
         [
@@ -153,50 +155,9 @@ describe("GaussianLod", () => {
       ),
       { leafCapacity: 1 },
     );
-    const lod = GaussianLod.build(octree);
-    const packing = new MaximumLodPackingStrategy().pack({
-      lod,
-      maxGaussians: 2,
-    });
-    const ray = new Ray(new Vector3(0, 0, 2), new Vector3(0, 0, -1));
-    const expected = octree.raycastIndices(ray, lod.indicesForPacking(packing));
-    const raycastIndices = vi.spyOn(octree, "raycastIndices");
-
-    const actual = lod.raycast(ray, packing);
-
-    expect(raycastIndices).not.toHaveBeenCalled();
-    expect(actual.map(({ gaussianIndex }) => gaussianIndex)).toEqual(
-      expected.map(({ gaussianIndex }) => gaussianIndex),
-    );
-    expect(actual.map(({ distance }) => distance)).toEqual(
-      expected.map(({ distance }) => distance),
-    );
-  });
-
-  it("picks the Gaussian that crosses accumulated alpha instead of transparent dust", () => {
-    const octree = GaussianOctree.build(
-      gaussianData(
-        [
-          [0, 0, 1],
-          [0, 0, 0.5],
-          [0, 0, 0],
-        ],
-        [0.1, 0.1, 0.1],
-        [0.01, 0.35, 0.35],
-      ),
-    );
-    const lod = GaussianLod.build(octree);
-    const packing = new MaximumLodPackingStrategy().pack({
-      lod,
-      maxGaussians: 3,
-    });
-    const cloud = new GaussianCloud(
-      {} as GaussianStore,
-      0,
-      3,
-      "test",
-      lod,
-      packing,
+    const cloud = new GaussianCloud({} as GaussianStore, 0, 2, "test");
+    cloud.setRaycastIndex(
+      new GaussianRaycastIndex(createRaycastSnapshot(octree)),
     );
     cloud.updateMatrixWorld(true);
     const intersections: Parameters<GaussianCloud["raycast"]>[1] = [];
@@ -207,25 +168,16 @@ describe("GaussianLod", () => {
     );
 
     expect(intersections).toHaveLength(1);
-    expect(intersections[0]!.index).toBe(2);
+    expect(intersections[0]!.index).toBe(1);
   });
 
   it("does not pick a ray whose accumulated alpha stays below the threshold", () => {
     const octree = GaussianOctree.build(
       gaussianData([[0, 0, 0]], [0.1], [0.1]),
     );
-    const lod = GaussianLod.build(octree);
-    const packing = new MaximumLodPackingStrategy().pack({
-      lod,
-      maxGaussians: 1,
-    });
-    const cloud = new GaussianCloud(
-      {} as GaussianStore,
-      0,
-      1,
-      "test",
-      lod,
-      packing,
+    const cloud = new GaussianCloud({} as GaussianStore, 0, 1, "test");
+    cloud.setRaycastIndex(
+      new GaussianRaycastIndex(createRaycastSnapshot(octree)),
     );
     cloud.updateMatrixWorld(true);
     const intersections: Parameters<GaussianCloud["raycast"]>[1] = [];

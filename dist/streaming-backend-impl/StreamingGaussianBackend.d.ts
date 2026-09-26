@@ -23,11 +23,10 @@ export declare class StreamingGaussianBackend implements GaussianBackend {
     private contentVersion;
     private sceneRevision;
     private cameraPosition;
+    private frontend;
+    private requestId;
     private packed;
     private target;
-    private updateScheduled;
-    private sceneUpdateTimer;
-    private readonly pendingTransforms;
     private disposed;
     constructor(config: BackendConfig);
     subscribe(listener: (event: BackendEvent) => void): () => void;
@@ -35,16 +34,12 @@ export declare class StreamingGaussianBackend implements GaussianBackend {
     dispose(): void;
     private emit;
     private handle;
-    private scheduleSceneUpdate;
-    private flushSceneUpdate;
     private getCloud;
     private writeRange;
     private maxSlots;
     private compute;
     private select;
-    private repack;
     private updateTarget;
     private replace;
-    private scheduleUpdate;
     private emitNextPatch;
 }

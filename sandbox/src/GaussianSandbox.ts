@@ -36,7 +36,6 @@ import {
   GaussianStore,
 } from "../../src/index";
 import { StreamingGaussianBackend } from "../../src/streaming-backend-impl/StreamingGaussianBackend";
-import { DEFAULT_BACKEND_CONFIG } from "../../src/renderer/GaussianStore";
 import { WorkerStreamingGaussianBackend } from "../../src/streaming-backend-worker/WorkerStreamingGaussianBackend";
 import { SANDBOX_LOD_LEVELS, type CloudBounds } from "./cloudData";
 import { CloudStatus } from "./CloudStatus";
@@ -357,15 +356,19 @@ export class GaussianSandbox {
 
   private createStore(): GaussianStore {
     const config = {
-      ...DEFAULT_BACKEND_CONFIG,
+      maxGaussians: "auto" as const,
       streamingLod: {
-        maxChangedCellsPerUpdate: this.options.streamingLod.maxChangedCellsPerPack,
-        maxUploadBytesPerUpdate: this.options.streamingLod.maxUploadBytesPerPack,
+        maxChangedCellsPerUpdate:
+          this.options.streamingLod.maxChangedCellsPerPack,
+        maxUploadBytesPerUpdate:
+          this.options.streamingLod.maxUploadBytesPerPack,
       },
     };
-    return new GaussianStore(this.options.workerBackend
-      ? new WorkerStreamingGaussianBackend(config)
-      : new StreamingGaussianBackend(config));
+    return new GaussianStore(
+      this.options.workerBackend
+        ? new WorkerStreamingGaussianBackend(config)
+        : new StreamingGaussianBackend(config),
+    );
   }
 
   private show(

@@ -1,27 +1,17 @@
 import { Camera, StorageBufferAttribute, Vector3 } from "three/webgpu";
 export type {
-  GaussianDataLoader,
-  GaussianStoreAddLodOptions,
-  GaussianStoreAddOptions,
   GaussianStoreCloudLodUpdate,
-  GaussianStoreDefaultLodOptions,
-  GaussianStoreLoadOptions,
-  GaussianStoreLodBatchResult,
   GaussianStoreLodUpdate,
-  GaussianStoreOptions,
-  GaussianStorePackLimits,
-  GaussianStorePackOptions,
   GaussianStorePackStats,
   GaussianStoreSlotRange,
-} from "./legacy/GaussianStoreTypes";
+} from "./GaussianStoreTypes";
 import { GaussianCloud } from "./GaussianCloud";
 import { GaussianData } from "./GaussianData";
-import type { GaussianBackendListener } from "./legacy/GaussianBackendEvents";
+import type { GaussianStoreListener } from "./GaussianStoreEvents";
 import type {
   GaussianStoreLodUpdate,
-  GaussianStorePackOptions,
   GaussianStorePackStats,
-} from "./legacy/GaussianStoreTypes";
+} from "./GaussianStoreTypes";
 import { GaussianRaycastIndex } from "./GaussianRaycastIndex";
 import { markSlotRangesUpdated } from "./utils/slotRanges";
 import {
@@ -34,13 +24,12 @@ import {
   updateGaussianStoreAttribute,
   type GaussianStorePackedAttribute,
 } from "./store-attributes/GaussianStorePackedAttribute";
-import type { BackendConfig } from "../streaming-backend/BackendConfig";
+import type { FrontendCapabilities } from "../streaming-backend/BackendConfig";
 import type { CloudLoadOptions } from "../streaming-backend/CloudLoadOptions";
 import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
 import type { PackingStrategy } from "../streaming-backend/PackingStrategy";
 import type { BackendEvent } from "../streaming-backend/events/BackendEvent";
 import type { PackedAttributeBuffer } from "../streaming-backend/PackedAttributeBuffer";
-import { WorkerStreamingGaussianBackend } from "../streaming-backend-worker/WorkerStreamingGaussianBackend";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
 
 interface ClientCloud {
@@ -57,16 +46,6 @@ interface PendingCloud {
   options: CloudLoadOptions;
   cleanup: () => void;
 }
-export const DEFAULT_BACKEND_CONFIG: BackendConfig = {
-  frontend: {
-    maxStorageBufferBindingSize: 128 * 1024 * 1024,
-    maxBufferSize: 256 * 1024 * 1024,
-    maxStorageBuffersPerShaderStage: 8,
-    supportsPartialBufferUpdates: true,
-  },
-  maxGaussians: "auto",
-};
-
 /**
  * Main-thread client of a message backend. GPU attributes and full raycast
  * snapshots belong here; parsing, tree building and LOD selection do not.
@@ -80,7 +59,7 @@ export class GaussianStore implements GaussianRenderStore {
   private readonly cloudIds = new Map<GaussianCloud, string>();
   private readonly pendingLoads = new Map<string, PendingCloud>();
   private readonly pendingMutations = new Map<string, () => void>();
-  private readonly listeners = new Set<GaussianBackendListener>();
+  private readonly listeners = new Set<GaussianStoreListener>();
   private readonly schemas = new Map<string, PackedAttributeBuffer>();
   private readonly extraBuffers = new Map<string, StorageBufferAttribute>();
   private readonly unsubscribe: () => void;
@@ -89,6 +68,7 @@ export class GaussianStore implements GaussianRenderStore {
   private commandNumber = 0;
   private cloudNumber = 0;
   private lastView = "";
+  private requestInFlight: string | null = null;
   private lastError: Error | null = null;
   private commandError: Error | null = null;
   private capacity = 0;
@@ -101,11 +81,7 @@ export class GaussianStore implements GaussianRenderStore {
   private disposed = false;
   private awaitingLayout = false;
 
-  constructor(
-    backend: GaussianBackend = new WorkerStreamingGaussianBackend(
-      DEFAULT_BACKEND_CONFIG,
-    ),
-  ) {
+  constructor(backend: GaussianBackend) {
     this.backend = backend;
     this.unsubscribe = backend.subscribe(this.handleEvent);
   }
@@ -131,9 +107,6 @@ export class GaussianStore implements GaussianRenderStore {
   get contentVersion(): number {
     return this.packedVersion;
   }
-  get needsPack(): boolean {
-    return false;
-  }
   get hasPackedData(): boolean {
     return this.data !== null && !this.awaitingLayout;
   }
@@ -144,7 +117,7 @@ export class GaussianStore implements GaussianRenderStore {
     return this.commandError;
   }
 
-  subscribe(listener: GaussianBackendListener): () => void {
+  subscribe(listener: GaussianStoreListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
@@ -210,6 +183,7 @@ export class GaussianStore implements GaussianRenderStore {
     cloud.removeFromParent();
     this.awaitingLayout = true;
     this.notify("clouds");
+    this.lastView = "";
     this.backend.dispatch({
       type: "unload-cloud",
       id: this.nextCommandId(),
@@ -225,7 +199,8 @@ export class GaussianStore implements GaussianRenderStore {
     const previous = item.priority;
     item.priority = priority;
     cloud.updatePackingPriority(priority);
-    this.awaitingLayout = true;
+    this.lastView = "";
+    this.notify("content");
     const commandId = this.nextCommandId();
     this.pendingMutations.set(commandId, () => {
       if (item.priority === priority) {
@@ -234,7 +209,12 @@ export class GaussianStore implements GaussianRenderStore {
       }
     });
     try {
-      this.backend.dispatch({ type: "set-cloud-priority", id: commandId, cloudId: id, priority });
+      this.backend.dispatch({
+        type: "set-cloud-priority",
+        id: commandId,
+        cloudId: id,
+        priority,
+      });
     } catch (error) {
       this.pendingMutations.get(commandId)?.();
       this.pendingMutations.delete(commandId);
@@ -251,13 +231,20 @@ export class GaussianStore implements GaussianRenderStore {
     const item = this.cloudMap.get(cloudId)!;
     const previous = item.packingStrategy;
     item.packingStrategy = packingStrategy;
-    this.awaitingLayout = true;
+    this.lastView = "";
+    this.notify("content");
     const commandId = this.nextCommandId();
     this.pendingMutations.set(commandId, () => {
-      if (item.packingStrategy === packingStrategy) item.packingStrategy = previous;
+      if (item.packingStrategy === packingStrategy)
+        item.packingStrategy = previous;
     });
     try {
-      this.backend.dispatch({ type: "set-cloud-packing", id: commandId, cloudId, packingStrategy });
+      this.backend.dispatch({
+        type: "set-cloud-packing",
+        id: commandId,
+        cloudId,
+        packingStrategy,
+      });
     } catch (error) {
       this.pendingMutations.get(commandId)?.();
       this.pendingMutations.delete(commandId);
@@ -293,6 +280,8 @@ export class GaussianStore implements GaussianRenderStore {
       gaussianCount,
       data,
     });
+    this.lastView = "";
+    this.notify("content");
   }
 
   invalidateCloudPacking(cloud: GaussianCloud): void {
@@ -314,11 +303,10 @@ export class GaussianStore implements GaussianRenderStore {
       : this.extraBuffers.get(name);
   }
 
-  pack(_options: GaussianStorePackOptions): void {
-    // The backend responds to commands and sends buffers without a frame request.
-  }
-
-  updateLod(camera: Camera): GaussianStoreLodUpdate {
+  updateLod(
+    camera: Camera,
+    frontend: FrontendCapabilities,
+  ): GaussianStoreLodUpdate {
     if (this.disposed) return { appliedBatches: 0, pending: false, clouds: [] };
     camera.updateWorldMatrix(true, false);
     const position = camera.getWorldPosition(new Vector3());
@@ -331,9 +319,13 @@ export class GaussianStore implements GaussianRenderStore {
     const key = JSON.stringify([
       cameraWorldMatrix,
       projectionMatrix,
+      frontend,
       transforms,
     ]);
-    if (key !== this.lastView) {
+    if (
+      this.requestInFlight === null &&
+      (key !== this.lastView || this.pendingLod)
+    ) {
       this.lastView = key;
       const sceneRevision = ++this.revision;
       for (const [cloudId, ...worldMatrix] of transforms) {
@@ -345,13 +337,22 @@ export class GaussianStore implements GaussianRenderStore {
           worldMatrix: worldMatrix as number[],
         });
       }
-      this.backend.dispatch({
-        type: "set-camera",
-        id: this.nextCommandId(),
-        sceneRevision,
-        worldMatrix: cameraWorldMatrix,
-        projectionMatrix,
-      });
+      const requestId = this.nextCommandId();
+      this.requestInFlight = requestId;
+      try {
+        this.backend.dispatch({
+          type: "request-gaussians",
+          id: requestId,
+          sceneRevision,
+          worldMatrix: cameraWorldMatrix,
+          projectionMatrix,
+          frontend,
+        });
+      } catch (error) {
+        this.requestInFlight = null;
+        this.lastView = "";
+        throw error;
+      }
     }
     return {
       appliedBatches: 0,
@@ -424,11 +425,8 @@ export class GaussianStore implements GaussianRenderStore {
           event.objectId,
           0,
           options.name ?? event.cloudId,
-          null,
-          null,
           priority,
         );
-        cloud.raycastMode = "full";
         if (event.raycast)
           cloud.setRaycastIndex(new GaussianRaycastIndex(event.raycast));
         this.cloudMap.set(event.cloudId, {
@@ -474,6 +472,8 @@ export class GaussianStore implements GaussianRenderStore {
         break;
       case "error": {
         const error = new Error(event.message);
+        if (event.commandId === this.requestInFlight)
+          this.requestInFlight = null;
         if (event.commandId && this.pendingLoads.has(event.commandId)) {
           this.rejectLoad(event.commandId, error);
         } else if (event.commandId) {
@@ -492,8 +492,11 @@ export class GaussianStore implements GaussianRenderStore {
         );
         break;
       case "command-completed":
+        if (event.commandId === this.requestInFlight)
+          this.requestInFlight = null;
+        const mutationCompleted = this.pendingMutations.has(event.commandId);
         this.pendingMutations.delete(event.commandId);
-        if (this.commandError) {
+        if (mutationCompleted && this.commandError) {
           this.commandError = null;
           this.notify("content");
         }
@@ -596,7 +599,6 @@ export class GaussianStore implements GaussianRenderStore {
       slotUpdateMs: 0,
     };
     this.awaitingLayout = false;
-    this.lastView = "";
     this.notify("layout");
   }
 
@@ -691,7 +693,7 @@ export class GaussianStore implements GaussianRenderStore {
     for (const state of states)
       this.cloudMap
         .get(state.cloudId)
-        ?.cloud.updatePacking(state.renderedCount, null);
+        ?.cloud.updatePacking(state.renderedCount);
   }
   private notify(reason: "clouds" | "layout" | "content"): void {
     for (const listener of this.listeners)

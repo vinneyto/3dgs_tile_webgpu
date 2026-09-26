@@ -6,6 +6,6 @@ import type { SetCloudPackingCommand } from "./SetCloudPackingCommand";
 import type { SetCloudTransformCommand } from "./SetCloudTransformCommand";
 import type { SetCloudRaycastableCommand } from "./SetCloudRaycastableCommand";
 import type { WriteAttributeRangeCommand } from "./WriteAttributeRangeCommand";
-import type { SetCameraCommand } from "./SetCameraCommand";
+import type { RequestGaussiansCommand } from "./RequestGaussiansCommand";
 import type { CancelCommand } from "./CancelCommand";
-export type BackendCommand = LoadCloudCommand | LoadCloudFromBufferCommand | UnloadCloudCommand | SetCloudPriorityCommand | SetCloudPackingCommand | SetCloudTransformCommand | SetCloudRaycastableCommand | WriteAttributeRangeCommand | SetCameraCommand | CancelCommand;
+export type BackendCommand = LoadCloudCommand | LoadCloudFromBufferCommand | UnloadCloudCommand | SetCloudPriorityCommand | SetCloudPackingCommand | SetCloudTransformCommand | SetCloudRaycastableCommand | WriteAttributeRangeCommand | RequestGaussiansCommand | CancelCommand;

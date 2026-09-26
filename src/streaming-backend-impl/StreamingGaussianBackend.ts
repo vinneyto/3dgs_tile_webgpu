@@ -1,7 +1,10 @@
 import { Matrix4, Vector3 } from "three";
 import { packShRgb8e8 } from "./GaussianSh";
 import type { AttributeInit } from "../streaming-backend/AttributeInit";
-import type { BackendConfig } from "../streaming-backend/BackendConfig";
+import type {
+  BackendConfig,
+  FrontendCapabilities,
+} from "../streaming-backend/BackendConfig";
 import type { CloudLoadOptions } from "../streaming-backend/CloudLoadOptions";
 import type { CloudRenderState } from "../streaming-backend/CloudRenderState";
 import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
@@ -80,19 +83,13 @@ export class StreamingGaussianBackend implements GaussianBackend {
   private contentVersion = 0;
   private sceneRevision = 0;
   private cameraPosition = new Vector3();
+  private frontend: FrontendCapabilities | null = null;
+  private requestId = "";
   private packed: PackedState | null = null;
   private target: PackedState | null = null;
-  private updateScheduled = false;
-  private sceneUpdateTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly pendingTransforms: string[] = [];
   private disposed = false;
 
   constructor(config: BackendConfig) {
-    if (
-      config.frontend.maxStorageBufferBindingSize <= 0 ||
-      config.frontend.maxBufferSize <= 0
-    )
-      throw new RangeError("Frontend buffer limits must be positive");
     this.config = config;
   }
 
@@ -147,7 +144,6 @@ export class StreamingGaussianBackend implements GaussianBackend {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    if (this.sceneUpdateTimer !== null) clearTimeout(this.sceneUpdateTimer);
     for (const controller of this.activeLoads.values()) controller.abort();
     this.activeLoads.clear();
     this.listeners.clear();
@@ -182,7 +178,8 @@ export class StreamingGaussianBackend implements GaussianBackend {
             if (response.headers.get("content-type")?.includes("text/html"))
               throw new Error("PLY URL returned HTML instead of a PLY file");
             const buffer = await response.arrayBuffer();
-            if (controller.signal.aborted) throw new DOMException("Load cancelled", "AbortError");
+            if (controller.signal.aborted)
+              throw new DOMException("Load cancelled", "AbortError");
             source = this.parser.parse(buffer);
           } else {
             source = this.parser.parse(command.buffer);
@@ -234,14 +231,6 @@ export class StreamingGaussianBackend implements GaussianBackend {
             }
           this.usedCloudIds.add(entry.id);
           this.clouds.set(entry.id, entry);
-          let packed: PackedState;
-          try {
-            packed = this.compute();
-          } catch (error) {
-            this.clouds.delete(entry.id);
-            this.usedCloudIds.delete(entry.id);
-            throw error;
-          }
           const { min, max } = octree.bounds;
           this.emit({
             type: "cloud-loaded",
@@ -255,8 +244,6 @@ export class StreamingGaussianBackend implements GaussianBackend {
               ? createRaycastSnapshot(octree)
               : undefined,
           });
-          this.target = null;
-          this.replace(packed);
           return;
         } finally {
           this.activeLoads.delete(command.id);
@@ -269,20 +256,11 @@ export class StreamingGaussianBackend implements GaussianBackend {
           commandId: command.id,
           cloudId: command.cloudId,
         });
-        this.repack();
         return;
       case "set-cloud-priority":
-        {
-          const entry = this.getCloud(command.cloudId);
-          const previous = entry.priority;
-          entry.priority = validatePriority(command.priority);
-          try {
-            this.repack();
-          } catch (error) {
-            entry.priority = previous;
-            throw error;
-          }
-        }
+        this.getCloud(command.cloudId).priority = validatePriority(
+          command.priority,
+        );
         break;
       case "set-cloud-packing":
         {
@@ -290,7 +268,7 @@ export class StreamingGaussianBackend implements GaussianBackend {
           const previous = entry.packingStrategy;
           entry.packingStrategy = command.packingStrategy;
           try {
-            this.repack();
+            this.select(entry, Math.min(entry.source.count, 1));
           } catch (error) {
             entry.packingStrategy = previous;
             throw error;
@@ -304,9 +282,7 @@ export class StreamingGaussianBackend implements GaussianBackend {
         if (command.sceneRevision < this.sceneRevision) break;
         this.sceneRevision = command.sceneRevision;
         entry.transform.fromArray(command.worldMatrix);
-        this.pendingTransforms.push(command.id);
-        this.scheduleSceneUpdate();
-        return;
+        break;
       }
       case "set-cloud-raycastable": {
         const entry = this.getCloud(command.cloudId);
@@ -324,9 +300,8 @@ export class StreamingGaussianBackend implements GaussianBackend {
       }
       case "write-attribute-range":
         this.writeRange(command);
-        this.updateTarget();
         break;
-      case "set-camera":
+      case "request-gaussians":
         if (
           command.worldMatrix.length !== 16 ||
           command.projectionMatrix.length !== 16
@@ -334,48 +309,23 @@ export class StreamingGaussianBackend implements GaussianBackend {
           throw new RangeError("Camera matrices need sixteen numbers each");
         if (command.sceneRevision < this.sceneRevision) break;
         this.sceneRevision = command.sceneRevision;
+        if (
+          command.frontend.maxStorageBufferBindingSize <= 0 ||
+          command.frontend.maxBufferSize <= 0 ||
+          command.frontend.maxStorageBuffersPerShaderStage <= 0
+        )
+          throw new RangeError("Frontend buffer limits must be positive");
+        this.frontend = command.frontend;
+        this.requestId = command.id;
         this.cameraPosition.set(
           command.worldMatrix[12]!,
           command.worldMatrix[13]!,
           command.worldMatrix[14]!,
         );
-        this.flushSceneUpdate();
+        this.updateTarget();
         break;
     }
     this.emit({ type: "command-completed", commandId: command.id });
-  }
-
-  private scheduleSceneUpdate(): void {
-    if (this.sceneUpdateTimer !== null) clearTimeout(this.sceneUpdateTimer);
-    this.sceneUpdateTimer = setTimeout(() => {
-      this.sceneUpdateTimer = null;
-      if (this.disposed) return;
-      try {
-        this.flushSceneUpdate();
-      } catch {
-        /* flushSceneUpdate reports each pending command's error. */
-      }
-    }, 16);
-  }
-
-  private flushSceneUpdate(): void {
-    if (this.sceneUpdateTimer !== null) clearTimeout(this.sceneUpdateTimer);
-    this.sceneUpdateTimer = null;
-    const commands = this.pendingTransforms.splice(0);
-    try {
-      this.updateTarget();
-      for (const commandId of commands)
-        this.emit({ type: "command-completed", commandId });
-    } catch (error) {
-      for (const commandId of commands)
-        this.emit({
-          type: "error",
-          commandId,
-          code: error instanceof RangeError ? "invalid-range" : "backend-error",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      throw error;
-    }
   }
 
   private getCloud(id: string): CloudEntry {
@@ -457,9 +407,10 @@ export class StreamingGaussianBackend implements GaussianBackend {
     degree: number,
     extra: Map<string, AttributeValues>,
   ): number {
+    if (!this.frontend) throw new Error("Frontend capabilities not supplied");
     const limit = Math.min(
-      this.config.frontend.maxStorageBufferBindingSize,
-      this.config.frontend.maxBufferSize,
+      this.frontend.maxStorageBufferBindingSize,
+      this.frontend.maxBufferSize,
     );
     const widths = [
       16,
@@ -633,16 +584,19 @@ export class StreamingGaussianBackend implements GaussianBackend {
     }
   }
 
-  private repack(): void {
-    this.target = null;
-    const packed = this.compute();
-    this.replace(packed);
-  }
-
   private updateTarget(): void {
-    if (!this.packed) return;
-    const desired = this.compute(this.packed.capacity);
+    if (!this.packed) {
+      this.replace(this.compute());
+      return;
+    }
+    const desired = this.compute(
+      this.packed.capacity <=
+        this.maxSlots(this.packed.degree, this.packed.attributes)
+        ? this.packed.capacity
+        : 0,
+    );
     if (
+      !this.frontend?.supportsPartialBufferUpdates ||
       desired.capacity !== this.packed.capacity ||
       desired.degree !== this.packed.degree ||
       [...desired.attributes].some(
@@ -655,7 +609,7 @@ export class StreamingGaussianBackend implements GaussianBackend {
       return;
     }
     this.target = desired;
-    this.scheduleUpdate();
+    this.emitNextPatch();
   }
 
   private replace(packed: PackedState): void {
@@ -672,6 +626,7 @@ export class StreamingGaussianBackend implements GaussianBackend {
     );
     this.emit({
       type: "buffers-replaced",
+      requestId: this.requestId,
       sceneRevision: this.sceneRevision,
       layoutVersion: this.layoutVersion,
       contentVersion: this.contentVersion,
@@ -683,16 +638,6 @@ export class StreamingGaussianBackend implements GaussianBackend {
       attributes,
       clouds: packed.clouds,
     });
-  }
-
-  private scheduleUpdate(): void {
-    if (this.updateScheduled) return;
-    this.updateScheduled = true;
-    setTimeout(() => {
-      this.updateScheduled = false;
-      if (this.disposed || !this.target || !this.packed) return;
-      this.emitNextPatch();
-    }, 0);
   }
 
   private emitNextPatch(): void {
@@ -733,19 +678,18 @@ export class StreamingGaussianBackend implements GaussianBackend {
     }
     const patches: PackedAttributePatch[] = [];
     if (changed.length === 0) {
-      if (JSON.stringify(current.clouds) !== JSON.stringify(target.clouds)) {
-        const baseContentVersion = this.contentVersion++;
-        this.emit({
-          type: "buffers-patched",
-          sceneRevision: this.sceneRevision,
-          layoutVersion: this.layoutVersion,
-          baseContentVersion,
-          contentVersion: this.contentVersion,
-          patches: [],
-          changedClouds: target.clouds,
-          lodPending: false,
-        });
-      }
+      const baseContentVersion = this.contentVersion++;
+      this.emit({
+        type: "buffers-patched",
+        requestId: this.requestId,
+        sceneRevision: this.sceneRevision,
+        layoutVersion: this.layoutVersion,
+        baseContentVersion,
+        contentVersion: this.contentVersion,
+        patches: [],
+        changedClouds: target.clouds,
+        lodPending: false,
+      });
       this.packed = {
         ...current,
         count: target.count,
@@ -801,6 +745,7 @@ export class StreamingGaussianBackend implements GaussianBackend {
     const baseContentVersion = this.contentVersion++;
     this.emit({
       type: "buffers-patched",
+      requestId: this.requestId,
       sceneRevision: this.sceneRevision,
       layoutVersion: this.layoutVersion,
       baseContentVersion,
@@ -809,8 +754,7 @@ export class StreamingGaussianBackend implements GaussianBackend {
       changedClouds: pending ? current.clouds : target.clouds,
       lodPending: pending,
     });
-    if (pending) this.scheduleUpdate();
-    else {
+    if (!pending) {
       this.packed = {
         ...current,
         count: target.count,

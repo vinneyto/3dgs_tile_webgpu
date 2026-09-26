@@ -11,22 +11,12 @@ export {
   unpackShRgb8e8,
   type GaussianShFormat,
 } from "./streaming-backend-impl/GaussianSh";
-export { CanonicalGaussianPlyLoader } from "./renderer/CanonicalGaussianPlyLoader";
-export {
-  GaussianDataBackend,
-  type GaussianBackendResource,
-  type GaussianBackendSelection,
-} from "./streaming-backend-worker/legacy/GaussianDataBackend";
 export { GaussianRaycastIndex } from "./renderer/GaussianRaycastIndex";
-export {
-  WorkerGaussianBackend,
-  type WorkerGaussianBackendOptions,
-} from "./streaming-backend-worker/legacy/WorkerGaussianBackend";
-export { LocalGaussianBackend } from "./streaming-backend-impl/legacy/LocalGaussianBackend";
-export type { GaussianBackend as LegacyGaussianBackend } from "./renderer/legacy/GaussianBackend";
 export type { GaussianBackend } from "./streaming-backend/GaussianBackend";
-export type { GaussianBackendFactory } from "./streaming-backend/GaussianBackendFactory";
-export type { BackendConfig } from "./streaming-backend/BackendConfig";
+export type {
+  BackendConfig,
+  FrontendCapabilities,
+} from "./streaming-backend/BackendConfig";
 export type { BackendCommand } from "./streaming-backend/commands/BackendCommand";
 export type { Command } from "./streaming-backend/commands/Command";
 export type { BackendEvent } from "./streaming-backend/events/BackendEvent";
@@ -45,27 +35,13 @@ export type {
   DistanceAwareRadialPackingStrategy,
 } from "./streaming-backend/PackingStrategy";
 export { StreamingGaussianBackend } from "./streaming-backend-impl/StreamingGaussianBackend";
-export { DirectStreamingGaussianBackendFactory } from "./streaming-backend-impl/DirectStreamingGaussianBackendFactory";
-export { WorkerStreamingGaussianBackend, WorkerStreamingGaussianBackendFactory } from "./streaming-backend-worker/WorkerStreamingGaussianBackend";
+export { WorkerStreamingGaussianBackend } from "./streaming-backend-worker/WorkerStreamingGaussianBackend";
 export type {
-  GaussianBackendEvent,
-  GaussianBackendEvents,
-  GaussianBackendListener,
-} from "./renderer/legacy/GaussianBackendEvents";
-export type {
-  WorkerStoreTransport,
-  WorkerStoreRequest,
-  WorkerStoreResult,
-} from "./streaming-backend-worker/legacy/WorkerGaussianBackendProtocol";
-export type {
-  GaussianBackendTransport,
-  GaussianBackendRequest,
-  GaussianBackendResult,
-  GaussianBackendLoadOptions,
-  GaussianBackendPackedBuffers,
-  GaussianRaycastBuffers,
-} from "./streaming-backend-worker/legacy/GaussianBackendProtocol";
-export { GaussianCloud, type GaussianRaycastMode } from "./renderer/GaussianCloud";
+  GaussianStoreEvent,
+  GaussianStoreEvents,
+  GaussianStoreListener,
+} from "./renderer/GaussianStoreEvents";
+export { GaussianCloud } from "./renderer/GaussianCloud";
 export {
   GaussianOctree,
   GaussianOctreeNode,
@@ -73,7 +49,10 @@ export {
   type GaussianOctreeRaycastHit,
   type GaussianOctreeRaycastOptions,
 } from "./streaming-backend-impl/GaussianOctree";
-export { OctreeHelper, type OctreeHelperOptions } from "./renderer/OctreeHelper";
+export {
+  OctreeHelper,
+  type OctreeHelperOptions,
+} from "./renderer/OctreeHelper";
 export {
   GaussianLod,
   GaussianLodNode,
@@ -88,7 +67,6 @@ export {
 } from "./renderer/GaussianLodColorHelper";
 export {
   MaximumLodPackingStrategy,
-  RadialLodWorkerPlanner,
   DistanceAwareRadialLodPackingStrategy,
   RadialLodPackingStrategy,
   StreamingLodPackingStrategy,
@@ -107,25 +85,9 @@ export {
   type TieredRadialLodPackingOptions,
 } from "./streaming-backend-impl/lod-packing";
 export {
-  RemainingCapacityBudgetStrategy,
-  SourceFractionBudgetStrategy,
-  type GaussianStoreBudgetContext,
-  type GaussianStoreBudgetEntry,
-  type GaussianStoreBudgetStrategy,
-} from "./streaming-backend-impl/legacy/store-budgeting";
-export {
   GaussianStore,
-  type GaussianDataLoader,
-  type GaussianStoreAddLodOptions,
-  type GaussianStoreAddOptions,
-  type GaussianStoreLoadOptions,
-  type GaussianStoreLodBatchResult,
   type GaussianStoreCloudLodUpdate,
-  type GaussianStoreDefaultLodOptions,
   type GaussianStoreLodUpdate,
-  type GaussianStoreOptions,
-  type GaussianStorePackLimits,
-  type GaussianStorePackOptions,
   type GaussianStorePackStats,
   type GaussianStoreSlotRange,
 } from "./renderer/GaussianStore";

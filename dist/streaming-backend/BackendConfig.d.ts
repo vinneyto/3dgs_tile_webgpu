@@ -1,16 +1,16 @@
 import type { PackingStrategy } from "./PackingStrategy";
-/** GPU limits and streaming policy supplied by the frontend. */
+/** Stable backend policy. GPU limits arrive with each rendering request. */
 export interface BackendConfig {
-    frontend: {
-        maxStorageBufferBindingSize: number;
-        maxBufferSize: number;
-        maxStorageBuffersPerShaderStage: number;
-        supportsPartialBufferUpdates: boolean;
-    };
     maxGaussians?: number | "auto";
     defaultPackingStrategy?: PackingStrategy;
     streamingLod?: {
         maxUploadBytesPerUpdate?: number;
         maxChangedCellsPerUpdate?: number;
     };
+}
+export interface FrontendCapabilities {
+    maxStorageBufferBindingSize: number;
+    maxBufferSize: number;
+    maxStorageBuffersPerShaderStage: number;
+    supportsPartialBufferUpdates: boolean;
 }

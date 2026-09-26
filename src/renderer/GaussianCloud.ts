@@ -6,11 +6,7 @@ import {
   type Raycaster,
 } from "three/webgpu";
 
-import type { GaussianLod, GaussianLodPacking } from "../streaming-backend-impl/GaussianLod";
-import { alphaCompositeRaycastHit } from "../streaming-backend-impl/GaussianOctree";
 import type { GaussianRaycastIndex } from "./GaussianRaycastIndex";
-
-export type GaussianRaycastMode = "rendered" | "full";
 
 /** Actions the scene object delegates to its owning client store. */
 export interface GaussianCloudOwner {
@@ -23,14 +19,10 @@ export interface GaussianCloudOwner {
 export class GaussianCloud extends Object3D {
   readonly isGaussianCloud = true;
   readonly objectId: number;
-  readonly lod: GaussianLod | null;
-
-  raycastMode: GaussianRaycastMode = "rendered";
   /** Accumulated alpha required for a pointer hit. Must be in (0, 1). */
   raycastAlphaThreshold = 0.5;
 
   private readonly ownerStore: GaussianCloudOwner;
-  private packing: GaussianLodPacking | null;
   private packedGaussianCount: number;
   private priority: number;
   private raycastIndex: GaussianRaycastIndex | null = null;
@@ -40,22 +32,14 @@ export class GaussianCloud extends Object3D {
     objectId: number,
     gaussianCount: number,
     name = "GaussianCloud",
-    lod: GaussianLod | null = null,
-    packing: GaussianLodPacking | null = null,
     priority = 0,
   ) {
     super();
     this.ownerStore = store;
     this.objectId = objectId;
     this.packedGaussianCount = gaussianCount;
-    this.lod = lod;
-    this.packing = packing;
     this.priority = priority;
     this.name = name;
-  }
-
-  get lodPacking(): GaussianLodPacking | null {
-    return this.packing;
   }
 
   get gaussianCount(): number {
@@ -77,11 +61,7 @@ export class GaussianCloud extends Object3D {
   }
 
   /** Internal Store hook used after a global budget redistribution. */
-  updatePacking(
-    gaussianCount: number,
-    packing: GaussianLodPacking | null,
-  ): void {
-    this.packing = packing;
+  updatePacking(gaussianCount: number): void {
     this.packedGaussianCount = gaussianCount;
   }
 
@@ -95,30 +75,16 @@ export class GaussianCloud extends Object3D {
     this.raycastIndex = index;
   }
 
-  /** Raycast either the packed/rendered LOD or the complete source octree. */
+  getRaycastIndex(): GaussianRaycastIndex | null {
+    return this.raycastIndex;
+  }
+
+  /** Synchronous raycast against the complete source octree snapshot. */
   raycast(raycaster: Raycaster, intersections: Intersection[]): void {
-    if (
-      this.raycastIndex === null &&
-      (this.lod === null || this.packing === null)
-    )
-      return;
+    if (this.raycastIndex === null) return;
     const inverseWorld = new Matrix4().copy(this.matrixWorld).invert();
     const localRay = new Ray().copy(raycaster.ray).applyMatrix4(inverseWorld);
-    const hit =
-      this.raycastIndex !== null
-        ? this.raycastIndex.raycast(
-            localRay,
-            "full",
-            this.raycastAlphaThreshold,
-          )
-        : alphaCompositeRaycastHit(
-            localRay,
-            this.lod!.octree.data,
-            this.raycastMode === "full"
-              ? this.lod!.octree.raycast(localRay)
-              : this.lod!.raycast(localRay, this.packing!),
-            this.raycastAlphaThreshold,
-          );
+    const hit = this.raycastIndex.raycast(localRay, this.raycastAlphaThreshold);
     if (hit !== null) {
       const point = hit.point.clone().applyMatrix4(this.matrixWorld);
       const distance = raycaster.ray.origin.distanceTo(point);

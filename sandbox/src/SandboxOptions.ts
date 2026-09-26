@@ -1,8 +1,4 @@
-import type {
-  GaussianPassOptions,
-  GaussianStoreDefaultLodOptions,
-  RadixBackend,
-} from "../../src/index";
+import type { GaussianPassOptions, RadixBackend } from "../../src/index";
 
 export interface SandboxOptions {
   readonly workerBackend: boolean;
@@ -13,7 +9,10 @@ export interface SandboxOptions {
   readonly statsEnabled: boolean;
   readonly pixelRatio: number;
   readonly pass: GaussianPassOptions;
-  readonly streamingLod: GaussianStoreDefaultLodOptions;
+  readonly streamingLod: {
+    maxUploadBytesPerPack: number;
+    maxChangedCellsPerPack: number;
+  };
 }
 
 export function readSandboxOptions(

@@ -1,17 +1,16 @@
 import { Camera, StorageBufferAttribute } from "three/webgpu";
-export type { GaussianDataLoader, GaussianStoreAddLodOptions, GaussianStoreAddOptions, GaussianStoreCloudLodUpdate, GaussianStoreDefaultLodOptions, GaussianStoreLoadOptions, GaussianStoreLodBatchResult, GaussianStoreLodUpdate, GaussianStoreOptions, GaussianStorePackLimits, GaussianStorePackOptions, GaussianStorePackStats, GaussianStoreSlotRange, } from "./legacy/GaussianStoreTypes";
+export type { GaussianStoreCloudLodUpdate, GaussianStoreLodUpdate, GaussianStorePackStats, GaussianStoreSlotRange, } from "./GaussianStoreTypes";
 import { GaussianCloud } from "./GaussianCloud";
 import { GaussianData } from "./GaussianData";
-import type { GaussianBackendListener } from "./legacy/GaussianBackendEvents";
-import type { GaussianStoreLodUpdate, GaussianStorePackOptions, GaussianStorePackStats } from "./legacy/GaussianStoreTypes";
+import type { GaussianStoreListener } from "./GaussianStoreEvents";
+import type { GaussianStoreLodUpdate, GaussianStorePackStats } from "./GaussianStoreTypes";
 import { GaussianStoreAttributes } from "./store-attributes/GaussianStoreAttributes";
 import { type GaussianStorePackedAttribute } from "./store-attributes/GaussianStorePackedAttribute";
-import type { BackendConfig } from "../streaming-backend/BackendConfig";
+import type { FrontendCapabilities } from "../streaming-backend/BackendConfig";
 import type { CloudLoadOptions } from "../streaming-backend/CloudLoadOptions";
 import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
 import type { PackingStrategy } from "../streaming-backend/PackingStrategy";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
-export declare const DEFAULT_BACKEND_CONFIG: BackendConfig;
 /**
  * Main-thread client of a message backend. GPU attributes and full raycast
  * snapshots belong here; parsing, tree building and LOD selection do not.
@@ -34,6 +33,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private commandNumber;
     private cloudNumber;
     private lastView;
+    private requestInFlight;
     private lastError;
     private commandError;
     private capacity;
@@ -45,7 +45,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private packStats;
     private disposed;
     private awaitingLayout;
-    constructor(backend?: GaussianBackend);
+    constructor(backend: GaussianBackend);
     get clouds(): readonly GaussianCloud[];
     get count(): number;
     get shDegree(): 0 | 1 | 2 | 3;
@@ -53,11 +53,10 @@ export declare class GaussianStore implements GaussianRenderStore {
     get objectCapacity(): number;
     get layoutVersion(): number;
     get contentVersion(): number;
-    get needsPack(): boolean;
     get hasPackedData(): boolean;
     get lastPackStats(): GaussianStorePackStats | null;
     get lastCommandError(): Error | null;
-    subscribe(listener: GaussianBackendListener): () => void;
+    subscribe(listener: GaussianStoreListener): () => void;
     load(url: string, options?: CloudLoadOptions, signal?: AbortSignal): Promise<GaussianCloud>;
     loadBuffer(buffer: ArrayBuffer, options?: CloudLoadOptions, signal?: AbortSignal): Promise<GaussianCloud>;
     remove(cloud: GaussianCloud): void;
@@ -68,8 +67,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     invalidateCloudPacking(cloud: GaussianCloud): void;
     enablePackedLodLevelAttribute(): GaussianStorePackedAttribute;
     getPackedAttribute(name: string): StorageBufferAttribute | undefined;
-    pack(_options: GaussianStorePackOptions): void;
-    updateLod(camera: Camera): GaussianStoreLodUpdate;
+    updateLod(camera: Camera, frontend: FrontendCapabilities): GaussianStoreLodUpdate;
     getPackedData(): GaussianData;
     getBounds(cloud: GaussianCloud): readonly [number, number, number, number, number, number];
     getSourceCount(cloud: GaussianCloud): number;

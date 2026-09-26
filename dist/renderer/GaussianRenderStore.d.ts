@@ -1,10 +1,11 @@
 import type { Camera } from "three/webgpu";
+import type { FrontendCapabilities } from "../streaming-backend/BackendConfig";
 import type { GaussianCloud } from "./GaussianCloud";
 import type { GaussianData } from "./GaussianData";
-import type { GaussianBackendListener } from "./legacy/GaussianBackendEvents";
+import type { GaussianStoreListener } from "./GaussianStoreEvents";
 import type { GaussianStoreAttributes } from "./store-attributes/GaussianStoreAttributes";
 import type { GaussianStorePackedAttribute } from "./store-attributes/GaussianStorePackedAttribute";
-import type { GaussianStoreLodUpdate, GaussianStorePackOptions, GaussianStorePackStats } from "./legacy/GaussianStoreTypes";
+import type { GaussianStoreLodUpdate, GaussianStorePackStats } from "./GaussianStoreTypes";
 /** Synchronous renderer-facing view maintained by GaussianStore. */
 export interface GaussianRenderStore {
     readonly attributes: GaussianStoreAttributes;
@@ -15,12 +16,10 @@ export interface GaussianRenderStore {
     readonly count: number;
     readonly shDegree: 0 | 1 | 2 | 3;
     readonly clouds: readonly GaussianCloud[];
-    readonly needsPack: boolean;
     readonly hasPackedData: boolean;
     readonly lastPackStats: GaussianStorePackStats | null;
-    subscribe(listener: GaussianBackendListener): () => void;
+    subscribe(listener: GaussianStoreListener): () => void;
     enablePackedLodLevelAttribute(): GaussianStorePackedAttribute;
-    pack(options: GaussianStorePackOptions): void;
-    updateLod(camera: Camera): GaussianStoreLodUpdate;
+    updateLod(camera: Camera, frontend: FrontendCapabilities): GaussianStoreLodUpdate;
     getPackedData(): GaussianData;
 }

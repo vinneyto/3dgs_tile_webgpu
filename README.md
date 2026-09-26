@@ -4,16 +4,16 @@ A tiled 3D Gaussian Splatting pass for Three.js WebGPU. The renderer consumes pa
 
 ## Architecture
 
-| Directory | Responsibility |
-| --- | --- |
-| `src/renderer` | Three.js pass, GPU buffers, `GaussianStore` client, and synchronous raycasting against a client-owned copy of the full octree. |
-| `src/streaming-backend` | Transport-neutral plain-object commands and events, `GaussianBackend` and `GaussianBackendFactory` contracts. Individual commands and events have separate files. |
-| `src/streaming-backend-impl` | `StreamingGaussianBackend`: PLY parsing, source attributes, octree, LOD, packing, budgets, and versioned buffer updates. It does not own WebGPU objects or a worker transport. |
-| `src/streaming-backend-worker` | Worker endpoint and client proxy. ArrayBuffers cross the worker boundary with transferable ownership. |
+| Directory                      | Responsibility                                                                                                                                                                 |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `src/renderer`                 | Three.js pass, GPU buffers, `GaussianStore` client, and synchronous raycasting against a client-owned copy of the full octree.                                                 |
+| `src/streaming-backend`        | Transport-neutral plain-object commands and events and the `GaussianBackend` contract. Individual commands and events have separate files.                                     |
+| `src/streaming-backend-impl`   | `StreamingGaussianBackend`: PLY parsing, source attributes, octree, LOD, packing, budgets, and versioned buffer updates. It does not own WebGPU objects or a worker transport. |
+| `src/streaming-backend-worker` | Worker endpoint and client proxy. ArrayBuffers cross the worker boundary with transferable ownership.                                                                          |
 
-`GaussianStore` takes a `GaussianBackend` in its constructor and uses the worker implementation by default. `GaussianPass` takes the smaller `GaussianRenderStore` interface; it does not inspect the backend implementation. A separate `3dgs-tile-webgpu/backend` entry exports the protocol and computation engine for a future server transport, without importing the renderer or browser worker.
+`GaussianStore` takes a `GaussianBackend` in its constructor. Choose the worker endpoint or a direct backend explicitly. `GaussianPass` takes the `GaussianRenderStore` interface; it does not inspect the backend implementation. A separate `3dgs-tile-webgpu/backend` entry exports the protocol and computation engine for a future server transport, without importing the renderer or browser worker.
 
-The backend API is `dispatch(command)`, `subscribe(listener)` and `dispose()`. A factory has `createBackend(config)`. Commands carry IDs; buffer events carry scene, layout and content versions. Camera and cloud transforms drive LOD selection inside the backend. The renderer receives only packed buffers and patches. When raycasting is enabled, the client also receives a transferable snapshot of the **full source octree**, so pointer raycasts remain synchronous and independent of rendered LOD. There is no rendered-LOD raycast synchronization.
+The backend API is `dispatch(command)`, `subscribe(listener)` and `dispose()`. Commands carry IDs; buffer events carry request, scene, layout and content versions. Loading builds the full octree and LOD and delivers a transferable raycast snapshot, but does not pack render buffers. After renderer initialization, `GaussianPass` sends `request-gaussians` with the camera matrices and actual GPU device limits. It repeats the request for changed camera or scene state; the backend sends a full buffer replacement on the first request or when the layout changes, otherwise it sends patches. Pointer raycasts remain synchronous and use the **full source octree**.
 
 ## Install and render
 
@@ -22,21 +22,38 @@ npm install github:vinneyto/3dgs_tile_webgpu
 ```
 
 ```ts
-import { PerspectiveCamera, RenderPipeline, WebGPURenderer } from "three/webgpu";
-import { GaussianStore, gaussianPass } from "3dgs-tile-webgpu";
+import {
+  PerspectiveCamera,
+  RenderPipeline,
+  WebGPURenderer,
+} from "three/webgpu";
+import {
+  GaussianStore,
+  WorkerStreamingGaussianBackend,
+  gaussianPass,
+} from "3dgs-tile-webgpu";
 
 const renderer = new WebGPURenderer();
 await renderer.init();
-const camera = new PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 10_000);
-const store = new GaussianStore();
+const camera = new PerspectiveCamera(
+  50,
+  innerWidth / innerHeight,
+  0.01,
+  10_000,
+);
+const store = new GaussianStore(new WorkerStreamingGaussianBackend({}));
 const cloud = await store.load(new URL("./scene.ply", import.meta.url).href, {
   name: "scene",
   raycastable: true,
   packingStrategy: { type: "tiered-radial" },
-  attributes: [{
-    name: "selection", format: "u32", elementsPerGaussian: 1,
-    source: { kind: "fill", value: "zeros" },
-  }],
+  attributes: [
+    {
+      name: "selection",
+      format: "u32",
+      elementsPerGaussian: 1,
+      source: { kind: "fill", value: "zeros" },
+    },
+  ],
 });
 scene.add(cloud);
 
@@ -48,9 +65,7 @@ renderer.setAnimationLoop(() => pipeline.render());
 
 `store.loadBuffer(buffer, options)` transfers a local PLY buffer to the worker. Do not reuse that `ArrayBuffer` after the call. To update an existing attribute, use `store.writeAttributeRange(cloud, "selection", firstGaussian, count, data)`; this transfers `data` too. The backend updates a packed attribute when its source Gaussian is selected for rendering. Other commands exposed by the store are `setCloudPacking`, `setCloudRaycastable`, and `updatePackingPriority` (also available through `cloud.packingPriority`). `cloud.dispose()` unloads its source. Custom attributes are declared when loading; `lodLevel` is generated by the backend. All attributes are packed into scene-wide output buffers, with zeroes for clouds that lack a custom attribute declared by another cloud.
 
-The optional config supplied to `new WorkerStreamingGaussianBackend(config)` specifies frontend storage-buffer limits, the maximum Gaussian count, default packing strategy and per-update upload budget. `new StreamingGaussianBackend(config)` runs the same engine without a worker, useful for tests and transport adapters. The browser sandbox at `npm run sandbox` supports `?backend=main` for that direct engine.
-
-The legacy `LocalGaussianBackend` and `WorkerGaussianBackend` remain exported for applications that still create `GaussianData` directly. The new `GaussianStore` accepts the message-based `GaussianBackend` contract.
+The optional config supplied to `new WorkerStreamingGaussianBackend(config)` specifies the maximum Gaussian count, default packing strategy and per-update upload budget. The pass supplies GPU limits with each request. `new StreamingGaussianBackend(config)` runs the same engine without a worker, useful for tests and transport adapters. The browser sandbox at `npm run sandbox` supports `?backend=main` for that direct engine. The old local Store, data worker, and separate LOD planning worker have been removed.
 
 ## Development
 
