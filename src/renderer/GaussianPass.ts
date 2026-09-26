@@ -439,6 +439,12 @@ export class GaussianPass extends PassNode {
       this.setSize(drawingBufferWidth, drawingBufferHeight);
     }
     const device = webGpuDevice(renderer);
+    this.gaussianStore.setFrontendCapabilities?.({
+      maxStorageBufferBindingSize: device.limits.maxStorageBufferBindingSize,
+      maxBufferSize: device.limits.maxBufferSize,
+      maxStorageBuffersPerShaderStage: device.limits.maxStorageBuffersPerShaderStage,
+      supportsPartialBufferUpdates: true,
+    });
     if (this.pipelineDevice !== null && this.pipelineDevice !== device) {
       this.pipeline?.dispose();
       this.pipeline = null;

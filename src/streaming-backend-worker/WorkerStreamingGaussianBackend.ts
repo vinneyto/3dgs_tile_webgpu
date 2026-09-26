@@ -1,6 +1,5 @@
 import type { BackendConfig } from "../streaming-backend/BackendConfig";
 import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
-import type { GaussianBackendFactory } from "../streaming-backend/GaussianBackendFactory";
 import type { BackendCommand } from "../streaming-backend/commands/BackendCommand";
 import type { BackendEvent } from "../streaming-backend/events/BackendEvent";
 import StreamingBackendWorker from "./StreamingGaussianBackendWorker?worker&inline";
@@ -57,10 +56,4 @@ export class WorkerStreamingGaussianBackend implements GaussianBackend {
     };
     for (const listener of this.listeners) listener(error);
   };
-}
-
-export class WorkerStreamingGaussianBackendFactory implements GaussianBackendFactory {
-  createBackend(config: BackendConfig): GaussianBackend {
-    return new WorkerStreamingGaussianBackend(config);
-  }
 }

@@ -7,6 +7,7 @@ import type { GaussianStoreLodUpdate, GaussianStorePackOptions, GaussianStorePac
 import { GaussianStoreAttributes } from "./store-attributes/GaussianStoreAttributes";
 import { type GaussianStorePackedAttribute } from "./store-attributes/GaussianStorePackedAttribute";
 import type { BackendConfig } from "../streaming-backend/BackendConfig";
+import type { FrontendCapabilities } from "../streaming-backend/FrontendCapabilities";
 import type { CloudLoadOptions } from "../streaming-backend/CloudLoadOptions";
 import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
 import type { PackingStrategy } from "../streaming-backend/PackingStrategy";
@@ -45,6 +46,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private packStats;
     private disposed;
     private awaitingLayout;
+    private frontendCapabilities;
     constructor(backend?: GaussianBackend);
     get clouds(): readonly GaussianCloud[];
     get count(): number;
@@ -69,6 +71,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     enablePackedLodLevelAttribute(): GaussianStorePackedAttribute;
     getPackedAttribute(name: string): StorageBufferAttribute | undefined;
     pack(_options: GaussianStorePackOptions): void;
+    setFrontendCapabilities(capabilities: FrontendCapabilities): void;
     updateLod(camera: Camera): GaussianStoreLodUpdate;
     getPackedData(): GaussianData;
     getBounds(cloud: GaussianCloud): readonly [number, number, number, number, number, number];

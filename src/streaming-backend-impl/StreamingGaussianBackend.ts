@@ -2,6 +2,7 @@ import { Matrix4, Vector3 } from "three";
 import { packShRgb8e8 } from "./GaussianSh";
 import type { AttributeInit } from "../streaming-backend/AttributeInit";
 import type { BackendConfig } from "../streaming-backend/BackendConfig";
+import type { FrontendCapabilities } from "../streaming-backend/FrontendCapabilities";
 import type { CloudLoadOptions } from "../streaming-backend/CloudLoadOptions";
 import type { CloudRenderState } from "../streaming-backend/CloudRenderState";
 import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
@@ -74,6 +75,7 @@ export class StreamingGaussianBackend implements GaussianBackend {
   private readonly activeLoads = new Map<string, AbortController>();
   private readonly parser = new CanonicalGaussianPlyLoader();
   private readonly config: BackendConfig;
+  private frontend: FrontendCapabilities | null = null;
   private work: Promise<void> = Promise.resolve();
   private nextObjectId = 0;
   private layoutVersion = 0;
@@ -88,11 +90,6 @@ export class StreamingGaussianBackend implements GaussianBackend {
   private disposed = false;
 
   constructor(config: BackendConfig) {
-    if (
-      config.frontend.maxStorageBufferBindingSize <= 0 ||
-      config.frontend.maxBufferSize <= 0
-    )
-      throw new RangeError("Frontend buffer limits must be positive");
     this.config = config;
   }
 
@@ -234,13 +231,15 @@ export class StreamingGaussianBackend implements GaussianBackend {
             }
           this.usedCloudIds.add(entry.id);
           this.clouds.set(entry.id, entry);
-          let packed: PackedState;
-          try {
-            packed = this.compute();
-          } catch (error) {
-            this.clouds.delete(entry.id);
-            this.usedCloudIds.delete(entry.id);
-            throw error;
+          let packed: PackedState | null = null;
+          if (this.frontend) {
+            try {
+              packed = this.compute();
+            } catch (error) {
+              this.clouds.delete(entry.id);
+              this.usedCloudIds.delete(entry.id);
+              throw error;
+            }
           }
           const { min, max } = octree.bounds;
           this.emit({
@@ -255,8 +254,10 @@ export class StreamingGaussianBackend implements GaussianBackend {
               ? createRaycastSnapshot(octree)
               : undefined,
           });
-          this.target = null;
-          this.replace(packed);
+          if (packed) {
+            this.target = null;
+            this.replace(packed);
+          }
           return;
         } finally {
           this.activeLoads.delete(command.id);
@@ -326,6 +327,28 @@ export class StreamingGaussianBackend implements GaussianBackend {
         this.writeRange(command);
         this.updateTarget();
         break;
+      case "set-frontend-capabilities": {
+        const { capabilities } = command;
+        for (const limit of [
+          capabilities.maxStorageBufferBindingSize,
+          capabilities.maxBufferSize,
+          capabilities.maxStorageBuffersPerShaderStage,
+        ]) {
+          if (!Number.isSafeInteger(limit) || limit <= 0)
+            throw new RangeError("Frontend buffer limits must be positive integers");
+        }
+        if (typeof capabilities.supportsPartialBufferUpdates !== "boolean")
+          throw new TypeError("Frontend partial update support must be boolean");
+        const previous = this.frontend;
+        this.frontend = { ...capabilities };
+        try {
+          if (this.clouds.size > 0) this.repack();
+        } catch (error) {
+          this.frontend = previous;
+          throw error;
+        }
+        break;
+      }
       case "set-camera":
         if (
           command.worldMatrix.length !== 16 ||
@@ -457,9 +480,12 @@ export class StreamingGaussianBackend implements GaussianBackend {
     degree: number,
     extra: Map<string, AttributeValues>,
   ): number {
+    const frontend = this.frontend;
+    if (!frontend)
+      throw new Error("Frontend capabilities have not been supplied");
     const limit = Math.min(
-      this.config.frontend.maxStorageBufferBindingSize,
-      this.config.frontend.maxBufferSize,
+      frontend.maxStorageBufferBindingSize,
+      frontend.maxBufferSize,
     );
     const widths = [
       16,
@@ -634,14 +660,19 @@ export class StreamingGaussianBackend implements GaussianBackend {
   }
 
   private repack(): void {
+    if (!this.frontend) return;
     this.target = null;
     const packed = this.compute();
     this.replace(packed);
   }
 
   private updateTarget(): void {
-    if (!this.packed) return;
+    if (!this.frontend || !this.packed) return;
     const desired = this.compute(this.packed.capacity);
+    if (!this.frontend.supportsPartialBufferUpdates) {
+      this.replace(desired);
+      return;
+    }
     if (
       desired.capacity !== this.packed.capacity ||
       desired.degree !== this.packed.degree ||

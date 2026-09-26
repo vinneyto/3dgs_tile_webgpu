@@ -4,10 +4,10 @@ function q(l, e, t) {
   if (!Number.isFinite(s))
     throw new RangeError("SH coefficients must be finite");
   if (s === 0) return 0;
-  const n = Math.min(127, Math.max(-126, Math.ceil(Math.log2(s)))), o = 127 / 2 ** n, i = T(l, o), r = T(e, o), a = T(t, o), d = n + 127;
+  const n = Math.min(127, Math.max(-126, Math.ceil(Math.log2(s)))), o = 127 / 2 ** n, i = _(l, o), r = _(e, o), a = _(t, o), d = n + 127;
   return (i | r << 8 | a << 16 | d << 24) >>> 0;
 }
-function T(l, e) {
+function _(l, e) {
   return Math.min(127, Math.max(-127, Math.round(l * e))) & 255;
 }
 function N(l) {
@@ -176,11 +176,11 @@ class Z {
     for (let f = 0; f < o.length; f++) {
       const u = this.budgetShares[f];
       if (h += u, u === 0) continue;
-      const y = f === o.length - 1 ? t : Math.floor(t * h), g = o[f];
+      const y = f === o.length - 1 ? t : Math.floor(t * h), p = o[f];
       for (; d < n.length; ) {
-        const w = n[d], c = e.nodes[w.nodeId].levelCounts[g];
+        const w = n[d], c = e.nodes[w.nodeId].levelCounts[p];
         if (a + c > y) break;
-        i.push(w.nodeId), r.push(g), a += c, d++;
+        i.push(w.nodeId), r.push(p), a += c, d++;
       }
     }
     return {
@@ -289,7 +289,7 @@ class ne {
       );
     const a = oe(e, t), d = (c) => s.get(c), h = n.map(
       (c) => d(`f_rest_${c}`)
-    ), f = t.vertexCount, u = new Float32Array(f * 4), y = new Float32Array(f * 4), g = new Float32Array(f * 4), w = new Float32Array(f * i * 4);
+    ), f = t.vertexCount, u = new Float32Array(f * 4), y = new Float32Array(f * 4), p = new Float32Array(f * 4), w = new Float32Array(f * i * 4);
     for (let c = 0; c < f; c++) {
       const m = c * 4;
       u[m] = a(c, d("x")), u[m + 1] = a(c, d("y")), u[m + 2] = a(c, d("z")), y[m] = Math.max(
@@ -304,8 +304,8 @@ class ne {
       );
       const C = a(c, d("opacity"));
       y[m + 3] = 1 / (1 + Math.exp(-C));
-      const x = a(c, d("rot_0")), p = a(c, d("rot_1")), b = a(c, d("rot_2")), v = a(c, d("rot_3")), L = Math.hypot(p, b, v, x);
-      L > 1e-12 ? (g[m] = p / L, g[m + 1] = b / L, g[m + 2] = v / L, g[m + 3] = x / L) : g[m + 3] = 1;
+      const x = a(c, d("rot_0")), g = a(c, d("rot_1")), b = a(c, d("rot_2")), v = a(c, d("rot_3")), L = Math.hypot(g, b, v, x);
+      L > 1e-12 ? (p[m] = g / L, p[m + 1] = b / L, p[m + 2] = v / L, p[m + 3] = x / L) : p[m + 3] = 1;
       const E = c * i * 4;
       w[E] = a(c, d("f_dc_0")), w[E + 1] = a(c, d("f_dc_1")), w[E + 2] = a(c, d("f_dc_2"));
       for (let P = 1; P < i; P++) {
@@ -324,7 +324,7 @@ class ne {
       r - 1,
       u,
       y,
-      g,
+      p,
       w
     );
   }
@@ -332,15 +332,15 @@ class ne {
 function re(l) {
   const e = new Uint8Array(l), t = new TextEncoder().encode("end_header");
   let s = -1;
-  for (let g = 0; g <= e.length - t.length; g++) {
+  for (let p = 0; p <= e.length - t.length; p++) {
     let w = !0;
     for (let c = 0; c < t.length; c++)
-      if (e[g + c] !== t[c]) {
+      if (e[p + c] !== t[c]) {
         w = !1;
         break;
       }
     if (w) {
-      s = g;
+      s = p;
       break;
     }
   }
@@ -353,8 +353,8 @@ function re(l) {
   if (i[0]?.trim() !== "ply") throw new Error("Invalid PLY signature");
   let r = null, a = "", d = -1, h = 0;
   const f = [], u = [];
-  for (const g of i) {
-    const w = g.trim().split(/\s+/);
+  for (const p of i) {
+    const w = p.trim().split(/\s+/);
     if (w[0] === "format") {
       if (w[1] !== "ascii" && w[1] !== "binary_little_endian" && w[1] !== "binary_big_endian")
         throw new Error(`Unsupported PLY format: ${w[1] ?? "unknown"}`);
@@ -372,14 +372,14 @@ function re(l) {
         );
       const c = w[1], m = w[2];
       if (!(c in z) || m === void 0)
-        throw new Error(`Unsupported vertex property: ${g}`);
+        throw new Error(`Unsupported vertex property: ${p}`);
       f.push({ name: m, type: c, byteOffset: h }), h += z[c];
     }
   }
   if (r === null) throw new Error("Invalid PLY: format is missing");
   if (d <= 0) throw new Error("PLY must contain at least one vertex");
   if (u.find(
-    (g) => g.count > 0
+    (p) => p.count > 0
   )?.name !== "vertex")
     throw new Error("The canonical 3DGS vertex element must be first");
   return { format: r, vertexCount: d, properties: f, vertexStride: h, dataOffset: n };
@@ -572,19 +572,19 @@ class A {
       throw new RangeError("GaussianLodPacking arrays must have equal lengths");
     const i = this.octree.data.means.array, r = this.octree.data.scalesOpacity.array, a = new I(), d = new I(), h = [], f = /* @__PURE__ */ new Set();
     for (let u = 0; u < t.nodeIds.length; u++) {
-      const y = t.nodeIds[u], g = this.getLeafNode(y);
+      const y = t.nodeIds[u], p = this.getLeafNode(y);
       if (f.has(y))
         throw new Error(
           `GaussianLodPacking contains duplicate leaf node ${y}`
         );
       f.add(y);
-      const w = t.lodLevels[u], c = g.levelCounts[w];
+      const w = t.lodLevels[u], c = p.levelCounts[w];
       if (c === void 0)
         throw new RangeError(`GaussianLod level ${w} does not exist`);
       const m = this.octree.nodes[y], C = Math.max(0, n - 3) * m.maxSplatRadius, x = C === 0 ? m.raycastBounds : m.raycastBounds.clone().expandByScalar(C);
       if (e.intersectsBox(x))
-        for (let p = 0; p < c; p++) {
-          const b = g.sortedGaussianIndices[p], v = b * 4;
+        for (let g = 0; g < c; g++) {
+          const b = p.sortedGaussianIndices[g], v = b * 4;
           a.set(i[v], i[v + 1], i[v + 2]);
           const L = Math.max(
             r[v],
@@ -654,17 +654,17 @@ class O {
   constructor(e, t, s, n) {
     this.data = e, this.leafCapacity = t, this.maxDepth = s, this.ownsData = n, this.bounds = ue(e), this.rootBounds = he(this.bounds);
     const o = e.means.array, i = e.scalesOpacity.array, r = [], a = [], d = Array.from({ length: e.count }, (f, u) => u), h = (f, u, y) => {
-      const g = r.length;
+      const p = r.length;
       r.push(null);
       const w = f.length > t && y < s && u.max.x - u.min.x > Number.EPSILON, c = [];
       if (w) {
-        const x = u.getCenter(new I()), p = Array.from({ length: 8 }, () => []);
+        const x = u.getCenter(new I()), g = Array.from({ length: 8 }, () => []);
         for (const b of f) {
           const v = b * 4, L = (o[v] >= x.x ? 1 : 0) | (o[v + 1] >= x.y ? 2 : 0) | (o[v + 2] >= x.z ? 4 : 0);
-          p[L].push(b);
+          g[L].push(b);
         }
         for (let b = 0; b < 8; b++) {
-          const v = p[b];
+          const v = g[b];
           v.length !== 0 && c.push(
             h(
               v,
@@ -683,19 +683,19 @@ class O {
           );
       else {
         for (const x of f) {
-          const p = x * 4;
+          const g = x * 4;
           m = Math.max(
             m,
-            i[p],
-            i[p + 1],
-            i[p + 2]
+            i[g],
+            i[g + 1],
+            i[g + 2]
           );
         }
-        a.push(g);
+        a.push(p);
       }
       const C = u.clone().expandByScalar(m * 3);
-      return r[g] = new de(
-        g,
+      return r[p] = new de(
+        p,
         y,
         u,
         f.length,
@@ -703,7 +703,7 @@ class O {
         c,
         c.length === 0 ? Uint32Array.from(f) : null,
         C
-      ), g;
+      ), p;
     };
     h(d, this.rootBounds.clone(), 0), this.nodes = r, this.leafNodeIds = Uint32Array.from(a);
   }
@@ -817,14 +817,14 @@ function fe(l, e, t) {
     )
   );
 }
-const ge = /* @__PURE__ */ new Set([
+const pe = /* @__PURE__ */ new Set([
   "means",
   "scalesOpacity",
   "rotations",
   "shCoefficients",
   "lodLevel"
-]), pe = new j();
-class me {
+]), ge = new j();
+class we {
   listeners = /* @__PURE__ */ new Set();
   clouds = /* @__PURE__ */ new Map();
   usedCloudIds = /* @__PURE__ */ new Set();
@@ -834,6 +834,7 @@ class me {
   activeLoads = /* @__PURE__ */ new Map();
   parser = new ne();
   config;
+  frontend = null;
   work = Promise.resolve();
   nextObjectId = 0;
   layoutVersion = 0;
@@ -847,8 +848,6 @@ class me {
   pendingTransforms = [];
   disposed = !1;
   constructor(e) {
-    if (e.frontend.maxStorageBufferBindingSize <= 0 || e.frontend.maxBufferSize <= 0)
-      throw new RangeError("Frontend buffer limits must be positive");
     this.config = e;
   }
   subscribe(e) {
@@ -926,37 +925,38 @@ class me {
             octreeOptions: n.octree,
             lodOptions: n.lod,
             attributes: /* @__PURE__ */ new Map(),
-            transform: pe.clone(),
+            transform: ge.clone(),
             priority: $(n.priority ?? 0),
             packingStrategy: n.packingStrategy ?? this.config.defaultPackingStrategy ?? { type: "tiered-radial" },
             raycastable: n.raycastable ?? !0,
             sourceVersion: 1
           };
           for (const f of n.attributes ?? []) {
-            if (ge.has(f.name) || r.attributes.has(f.name))
+            if (pe.has(f.name) || r.attributes.has(f.name))
               throw new Error(
                 `Reserved or duplicate attribute name: ${f.name}`
               );
             r.attributes.set(
               f.name,
-              ye(f, s.count)
+              me(f, s.count)
             );
           }
           for (const f of this.clouds.values())
             for (const [u, y] of r.attributes) {
-              const g = f.attributes.get(u);
-              if (g && (g.format !== y.format || g.elementsPerGaussian !== y.elementsPerGaussian))
+              const p = f.attributes.get(u);
+              if (p && (p.format !== y.format || p.elementsPerGaussian !== y.elementsPerGaussian))
                 throw new Error(
                   `Attribute schema differs across clouds: ${u}`
                 );
             }
           this.usedCloudIds.add(r.id), this.clouds.set(r.id, r);
-          let a;
-          try {
-            a = this.compute();
-          } catch (f) {
-            throw this.clouds.delete(r.id), this.usedCloudIds.delete(r.id), f;
-          }
+          let a = null;
+          if (this.frontend)
+            try {
+              a = this.compute();
+            } catch (f) {
+              throw this.clouds.delete(r.id), this.usedCloudIds.delete(r.id), f;
+            }
           const { min: d, max: h } = o.bounds;
           this.emit({
             type: "cloud-loaded",
@@ -967,7 +967,7 @@ class me {
             shDegree: s.shDegree,
             bounds: [d.x, d.y, d.z, h.x, h.y, h.z],
             raycast: r.raycastable ? G(o) : void 0
-          }), this.target = null, this.replace(a);
+          }), a && (this.target = null, this.replace(a));
           return;
         } finally {
           this.activeLoads.delete(e.id);
@@ -1024,6 +1024,26 @@ class me {
       case "write-attribute-range":
         this.writeRange(e), this.updateTarget();
         break;
+      case "set-frontend-capabilities": {
+        const { capabilities: t } = e;
+        for (const n of [
+          t.maxStorageBufferBindingSize,
+          t.maxBufferSize,
+          t.maxStorageBuffersPerShaderStage
+        ])
+          if (!Number.isSafeInteger(n) || n <= 0)
+            throw new RangeError("Frontend buffer limits must be positive integers");
+        if (typeof t.supportsPartialBufferUpdates != "boolean")
+          throw new TypeError("Frontend partial update support must be boolean");
+        const s = this.frontend;
+        this.frontend = { ...t };
+        try {
+          this.clouds.size > 0 && this.repack();
+        } catch (n) {
+          throw this.frontend = s, n;
+        }
+        break;
+      }
       case "set-camera":
         if (e.worldMatrix.length !== 16 || e.projectionMatrix.length !== 16)
           throw new RangeError("Camera matrices need sixteen numbers each");
@@ -1114,62 +1134,65 @@ class me {
     }
   }
   maxSlots(e, t) {
-    const s = Math.min(
-      this.config.frontend.maxStorageBufferBindingSize,
-      this.config.frontend.maxBufferSize
-    ), n = [
+    const s = this.frontend;
+    if (!s)
+      throw new Error("Frontend capabilities have not been supplied");
+    const n = Math.min(
+      s.maxStorageBufferBindingSize,
+      s.maxBufferSize
+    ), o = [
       16,
       16,
       16,
       (e + 1) ** 2 * 4,
       4,
-      ...[...t.values()].map((i) => i.elementsPerGaussian * 4)
-    ], o = Math.min(
-      ...n.map((i) => Math.floor(s / i))
+      ...[...t.values()].map((r) => r.elementsPerGaussian * 4)
+    ], i = Math.min(
+      ...o.map((r) => Math.floor(n / r))
     );
-    if (o < 1)
+    if (i < 1)
       throw new RangeError("Frontend buffer limits are too small");
     return Math.min(
-      o,
-      this.config.maxGaussians === "auto" || this.config.maxGaussians === void 0 ? o : this.config.maxGaussians
+      i,
+      this.config.maxGaussians === "auto" || this.config.maxGaussians === void 0 ? i : this.config.maxGaussians
     );
   }
   compute(e = 0) {
     const t = [...this.clouds.values()].sort(
-      (p, b) => p.priority - b.priority || p.objectId - b.objectId
+      (g, b) => g.priority - b.priority || g.objectId - b.objectId
     ), s = t.reduce(
-      (p, b) => Math.max(p, b.source.shDegree),
+      (g, b) => Math.max(g, b.source.shDegree),
       0
     ), n = /* @__PURE__ */ new Map();
-    for (const p of t)
-      for (const [b, v] of p.attributes) n.set(b, v);
+    for (const g of t)
+      for (const [b, v] of g.attributes) n.set(b, v);
     let o = this.maxSlots(s, n);
     const i = [];
-    for (const p of t) {
+    for (const g of t) {
       const b = this.select(
-        p,
-        Math.min(o, p.source.count)
-      ), v = p.lod.indicesForPacking(b), L = new Uint32Array(v.length), E = [];
+        g,
+        Math.min(o, g.source.count)
+      ), v = g.lod.indicesForPacking(b), L = new Uint32Array(v.length), E = [];
       let P = 0;
       for (let R = 0; R < b.nodeIds.length; R++) {
-        const U = p.lod.nodes[b.nodeIds[R]], S = b.lodLevels[R], k = U.levelCounts[S];
+        const U = g.lod.nodes[b.nodeIds[R]], S = b.lodLevels[R], k = U.levelCounts[S];
         L.fill(S, P, P + k), P += k, E.push(P);
       }
-      i.push({ entry: p, indices: v, levels: L, cellEnds: E }), o -= v.length;
+      i.push({ entry: g, indices: v, levels: L, cellEnds: E }), o -= v.length;
     }
     const r = i.reduce(
-      (p, b) => p + b.indices.length,
+      (g, b) => g + b.indices.length,
       0
-    ), a = Math.max(1, r, e), d = /* @__PURE__ */ new Map(), h = (p, b, v) => {
+    ), a = Math.max(1, r, e), d = /* @__PURE__ */ new Map(), h = (g, b, v) => {
       const L = b === "f32" ? new Float32Array(a * v) : new Uint32Array(a * v);
-      return d.set(p, { format: b, elementsPerGaussian: v, values: L }), L;
-    }, f = h("means", "f32", 4), u = h("scalesOpacity", "f32", 4), y = h("rotations", "f32", 4), g = h("shCoefficients", "u32", (s + 1) ** 2), w = h("lodLevel", "u32", 1), c = new Uint32Array(a);
-    for (const [p, b] of n)
-      h(p, b.format, b.elementsPerGaussian);
+      return d.set(g, { format: b, elementsPerGaussian: v, values: L }), L;
+    }, f = h("means", "f32", 4), u = h("scalesOpacity", "f32", 4), y = h("rotations", "f32", 4), p = h("shCoefficients", "u32", (s + 1) ** 2), w = h("lodLevel", "u32", 1), c = new Uint32Array(a);
+    for (const [g, b] of n)
+      h(g, b.format, b.elementsPerGaussian);
     const m = [];
     let C = 0, x = 1;
-    for (const { entry: p, indices: b, levels: v, cellEnds: L } of i) {
-      const E = p.source, P = E.shCoefficients.array;
+    for (const { entry: g, indices: b, levels: v, cellEnds: L } of i) {
+      const E = g.source, P = E.shCoefficients.array;
       let R = 0;
       for (let U = 0; U < b.length; U++, C++) {
         for (; U >= L[R]; ) R++;
@@ -1178,7 +1201,7 @@ class me {
         f.set(
           E.means.array.subarray(S * 4, S * 4 + 4),
           C * 4
-        ), f[C * 4 + 3] = p.objectId, u.set(
+        ), f[C * 4 + 3] = g.objectId, u.set(
           E.scalesOpacity.array.subarray(S * 4, S * 4 + 4),
           C * 4
         ), y.set(
@@ -1187,23 +1210,23 @@ class me {
         ), w[C] = v[U];
         for (let k = 0; k < E.shCoefficientCount; k++) {
           const M = (S * E.shCoefficientCount + k) * 4;
-          g[C * (s + 1) ** 2 + k] = q(
+          p[C * (s + 1) ** 2 + k] = q(
             P[M],
             P[M + 1],
             P[M + 2]
           );
         }
-        for (const [k, M] of p.attributes) {
-          const Y = d.get(k).values, _ = M.elementsPerGaussian;
+        for (const [k, M] of g.attributes) {
+          const Y = d.get(k).values, T = M.elementsPerGaussian;
           Y.set(
-            M.values.subarray(S * _, (S + 1) * _),
-            C * _
+            M.values.subarray(S * T, (S + 1) * T),
+            C * T
           );
         }
       }
       x += L.length, m.push({
-        cloudId: p.id,
-        objectId: p.objectId,
+        cloudId: g.id,
+        objectId: g.objectId,
         renderedCount: b.length
       });
     }
@@ -1235,13 +1258,18 @@ class me {
     }
   }
   repack() {
+    if (!this.frontend) return;
     this.target = null;
     const e = this.compute();
     this.replace(e);
   }
   updateTarget() {
-    if (!this.packed) return;
+    if (!this.frontend || !this.packed) return;
     const e = this.compute(this.packed.capacity);
+    if (!this.frontend.supportsPartialBufferUpdates) {
+      this.replace(e);
+      return;
+    }
     if (e.capacity !== this.packed.capacity || e.degree !== this.packed.degree || [...e.attributes].some(
       ([t, s]) => this.packed?.attributes.get(t)?.elementsPerGaussian !== s.elementsPerGaussian
     )) {
@@ -1288,10 +1316,10 @@ class me {
       0
     ), i = Math.max(1, Math.floor(s / o)), r = [], a = /* @__PURE__ */ new Set();
     for (let u = 0; u < e.capacity && r.length < i; u++)
-      if ([...e.attributes].some(([y, g]) => {
-        const w = t.attributes.get(y).values, c = u * g.elementsPerGaussian;
-        for (let m = 0; m < g.elementsPerGaussian; m++)
-          if (g.values[c + m] !== w[c + m]) return !0;
+      if ([...e.attributes].some(([y, p]) => {
+        const w = t.attributes.get(y).values, c = u * p.elementsPerGaussian;
+        for (let m = 0; m < p.elementsPerGaussian; m++)
+          if (p.values[c + m] !== w[c + m]) return !0;
         return !1;
       })) {
         const y = t.cells[u];
@@ -1322,23 +1350,23 @@ class me {
       return;
     }
     for (const [u, y] of e.attributes) {
-      const g = y.elementsPerGaussian, w = t.attributes.get(u).values;
+      const p = y.elementsPerGaussian, w = t.attributes.get(u).values;
       let c = -1, m = -1;
       const C = () => {
         if (c < 0) return;
-        const x = c * g, p = (m + 1) * g;
-        y.values.set(w.subarray(x, p), x), d.push({
+        const x = c * p, g = (m + 1) * p;
+        y.values.set(w.subarray(x, g), x), d.push({
           name: u,
           firstSlot: c,
           slotCount: m - c + 1,
-          data: w.slice(x, p).buffer
+          data: w.slice(x, g).buffer
         }), c = -1;
       };
       for (const x of r) {
-        const p = x * g;
+        const g = x * p;
         let b = !1;
-        for (let v = 0; v < g; v++)
-          if (y.values[p + v] !== w[p + v]) {
+        for (let v = 0; v < p; v++)
+          if (y.values[g + v] !== w[g + v]) {
             b = !0;
             break;
           }
@@ -1351,8 +1379,8 @@ class me {
       C();
     }
     const h = [...e.attributes].some(([u, y]) => {
-      const g = t.attributes.get(u).values;
-      return y.values.some((w, c) => w !== g[c]);
+      const p = t.attributes.get(u).values;
+      return y.values.some((w, c) => w !== p[c]);
     }), f = this.contentVersion++;
     this.emit({
       type: "buffers-patched",
@@ -1376,7 +1404,7 @@ function $(l) {
     throw new RangeError("Priority must be a safe integer");
   return l;
 }
-function ye(l, e) {
+function me(l, e) {
   const t = l.elementsPerGaussian;
   if (!Number.isSafeInteger(t) || t < 1)
     throw new RangeError("Attribute elementsPerGaussian must be positive");
@@ -1392,12 +1420,6 @@ function ye(l, e) {
   }
   return { format: l.format, elementsPerGaussian: t, values: n };
 }
-class be {
-  createBackend(e) {
-    return new me(e);
-  }
-}
 export {
-  be as DirectStreamingGaussianBackendFactory,
-  me as StreamingGaussianBackend
+  we as StreamingGaussianBackend
 };

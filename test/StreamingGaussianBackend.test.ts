@@ -14,6 +14,24 @@ import type { BackendCommand } from "../src/streaming-backend/commands/BackendCo
 
 afterEach(() => vi.unstubAllGlobals());
 
+const TEST_CAPABILITIES = {
+  maxStorageBufferBindingSize: 128 * 1024 * 1024,
+  maxBufferSize: 256 * 1024 * 1024,
+  maxStorageBuffersPerShaderStage: 8,
+  supportsPartialBufferUpdates: true,
+};
+let nextCapabilityId = 0;
+function readyBackend(): StreamingGaussianBackend {
+  const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
+  backend.dispatch({ type: "set-frontend-capabilities", id: `capabilities-${++nextCapabilityId}`, capabilities: TEST_CAPABILITIES });
+  return backend;
+}
+function readyStore(backend: ConstructorParameters<typeof GaussianStore>[0]): GaussianStore {
+  const store = new GaussianStore(backend);
+  store.setFrontendCapabilities(TEST_CAPABILITIES);
+  return store;
+}
+
 describe("message backend", () => {
   it("parses, builds the octree and LOD, and packs once before the first buffers", async () => {
     const { CanonicalGaussianPlyLoader } = await import("../src/streaming-backend-impl/CanonicalGaussianPlyLoader");
@@ -28,6 +46,10 @@ describe("message backend", () => {
     backend.subscribe((event) => events.push(event));
 
     backend.dispatch({ type: "load-cloud-from-buffer", id: "load", cloudId: "cloud", buffer: ply(0) });
+    await vi.waitFor(() => expect(events.some((event) => event.type === "cloud-loaded")).toBe(true));
+    expect(events.some((event) => event.type.startsWith("buffers-"))).toBe(false);
+    expect(compute).not.toHaveBeenCalled();
+    backend.dispatch({ type: "set-frontend-capabilities", id: "capabilities", capabilities: TEST_CAPABILITIES });
     await vi.waitFor(() => expect(events.some((event) => event.type === "buffers-replaced")).toBe(true));
     expect(parse).toHaveBeenCalledTimes(1);
     expect(octree).toHaveBeenCalledTimes(1);
@@ -40,12 +62,29 @@ describe("message backend", () => {
     compute.mockRestore();
   });
 
+  it("loads multiple clouds for raycasting before frontend capabilities arrive", async () => {
+    const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
+    const events: BackendEvent[] = [];
+    backend.subscribe((event) => events.push(event));
+    backend.dispatch({ type: "load-cloud-from-buffer", id: "first", cloudId: "one", buffer: ply(0) });
+    backend.dispatch({ type: "load-cloud-from-buffer", id: "second", cloudId: "two", buffer: ply(3) });
+    await vi.waitFor(() => expect(events.filter((event) => event.type === "cloud-loaded")).toHaveLength(2));
+    expect(events.filter((event) => event.type.startsWith("buffers-"))).toHaveLength(0);
+    expect(events.filter((event) => event.type === "cloud-loaded").every((event) => "raycast" in event && event.raycast !== undefined)).toBe(true);
+    backend.dispatch({ type: "set-frontend-capabilities", id: "capabilities", capabilities: TEST_CAPABILITIES });
+    await vi.waitFor(() => expect(events.some((event) => event.type === "buffers-replaced")).toBe(true));
+    const replacement = events.find((event) => event.type === "buffers-replaced");
+    expect(replacement && "clouds" in replacement ? replacement.clouds.map((cloud) => cloud.cloudId) : []).toEqual(["one", "two"]);
+    expect(events.filter((event) => event.type === "buffers-replaced")).toHaveLength(1);
+    backend.dispose();
+  });
+
   it("resolves relative PLY URLs on the client before loading", async () => {
     vi.stubGlobal("document", { baseURI: "http://localhost:5173/sandbox/" });
     const fetcher = vi.fn(async () => new Response(ply(0)));
     vi.stubGlobal("fetch", fetcher);
     const port = new InMemoryWorker();
-    const store = new GaussianStore(
+    const store = readyStore(
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
     await store.load("mug.ply");
@@ -59,7 +98,7 @@ describe("message backend", () => {
 
   it("transfers source data, keeps full raycast on client, and patches custom attributes", async () => {
     const port = new InMemoryWorker();
-    const store = new GaussianStore(
+    const store = readyStore(
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
     const input = ply(0);
@@ -108,7 +147,7 @@ describe("message backend", () => {
   });
 
   it("cancels an in-flight URL load and never publishes its cloud", async () => {
-    const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
+    const backend = readyBackend();
     const events: BackendEvent[] = [];
     backend.subscribe((event) => events.push(event));
     const fetcher = vi.fn(
@@ -140,7 +179,7 @@ describe("message backend", () => {
 
   it("cancels a load through GaussianStore and releases its pending promise", async () => {
     const port = new InMemoryWorker();
-    const store = new GaussianStore(
+    const store = readyStore(
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
     let started!: () => void;
@@ -179,18 +218,20 @@ describe("message backend", () => {
 
   it("leaves a client buffer untouched when cancellation precedes dispatch", async () => {
     const port = new InMemoryWorker();
-    const store = new GaussianStore(new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never));
+    const store = readyStore(new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never));
     const controller = new AbortController();
     controller.abort();
     const input = ply(0);
     await expect(store.loadBuffer(input, {}, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
     expect(input.byteLength).toBeGreaterThan(0);
-    expect(port.commands).toHaveLength(0);
+    expect(port.commands.map((command) => command.type)).toEqual([
+      "set-frontend-capabilities",
+    ]);
     store.dispose();
   });
 
   it("computes a scene revision once for multiple transforms and a camera update", async () => {
-    const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
+    const backend = readyBackend();
     const events: BackendEvent[] = [];
     backend.subscribe((event) => events.push(event));
     backend.dispatch({
@@ -255,7 +296,7 @@ describe("message backend", () => {
   });
 
   it("applies a standalone transform without waiting for a camera command", async () => {
-    const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
+    const backend = readyBackend();
     const events: BackendEvent[] = [];
     backend.subscribe((event) => events.push(event));
     backend.dispatch({ type: "load-cloud-from-buffer", id: "load", cloudId: "cloud", buffer: ply(0) });
@@ -269,7 +310,7 @@ describe("message backend", () => {
 
   it("recovers after an invalid command and keeps the previous buffers available", async () => {
     const port = new InMemoryWorker();
-    const store = new GaussianStore(
+    const store = readyStore(
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
     const cloud = await store.loadBuffer(ply(0));
@@ -288,7 +329,7 @@ describe("message backend", () => {
 
   it("packs several clouds, fills missing attributes and sends only changed ranges", async () => {
     const port = new InMemoryWorker();
-    const store = new GaussianStore(
+    const store = readyStore(
       new WorkerStreamingGaussianBackend(
         { ...DEFAULT_BACKEND_CONFIG, maxGaussians: 2 },
         port as never,
@@ -347,7 +388,7 @@ describe("message backend", () => {
 
   it("ignores patches from an obsolete layout or content version", async () => {
     const port = new InMemoryWorker();
-    const store = new GaussianStore(
+    const store = readyStore(
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
     await store.loadBuffer(ply(0));
@@ -383,7 +424,7 @@ describe("message backend", () => {
 
   it("sends both camera matrices and reports projection-only changes", async () => {
     const port = new InMemoryWorker();
-    const store = new GaussianStore(
+    const store = readyStore(
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
     await store.loadBuffer(ply(0));

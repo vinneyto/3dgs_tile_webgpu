@@ -35,6 +35,7 @@ import {
   type GaussianStorePackedAttribute,
 } from "./store-attributes/GaussianStorePackedAttribute";
 import type { BackendConfig } from "../streaming-backend/BackendConfig";
+import type { FrontendCapabilities } from "../streaming-backend/FrontendCapabilities";
 import type { CloudLoadOptions } from "../streaming-backend/CloudLoadOptions";
 import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
 import type { PackingStrategy } from "../streaming-backend/PackingStrategy";
@@ -58,12 +59,6 @@ interface PendingCloud {
   cleanup: () => void;
 }
 export const DEFAULT_BACKEND_CONFIG: BackendConfig = {
-  frontend: {
-    maxStorageBufferBindingSize: 128 * 1024 * 1024,
-    maxBufferSize: 256 * 1024 * 1024,
-    maxStorageBuffersPerShaderStage: 8,
-    supportsPartialBufferUpdates: true,
-  },
   maxGaussians: "auto",
 };
 
@@ -100,6 +95,7 @@ export class GaussianStore implements GaussianRenderStore {
   private packStats: GaussianStorePackStats | null = null;
   private disposed = false;
   private awaitingLayout = false;
+  private frontendCapabilities: FrontendCapabilities | null = null;
 
   constructor(
     backend: GaussianBackend = new WorkerStreamingGaussianBackend(
@@ -316,6 +312,36 @@ export class GaussianStore implements GaussianRenderStore {
 
   pack(_options: GaussianStorePackOptions): void {
     // The backend responds to commands and sends buffers without a frame request.
+  }
+
+  setFrontendCapabilities(capabilities: FrontendCapabilities): void {
+    if (this.disposed) throw new Error("GaussianStore disposed");
+    const previous = this.frontendCapabilities;
+    if (
+      previous &&
+      previous.maxStorageBufferBindingSize ===
+        capabilities.maxStorageBufferBindingSize &&
+      previous.maxBufferSize === capabilities.maxBufferSize &&
+      previous.maxStorageBuffersPerShaderStage ===
+        capabilities.maxStorageBuffersPerShaderStage &&
+      previous.supportsPartialBufferUpdates ===
+        capabilities.supportsPartialBufferUpdates
+    )
+      return;
+    const wasAwaitingLayout = this.awaitingLayout;
+    this.awaitingLayout = true;
+    this.frontendCapabilities = { ...capabilities };
+    try {
+      this.backend.dispatch({
+        type: "set-frontend-capabilities",
+        id: this.nextCommandId(),
+        capabilities: { ...capabilities },
+      });
+    } catch (error) {
+      this.frontendCapabilities = previous;
+      this.awaitingLayout = wasAwaitingLayout;
+      throw error;
+    }
   }
 
   updateLod(camera: Camera): GaussianStoreLodUpdate {
