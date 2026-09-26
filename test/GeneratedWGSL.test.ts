@@ -19,7 +19,7 @@ import {
 import { GaussianData } from "../src/renderer/GaussianData";
 import { GaussianLodColorHelper } from "../src/renderer/GaussianLodColorHelper";
 import { GaussianPass } from "../src/renderer/GaussianPass";
-import { LocalGaussianBackend as GaussianStore } from "../src/streaming-backend-impl/legacy/LocalGaussianBackend";
+import { packedStore } from "./helpers/packedStore";
 import {
   createDefaultGaussianNodeSlots,
   gaussianColor,
@@ -37,17 +37,10 @@ import { ProjectionStage } from "../src/renderer/pipeline/ProjectionStage";
 import { ProfileDiagnosticsStage } from "../src/renderer/pipeline/ProfileDiagnosticsStage";
 import { TileRasterizer } from "../src/renderer/pipeline/TileRasterizer";
 
-const TEST_LIMITS = {
-  maxStorageBufferBindingSize: 1_073_741_824,
-  maxBufferSize: 1_073_741_824,
-};
-
 describe("generated Gaussian WGSL", () => {
   it("builds projection and raster TSL shells into compute shaders", () => {
     const data = oneGaussian();
-    const store = new GaussianStore();
-    store.add(data);
-    store.pack({ limits: TEST_LIMITS });
+    const { store } = packedStore(data);
     const packed = store.getPackedData();
     const camera = new PerspectiveCamera();
     const frame = new FrameUniforms(camera, [0, 0, 0, 0]);
@@ -267,9 +260,7 @@ describe("generated Gaussian WGSL", () => {
 
   it("builds the profiling-only subpixel coverage kernel", () => {
     const data = oneGaussian();
-    const store = new GaussianStore();
-    store.add(data);
-    store.pack({ limits: TEST_LIMITS });
+    const { store } = packedStore(data);
     const packed = store.getPackedData();
     const camera = new PerspectiveCamera();
     const frame = new FrameUniforms(camera, [0, 0, 0, 0]);
@@ -300,9 +291,7 @@ describe("generated Gaussian WGSL", () => {
   });
 
   it("mixes projected color with packed LOD tint in the rasterizer", () => {
-    const store = new GaussianStore();
-    store.add(oneGaussian());
-    store.pack({ limits: TEST_LIMITS });
+    const { store } = packedStore(oneGaussian());
     const renderer = {
       hasFeature: () => false,
     } as unknown as WebGPURenderer;
@@ -327,9 +316,7 @@ function buildPipeline(
   mode: "float32" | "packed16" = "float32",
 ) {
   const data = oneGaussian();
-  const store = new GaussianStore();
-  store.add(data);
-  store.pack({ limits: TEST_LIMITS });
+  const { store } = packedStore(data);
   const packed = store.getPackedData();
   const camera = new PerspectiveCamera();
   const frame = new FrameUniforms(camera, [0, 0, 0, 0]);

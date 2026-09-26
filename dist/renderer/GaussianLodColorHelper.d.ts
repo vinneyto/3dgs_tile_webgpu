@@ -25,7 +25,7 @@ export declare class GaussianLodColorHelper {
     constructor(pass: GaussianPass, options?: GaussianLodColorHelperOptions);
     get enabled(): boolean;
     set enabled(value: boolean);
-    /** Refresh after store.pack(); only a replaced backing buffer rebuilds the node. */
+    /** Refresh after a layout event; only a replaced backing buffer rebuilds the node. */
     update(): void;
     dispose(): void;
     private rebuildColorNode;

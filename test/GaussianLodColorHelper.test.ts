@@ -8,17 +8,11 @@ import {
 import { GaussianData } from "../src/renderer/GaussianData";
 import { GaussianLodColorHelper } from "../src/renderer/GaussianLodColorHelper";
 import { GaussianPass } from "../src/renderer/GaussianPass";
-import { LocalGaussianBackend as GaussianStore } from "../src/streaming-backend-impl/legacy/LocalGaussianBackend";
-
-const TEST_LIMITS = {
-  maxStorageBufferBindingSize: 1_073_741_824,
-  maxBufferSize: 1_073_741_824,
-};
+import { packedStore } from "./helpers/packedStore";
 
 describe("GaussianLodColorHelper", () => {
   it("can be created before the Store is packed", () => {
-    const store = new GaussianStore();
-    store.add(oneGaussian());
+    const { store, request } = packedStore(oneGaussian(), false);
     const renderer = {
       hasFeature: () => false,
     } as unknown as WebGPURenderer;
@@ -27,7 +21,7 @@ describe("GaussianLodColorHelper", () => {
     const helper = new GaussianLodColorHelper(pass);
     expect(helper.lodLevelAttribute.isAllocated).toBe(false);
 
-    store.pack({ limits: TEST_LIMITS });
+    request();
     helper.update();
     expect(helper.lodLevelAttribute.isAllocated).toBe(true);
   });
@@ -61,13 +55,13 @@ describe("GaussianLodColorHelper", () => {
   });
 
   it("rebuilds its color graph after a full Store buffer replacement", () => {
-    const { pass, store } = createPass();
+    const { pass, add, request } = createPass();
     const helper = new GaussianLodColorHelper(pass);
     const previousNode = pass.rasterColorNode;
     const previousBuffer = helper.lodLevelAttribute.bufferAttribute;
 
-    store.add(oneGaussian());
-    store.pack({ limits: TEST_LIMITS });
+    add(oneGaussian());
+    request();
     helper.update();
 
     expect(helper.lodLevelAttribute.bufferAttribute).not.toBe(previousBuffer);
@@ -75,17 +69,15 @@ describe("GaussianLodColorHelper", () => {
   });
 });
 
-function createPass(): { pass: GaussianPass; store: GaussianStore } {
-  const store = new GaussianStore();
-  store.add(oneGaussian());
-  store.pack({ limits: TEST_LIMITS });
+function createPass() {
+  const { store, add, request } = packedStore(oneGaussian());
   const renderer = {
     hasFeature: () => false,
     getDrawingBufferSize: vi.fn(),
     initRenderTarget: vi.fn(),
   } as unknown as WebGPURenderer;
   const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
-  return { pass, store };
+  return { pass, store, add, request };
 }
 
 function oneGaussian(): GaussianData {

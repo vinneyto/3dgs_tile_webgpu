@@ -3,5 +3,4 @@ export { MaximumLodPackingStrategy } from "./MaximumLodPackingStrategy";
 export { RadialLodPackingStrategy, type RadialLodPackingOptions, } from "./RadialLodPackingStrategy";
 export { TieredRadialLodPackingStrategy, type TieredRadialLodPackingOptions, } from "./TieredRadialLodPackingStrategy";
 export { DistanceAwareRadialLodPackingStrategy, type DistanceAwareRadialLodPackingOptions, } from "./DistanceAwareRadialLodPackingStrategy";
-export { RadialLodWorkerPlanner } from "../../streaming-backend-worker/lod-planner/RadialLodWorkerPlanner";
 export { StreamingLodPackingStrategy, isStreamingLodPackingStrategy, type StreamingLodCellTransition, type StreamingLodPlannedTarget, type StreamingLodPackingBatch, type StreamingLodPackingOptions, type StreamingLodTargetPlanner, type StreamingLodTargetStats, } from "./StreamingLodPackingStrategy";

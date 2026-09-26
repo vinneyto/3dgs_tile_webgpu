@@ -14,8 +14,9 @@ export class SpatialDebugHelpers {
 
   attach(cloud: GaussianCloud, pass: GaussianPass): void {
     this.clear();
-    if (cloud.lod !== null) {
-      this.octreeHelper = new OctreeHelper(cloud.lod.octree, {
+    const index = cloud.getRaycastIndex();
+    if (index !== null) {
+      this.octreeHelper = new OctreeHelper(index.debugCells(), {
         opacity: 0.42,
       });
       this.octreeHelper.visible = this.octreeVisible;

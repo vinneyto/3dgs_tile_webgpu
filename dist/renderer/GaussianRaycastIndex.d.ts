@@ -1,4 +1,4 @@
-import { Ray } from "three/webgpu";
+import { Box3, Ray } from "three/webgpu";
 import { type GaussianOctreeRaycastHit } from "../streaming-backend-impl/GaussianOctree";
 import type { FullRaycastOctreeBuffers } from "../streaming-backend/FullRaycastOctreeBuffers";
 /** Transferable snapshot built with the worker's octree; raycasts remain synchronous. */
@@ -11,8 +11,12 @@ export declare class GaussianRaycastIndex {
     private readonly children;
     private readonly nodeIndices;
     private readonly indices;
-    private renderedIndices;
     constructor(buffers: FullRaycastOctreeBuffers);
-    setRenderedIndices(buffer: ArrayBuffer): void;
-    raycast(ray: Ray, mode: "full" | "rendered", alphaThreshold?: number): GaussianOctreeRaycastHit | null;
+    /** Cell bounds and depth for the sandbox's octree visualization. */
+    debugCells(): readonly {
+        bounds: Box3;
+        depth: number;
+        isLeaf: boolean;
+    }[];
+    raycast(ray: Ray, alphaThreshold?: number): GaussianOctreeRaycastHit | null;
 }

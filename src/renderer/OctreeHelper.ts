@@ -3,6 +3,7 @@ import {
   Float32BufferAttribute,
   LineBasicMaterial,
   LineSegments,
+  type Box3,
   type ColorRepresentation,
 } from "three/webgpu";
 
@@ -19,7 +20,13 @@ export interface OctreeHelperOptions {
   depthTest?: boolean;
 }
 
-/** Local-space wireframe visualization of a GaussianOctree. */
+export interface OctreeDebugCell {
+  readonly bounds: Box3;
+  readonly depth: number;
+  readonly isLeaf: boolean;
+}
+
+/** Local-space wireframe visualization of octree cells or a client snapshot. */
 export class OctreeHelper extends LineSegments<
   BufferGeometry,
   LineBasicMaterial
@@ -28,12 +35,13 @@ export class OctreeHelper extends LineSegments<
   readonly cellCount: number;
 
   constructor(
-    readonly octree: GaussianOctree,
+    readonly octree: GaussianOctree | readonly OctreeDebugCell[],
     options: OctreeHelperOptions = {},
   ) {
     const minDepth = options.minDepth ?? 0;
     const maxDepth = options.maxDepth ?? Infinity;
-    const nodes = octree.nodes.filter(
+    const cells = "nodes" in octree ? octree.nodes : octree;
+    const nodes = cells.filter(
       (node) =>
         node.depth >= minDepth &&
         node.depth <= maxDepth &&
