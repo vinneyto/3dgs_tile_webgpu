@@ -1,7 +1,6 @@
 import type { CloudLoadOptions } from "../CloudLoadOptions";
-export interface LoadCloudFromBufferCommand {
-    type: "load-cloud-from-buffer";
-    id: string;
+import type { Command } from "./Command";
+export interface LoadCloudFromBufferCommand extends Command<"load-cloud-from-buffer"> {
     cloudId: string;
     buffer: ArrayBuffer;
     options?: CloudLoadOptions;

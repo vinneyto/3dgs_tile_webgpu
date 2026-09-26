@@ -1,7 +1,7 @@
 import type { CloudLoadOptions } from "../CloudLoadOptions";
-export interface LoadCloudCommand {
-  type: "load-cloud";
-  id: string;
+import type { Command } from "./Command";
+
+export interface LoadCloudCommand extends Command<"load-cloud"> {
   cloudId: string;
   url: string;
   options?: CloudLoadOptions;

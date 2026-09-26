@@ -1,5 +1,5 @@
-export interface CancelCommand {
-  type: "cancel";
-  id: string;
+import type { Command } from "./Command";
+
+export interface CancelCommand extends Command<"cancel"> {
   targetCommandId: string;
 }

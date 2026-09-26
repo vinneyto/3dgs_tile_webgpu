@@ -3,6 +3,7 @@ export type { BackendConfig } from "./streaming-backend/BackendConfig";
 export type { GaussianBackend } from "./streaming-backend/GaussianBackend";
 export type { GaussianBackendFactory } from "./streaming-backend/GaussianBackendFactory";
 export type { BackendCommand } from "./streaming-backend/commands/BackendCommand";
+export type { Command } from "./streaming-backend/commands/Command";
 export type { BackendEvent } from "./streaming-backend/events/BackendEvent";
 export type { CloudLoadOptions } from "./streaming-backend/CloudLoadOptions";
 export type {

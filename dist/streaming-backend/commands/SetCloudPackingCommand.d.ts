@@ -1,7 +1,6 @@
 import type { PackingStrategy } from "../PackingStrategy";
-export interface SetCloudPackingCommand {
-    type: "set-cloud-packing";
-    id: string;
+import type { Command } from "./Command";
+export interface SetCloudPackingCommand extends Command<"set-cloud-packing"> {
     cloudId: string;
     packingStrategy: PackingStrategy;
 }
