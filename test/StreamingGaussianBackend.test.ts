@@ -48,7 +48,7 @@ describe("message backend", () => {
     const events: BackendEvent[] = [];
     backend.subscribe((event) => events.push(event));
     const matrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-    for (let sceneRevision = 1; sceneRevision <= 40; sceneRevision++) {
+    const moveCamera = (sceneRevision: number) => {
       backend.dispatch({
         type: "set-camera",
         id: `camera-${sceneRevision}`,
@@ -56,6 +56,11 @@ describe("message backend", () => {
         worldMatrix: matrix,
         projectionMatrix: matrix,
       });
+    };
+    moveCamera(1);
+    await Promise.resolve(); // The worker has received the first update.
+    for (let sceneRevision = 2; sceneRevision <= 40; sceneRevision++) {
+      moveCamera(sceneRevision);
     }
     expect(
       port.commands.filter((command) => command.type === "set-camera"),
@@ -71,6 +76,72 @@ describe("message backend", () => {
         .filter((command) => command.type === "set-camera")
         .map((command) => command.id),
     ).toEqual(["camera-1", "camera-40"]);
+    expect(
+      events.filter((event) => event.type === "command-cancelled"),
+    ).toHaveLength(38);
+    backend.dispose();
+  });
+
+  it("keeps the last transform per cloud while a scene update is in flight", async () => {
+    const port = new InMemoryWorker();
+    const backend = new WorkerStreamingGaussianBackend(
+      DEFAULT_BACKEND_CONFIG,
+      port as never,
+    );
+    const events: BackendEvent[] = [];
+    backend.subscribe((event) => events.push(event));
+    backend.dispatch({
+      type: "load-cloud-from-buffer",
+      id: "load",
+      cloudId: "cloud",
+      buffer: ply(0),
+    });
+    await vi.waitFor(() =>
+      expect(events.some((event) => event.type === "cloud-loaded")).toBe(true),
+    );
+    const move = (sceneRevision: number) =>
+      backend.dispatch({
+        type: "set-cloud-transform",
+        id: `transform-${sceneRevision}`,
+        cloudId: "cloud",
+        sceneRevision,
+        worldMatrix: [
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          sceneRevision,
+          0,
+          0,
+          1,
+        ],
+      });
+    move(1);
+    await Promise.resolve();
+    for (let sceneRevision = 2; sceneRevision <= 40; sceneRevision++)
+      move(sceneRevision);
+    expect(
+      port.commands.filter((command) => command.type === "set-cloud-transform"),
+    ).toHaveLength(1);
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "command-completed",
+        commandId: "transform-40",
+      }),
+    );
+    expect(
+      port.commands
+        .filter((command) => command.type === "set-cloud-transform")
+        .map((command) => command.id),
+    ).toEqual(["transform-1", "transform-40"]);
     expect(
       events.filter((event) => event.type === "command-cancelled"),
     ).toHaveLength(38);
@@ -680,7 +751,7 @@ describe("message backend", () => {
     store.updateLod(camera);
     const commands = () =>
       port.commands.filter((command) => command.type === "set-camera");
-    expect(commands()).toHaveLength(1);
+    await vi.waitFor(() => expect(commands()).toHaveLength(1));
     expect(commands()[0]?.worldMatrix.slice(12, 15)).toEqual([3, 4, 5]);
     expect(commands()[0]?.projectionMatrix).toEqual(
       camera.projectionMatrix.elements,
@@ -710,8 +781,8 @@ describe("message backend", () => {
       port.commands.filter((command) => command.type === "set-camera");
 
     store.updateLod(camera);
-    expect(transforms()).toHaveLength(1);
-    expect(cameras()).toHaveLength(1);
+    await vi.waitFor(() => expect(transforms()).toHaveLength(1));
+    await vi.waitFor(() => expect(cameras()).toHaveLength(1));
     camera.position.x = 2;
     store.updateLod(camera);
     expect(transforms()).toHaveLength(1);
@@ -719,14 +790,14 @@ describe("message backend", () => {
 
     first.position.y = 3;
     store.updateLod(camera);
-    expect(transforms()).toHaveLength(2);
+    await vi.waitFor(() => expect(transforms()).toHaveLength(2));
     expect(cameras()).toHaveLength(2);
     store.updateLod(camera);
     expect(transforms()).toHaveLength(2);
 
     const second = await store.loadBuffer(ply(2));
     store.updateLod(camera);
-    expect(transforms()).toHaveLength(3);
+    await vi.waitFor(() => expect(transforms()).toHaveLength(3));
     expect(cameras()).toHaveLength(2);
     second.dispose();
     camera.position.z = 1;

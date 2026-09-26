@@ -1703,8 +1703,9 @@ class sr {
   listeners = /* @__PURE__ */ new Set();
   port;
   disposed = !1;
-  cameraInFlight = null;
-  pendingCamera = null;
+  sceneInFlight = /* @__PURE__ */ new Set();
+  pendingScene = /* @__PURE__ */ new Map();
+  sceneFlushScheduled = !1;
   constructor(t, e) {
     this.port = e ?? new tr({ name: "3dgs-streaming-backend" }), this.port.addEventListener("message", this.onMessage), this.port.addEventListener("error", this.onError), this.port.addEventListener(
       "messageerror",
@@ -1719,21 +1720,19 @@ class sr {
   }
   dispatch(t) {
     if (this.disposed) throw new Error("Worker streaming backend disposed");
-    if (t.type === "set-camera" && this.cameraInFlight) {
-      this.pendingCamera && this.emit({
-        type: "command-cancelled",
-        commandId: this.pendingCamera.id
-      }), this.pendingCamera = t;
+    if (t.type === "set-camera" || t.type === "set-cloud-transform") {
+      const e = t.type === "set-camera" ? "camera" : `cloud:${t.cloudId}`, s = this.pendingScene.get(e);
+      s && this.emit({ type: "command-cancelled", commandId: s.id }), this.pendingScene.set(e, t), this.scheduleSceneFlush();
       return;
     }
-    if (t.type === "cancel" && this.pendingCamera?.id === t.targetCommandId) {
-      this.pendingCamera = null, this.emit({
-        type: "command-cancelled",
-        commandId: t.targetCommandId
-      }), this.emit({ type: "command-completed", commandId: t.id });
-      return;
+    if (t.type === "cancel") {
+      for (const [e, s] of this.pendingScene)
+        if (s.id === t.targetCommandId) {
+          this.pendingScene.delete(e), this.emit({ type: "command-cancelled", commandId: s.id }), this.emit({ type: "command-completed", commandId: t.id });
+          return;
+        }
     }
-    t.type !== "cancel" && this.flushPendingCamera(), t.type === "set-camera" && (this.cameraInFlight = t.id), this.port.postMessage(
+    t.type !== "cancel" && this.flushScene(!0), this.port.postMessage(
       { type: "dispatch", command: t },
       er(t)
     );
@@ -1742,20 +1741,29 @@ class sr {
     this.disposed || (this.disposed = !0, this.port.removeEventListener("message", this.onMessage), this.port.removeEventListener("error", this.onError), this.port.removeEventListener(
       "messageerror",
       this.onMessageError
-    ), this.port.postMessage({ type: "dispose" }), this.port.terminate(), this.pendingCamera = null, this.listeners.clear());
+    ), this.port.postMessage({ type: "dispose" }), this.port.terminate(), this.pendingScene.clear(), this.sceneInFlight.clear(), this.listeners.clear());
   }
   onMessage = (t) => {
     if (this.disposed || t.data.type !== "event") return;
     const e = t.data.event;
-    this.emit(e), "commandId" in e && e.commandId === this.cameraInFlight && (e.type === "command-completed" || e.type === "command-cancelled" || e.type === "error") && (this.cameraInFlight = null, this.flushPendingCamera());
+    this.emit(e), "commandId" in e && typeof e.commandId == "string" && (e.type === "command-completed" || e.type === "command-cancelled" || e.type === "error") && this.sceneInFlight.delete(e.commandId) && this.sceneInFlight.size === 0 && this.scheduleSceneFlush();
   };
-  flushPendingCamera() {
-    if (!this.pendingCamera) return;
-    const t = this.pendingCamera;
-    this.pendingCamera = null, this.cameraInFlight = t.id, this.port.postMessage({
-      type: "dispatch",
-      command: t
-    });
+  scheduleSceneFlush() {
+    this.sceneFlushScheduled || this.disposed || this.sceneInFlight.size || (this.sceneFlushScheduled = !0, queueMicrotask(() => {
+      this.sceneFlushScheduled = !1, this.disposed || this.flushScene(!1);
+    }));
+  }
+  flushScene(t) {
+    if (!t && this.sceneInFlight.size) return;
+    const e = [...this.pendingScene.values()];
+    this.pendingScene.clear(), e.sort(
+      (s, i) => s.sceneRevision - i.sceneRevision || (s.type === "set-camera" ? 1 : i.type === "set-camera" ? -1 : 0)
+    );
+    for (const s of e)
+      this.sceneInFlight.add(s.id), this.port.postMessage({
+        type: "dispatch",
+        command: s
+      });
   }
   emit(t) {
     for (const e of this.listeners) e(t);
