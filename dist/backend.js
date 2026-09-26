@@ -1279,23 +1279,18 @@ class we {
   }
   updateTarget() {
     if (!this.frontend || !this.packed) return;
-    const e = performance.now(), t = this.compute(this.packed.capacity);
-    if (console.info("[3DGS backend] compute", {
-      durationMs: Math.round((performance.now() - e) * 10) / 10,
-      sceneRevision: this.sceneRevision,
-      gaussianCount: t.count,
-      pendingCommands: this.pendingCommands.size
-    }), !this.frontend.supportsPartialBufferUpdates) {
-      this.replace(t);
+    const e = this.compute(this.packed.capacity);
+    if (!this.frontend.supportsPartialBufferUpdates) {
+      this.replace(e);
       return;
     }
-    if (t.capacity !== this.packed.capacity || t.degree !== this.packed.degree || [...t.attributes].some(
-      ([s, n]) => this.packed?.attributes.get(s)?.elementsPerGaussian !== n.elementsPerGaussian
+    if (e.capacity !== this.packed.capacity || e.degree !== this.packed.degree || [...e.attributes].some(
+      ([t, s]) => this.packed?.attributes.get(t)?.elementsPerGaussian !== s.elementsPerGaussian
     )) {
-      this.replace(t);
+      this.replace(e);
       return;
     }
-    this.target = t, this.scheduleUpdate();
+    this.target = e, this.scheduleUpdate();
   }
   replace(e) {
     this.packed = e, this.layoutVersion++, this.contentVersion++;

@@ -690,14 +690,7 @@ export class StreamingGaussianBackend implements GaussianBackend {
 
   private updateTarget(): void {
     if (!this.frontend || !this.packed) return;
-    const started = performance.now();
     const desired = this.compute(this.packed.capacity);
-    console.info("[3DGS backend] compute", {
-      durationMs: Math.round((performance.now() - started) * 10) / 10,
-      sceneRevision: this.sceneRevision,
-      gaussianCount: desired.count,
-      pendingCommands: this.pendingCommands.size,
-    });
     if (!this.frontend.supportsPartialBufferUpdates) {
       this.replace(desired);
       return;
