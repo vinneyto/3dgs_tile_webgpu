@@ -78,6 +78,11 @@ export class CanonicalGaussianPlyLoader {
         `Failed to load PLY: ${response.status} ${response.statusText}`,
       );
     }
+    if (response.headers.get("content-type")?.includes("text/html")) {
+      throw new Error(
+        `Failed to load PLY: ${response.url || url} returned HTML instead of a PLY file`,
+      );
+    }
     return this.parse(await response.arrayBuffer());
   }
 

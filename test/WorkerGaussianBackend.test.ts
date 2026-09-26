@@ -12,6 +12,18 @@ afterEach(() => {
 });
 
 describe("worker-backed GaussianStore client", () => {
+  it("resolves relative PLY URLs against the page before sending them to the worker", async () => {
+    vi.stubGlobal("Worker", FakeWorker);
+    vi.stubGlobal("document", { baseURI: "http://localhost:5173/sandbox/" });
+    const store = new GaussianStore();
+    await store.load("mug.ply");
+    expect(FakeWorker.latest?.requests[1]).toMatchObject({
+      type: "load",
+      url: "http://localhost:5173/sandbox/mug.ply",
+    });
+    store.dispose();
+  });
+
   it("uses worker buffers for rendering and a local synchronous raycast index", async () => {
     vi.stubGlobal("Worker", FakeWorker);
     const store = new GaussianStore();

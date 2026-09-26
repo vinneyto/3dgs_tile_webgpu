@@ -179,12 +179,18 @@ export class WorkerGaussianBackend implements GaussianBackend {
   ): Promise<GaussianCloud> {
     if (options.packingStrategy !== undefined)
       throw new Error("Custom packing strategies are not serializable");
+    // A worker resolves relative fetch URLs against its own script URL. Resolve
+    // on the client so load("mug.ply") has the same meaning as window.fetch().
+    const resolvedUrl =
+      typeof document === "undefined"
+        ? url
+        : new URL(url, document.baseURI).href;
     await this.initialized;
     const cloudId = this.nextCloudId++;
     const result = await this.send({
       type: "load",
       cloudId,
-      url,
+      url: resolvedUrl,
       name: options.name,
       priority: options.priority,
       octree: options.octree,
