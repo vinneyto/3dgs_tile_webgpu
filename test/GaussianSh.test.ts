@@ -6,7 +6,7 @@ import {
   packShRgb8e8,
   shBytesPerCoefficient,
   unpackShRgb8e8,
-} from "../src/GaussianSh";
+} from "../src/streaming-backend-impl/GaussianSh";
 
 describe("RGB8E8 spherical harmonics", () => {
   it("uses four bytes per RGB coefficient", () => {

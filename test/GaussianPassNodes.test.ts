@@ -8,16 +8,19 @@ import {
 } from "three/webgpu";
 import { float, vec3 } from "three/tsl";
 
-import { GaussianData } from "../src/GaussianData";
-import { GaussianPass } from "../src/GaussianPass";
-import { GaussianStore } from "../src/GaussianStore";
-import type { GaussianPassOptions } from "../src/pipeline/types";
+import { GaussianData } from "../src/renderer/GaussianData";
+import { GaussianPass } from "../src/renderer/GaussianPass";
+import { LocalGaussianBackend as GaussianStore } from "../src/streaming-backend-impl/legacy/LocalGaussianBackend";
+import { GaussianStore as GaussianStoreClient } from "../src/renderer/GaussianStore";
+import type { BackendEvent } from "../src/streaming-backend/events/BackendEvent";
+import type { GaussianBackend } from "../src/streaming-backend/GaussianBackend";
+import type { GaussianPassOptions } from "../src/renderer/pipeline/types";
 import {
   gaussianColor,
   gaussianPositionLocal,
   gaussianPositionWorld,
   rasterGaussianColor,
-} from "../src/nodes/GaussianContextNodes";
+} from "../src/renderer/nodes/GaussianContextNodes";
 
 const TEST_LIMITS = {
   maxStorageBufferBindingSize: 1_073_741_824,
@@ -25,6 +28,42 @@ const TEST_LIMITS = {
 };
 
 describe("GaussianPass node slots", () => {
+  it("subscribes to the backend contract through a composed Store", () => {
+    const backendEvents: { listener?: (event: BackendEvent) => void } = {};
+    const backend: GaussianBackend = {
+      dispatch: () => {},
+      subscribe: (listener) => {
+        backendEvents.listener = listener;
+        return () => { backendEvents.listener = undefined; };
+      },
+      dispose: () => {},
+    };
+    const store = new GaussianStoreClient(backend);
+    const pass = new GaussianPass(
+      createRenderer(),
+      new PerspectiveCamera(),
+      store,
+    );
+    const invalidate = vi.spyOn(pass, "invalidate");
+    const events: string[] = [];
+    const unsubscribe = store.subscribe((event) => events.push(event.type));
+    backendEvents.listener?.({
+      type: "cloud-loaded", commandId: "load", cloudId: "cloud",
+      objectId: 0, sourceCount: 1, shDegree: 0,
+      bounds: [0, 0, 0, 0, 0, 0],
+    });
+    expect(events).toEqual(["changed"]);
+    expect(invalidate).toHaveBeenCalledOnce();
+    unsubscribe();
+    pass.dispose();
+    backendEvents.listener?.({
+      type: "cloud-loaded", commandId: "load-2", cloudId: "cloud-2",
+      objectId: 1, sourceCount: 1, shDegree: 0,
+      bounds: [0, 0, 0, 0, 0, 0],
+    });
+    expect(invalidate).toHaveBeenCalledOnce();
+    store.dispose();
+  });
   it("packs an uninitialized Store lazily on the first render", () => {
     const store = new GaussianStore();
     store.add(oneGaussian());

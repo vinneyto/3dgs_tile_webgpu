@@ -1,7 +1,7 @@
 import type {
   GaussianCloud,
   GaussianData,
-  GaussianStore,
+  LocalGaussianBackend,
 } from "../../src/index";
 import { GaussianLod, GaussianOctree } from "../../src/index";
 
@@ -19,7 +19,7 @@ export interface CloudBounds {
 }
 
 export function addDataWithSandboxLod(
-  store: GaussianStore,
+  store: LocalGaussianBackend,
   data: GaussianData,
   name: string,
 ): GaussianCloud {

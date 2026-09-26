@@ -1,7 +1,23 @@
-import { describe, expect, it } from "vitest";
-import { CanonicalGaussianPlyLoader } from "../src/CanonicalGaussianPlyLoader";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { CanonicalGaussianPlyLoader } from "../src/renderer/CanonicalGaussianPlyLoader";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("CanonicalGaussianPlyLoader", () => {
+  it("identifies an HTML fallback response instead of reporting a malformed PLY header", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response("<html></html>", {
+          headers: { "content-type": "text/html" },
+        }),
+      ),
+    );
+    await expect(
+      new CanonicalGaussianPlyLoader().load("mug.ply"),
+    ).rejects.toThrow(/returned HTML instead of a PLY file/);
+  });
+
   it("activates scales and opacity, converts wxyz, and interleaves SH channels", () => {
     const properties = [
       "x",

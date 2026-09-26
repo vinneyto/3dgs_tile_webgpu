@@ -8,10 +8,10 @@ import {
   Vector3,
 } from "three/webgpu";
 
-import { GaussianCloud } from "../src/GaussianCloud";
-import { GaussianData } from "../src/GaussianData";
-import { GaussianLod } from "../src/GaussianLod";
-import type { GaussianStore } from "../src/GaussianStore";
+import { GaussianCloud } from "../src/renderer/GaussianCloud";
+import { GaussianData } from "../src/renderer/GaussianData";
+import { GaussianLod } from "../src/streaming-backend-impl/GaussianLod";
+import type { GaussianBackend as GaussianStore } from "../src/renderer/legacy/GaussianBackend";
 import {
   DistanceAwareRadialLodPackingStrategy,
   MaximumLodPackingStrategy,
@@ -20,14 +20,14 @@ import {
   TieredRadialLodPackingStrategy,
   isStreamingLodPackingStrategy,
   type GaussianLodPackingStrategy,
-} from "../src/lod-packing";
+} from "../src/streaming-backend-impl/lod-packing";
 import {
   createRadialLodPlanData,
   createRadialLodPlanWorkspace,
   planDistanceAwareLod,
   planTieredRadialLod,
-} from "../src/lod-packing/RadialLodPlan";
-import { GaussianOctree } from "../src/GaussianOctree";
+} from "../src/streaming-backend-impl/lod-packing/RadialLodPlan";
+import { GaussianOctree } from "../src/streaming-backend-impl/GaussianOctree";
 
 describe("GaussianOctree", () => {
   it("builds adaptive cubic cells containing every source Gaussian once", () => {

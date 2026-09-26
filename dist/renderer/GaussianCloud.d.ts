@@ -1,0 +1,42 @@
+import { Object3D, type Intersection, type Raycaster } from "three/webgpu";
+import type { GaussianLod, GaussianLodPacking } from "../streaming-backend-impl/GaussianLod";
+import type { GaussianRaycastIndex } from "./GaussianRaycastIndex";
+export type GaussianRaycastMode = "rendered" | "full";
+/** Actions the scene object delegates to its owning client store. */
+export interface GaussianCloudOwner {
+    remove(cloud: GaussianCloud): void;
+    updatePackingPriority(cloud: GaussianCloud, priority: number): void;
+    invalidateCloudPacking(cloud: GaussianCloud): void;
+}
+/** A transformable Three.js scene object backed by a range in a GaussianStore. */
+export declare class GaussianCloud extends Object3D {
+    readonly isGaussianCloud = true;
+    readonly objectId: number;
+    readonly lod: GaussianLod | null;
+    raycastMode: GaussianRaycastMode;
+    /** Accumulated alpha required for a pointer hit. Must be in (0, 1). */
+    raycastAlphaThreshold: number;
+    private readonly ownerStore;
+    private packing;
+    private packedGaussianCount;
+    private priority;
+    private raycastIndex;
+    constructor(store: GaussianCloudOwner, objectId: number, gaussianCount: number, name?: string, lod?: GaussianLod | null, packing?: GaussianLodPacking | null, priority?: number);
+    get lodPacking(): GaussianLodPacking | null;
+    get gaussianCount(): number;
+    /** Lower priorities receive Store budget first. Defaults to 0. */
+    get packingPriority(): number;
+    set packingPriority(priority: number);
+    /** Re-evaluate this cloud on the next Store pack after strategy parameters change. */
+    invalidatePacking(): void;
+    /** Internal Store hook used after a global budget redistribution. */
+    updatePacking(gaussianCount: number, packing: GaussianLodPacking | null): void;
+    /** Internal Store hook used while priorities are changed transactionally. */
+    updatePackingPriority(priority: number): void;
+    /** Attach a transferable snapshot built by the data backend. Raycasts remain synchronous. */
+    setRaycastIndex(index: GaussianRaycastIndex | null): void;
+    /** Raycast either the packed/rendered LOD or the complete source octree. */
+    raycast(raycaster: Raycaster, intersections: Intersection[]): void;
+    /** Remove this cloud's Gaussian range from its store and detach it from the scene graph. */
+    dispose(): void;
+}

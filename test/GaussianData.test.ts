@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { StorageBufferAttribute } from "three/webgpu";
-import { GaussianData } from "../src/GaussianData";
+import { GaussianData } from "../src/renderer/GaussianData";
 
 function attribute(items: number, itemSize = 4): StorageBufferAttribute {
   return new StorageBufferAttribute(

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   evaluateShWGSL,
   projectionCovarianceWGSL,
-} from "../src/kernels/projectionHelpers";
+} from "../src/renderer/kernels/projectionHelpers";
 
 describe("projectionWGSL antialias specialization", () => {
   it("preserves subpixel energy in compensated mode", () => {

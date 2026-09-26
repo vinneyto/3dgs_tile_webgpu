@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { StorageBufferAttribute } from "three/webgpu";
 
-import { GaussianData } from "../src/GaussianData";
-import { GaussianLod, type GaussianLodPacking } from "../src/GaussianLod";
-import { GaussianOctree } from "../src/GaussianOctree";
-import { LodHelper } from "../src/LodHelper";
-import { OctreeHelper } from "../src/OctreeHelper";
+import { GaussianData } from "../src/renderer/GaussianData";
+import { GaussianLod, type GaussianLodPacking } from "../src/streaming-backend-impl/GaussianLod";
+import { GaussianOctree } from "../src/streaming-backend-impl/GaussianOctree";
+import { LodHelper } from "../src/renderer/LodHelper";
+import { OctreeHelper } from "../src/renderer/OctreeHelper";
 
 describe("Gaussian debug helpers", () => {
   it("builds one local-space wireframe box per selected octree cell", () => {

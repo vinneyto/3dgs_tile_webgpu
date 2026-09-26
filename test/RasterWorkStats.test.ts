@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { TileRasterizer } from "../src/pipeline/TileRasterizer";
+import { TileRasterizer } from "../src/renderer/pipeline/TileRasterizer";
 
 describe("raster work readback", () => {
   it("sums tile counters using CPU numbers without frame-wide uint overflow", async () => {

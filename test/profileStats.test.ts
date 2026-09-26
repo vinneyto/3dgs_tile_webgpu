@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { profileSubpixelCoverageWGSL } from "../src/kernels/profileDiagnostics";
-import { estimateTileCap, summarizeTileLoads } from "../src/utils/profileStats";
+import { profileSubpixelCoverageWGSL } from "../src/renderer/kernels/profileDiagnostics";
+import { estimateTileCap, summarizeTileLoads } from "../src/renderer/utils/profileStats";
 
 describe("profile diagnostics", () => {
   it("summarizes emitted intersections per tile", () => {

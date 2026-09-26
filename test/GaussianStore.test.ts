@@ -1,17 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import { StorageBufferAttribute, Vector3 } from "three/webgpu";
 
-import { GaussianData } from "../src/GaussianData";
-import { GaussianLod } from "../src/GaussianLod";
+import { GaussianData } from "../src/renderer/GaussianData";
+import { GaussianLod } from "../src/streaming-backend-impl/GaussianLod";
 import {
   RadialLodPackingStrategy,
   StreamingLodPackingStrategy,
   TieredRadialLodPackingStrategy,
-} from "../src/lod-packing";
-import { GaussianOctree } from "../src/GaussianOctree";
-import { unpackShRgb8e8 } from "../src/GaussianSh";
-import { GaussianStore } from "../src/GaussianStore";
-import { SourceFractionBudgetStrategy } from "../src/store-budgeting";
+} from "../src/streaming-backend-impl/lod-packing";
+import { GaussianOctree } from "../src/streaming-backend-impl/GaussianOctree";
+import { unpackShRgb8e8 } from "../src/streaming-backend-impl/GaussianSh";
+import { LocalGaussianBackend as GaussianStore } from "../src/streaming-backend-impl/legacy/LocalGaussianBackend";
+import { SourceFractionBudgetStrategy } from "../src/streaming-backend-impl/legacy/store-budgeting";
 
 const TEST_LIMITS = {
   maxStorageBufferBindingSize: 1_073_741_824,

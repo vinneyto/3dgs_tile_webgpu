@@ -1,0 +1,10 @@
+import type { CloudLoadedEvent } from "./CloudLoadedEvent";
+import type { CloudUnloadedEvent } from "./CloudUnloadedEvent";
+import type { CloudRaycastChangedEvent } from "./CloudRaycastChangedEvent";
+import type { RaycastReplacedEvent } from "./RaycastReplacedEvent";
+import type { BuffersReplacedEvent } from "./BuffersReplacedEvent";
+import type { BuffersPatchedEvent } from "./BuffersPatchedEvent";
+import type { CommandCompletedEvent } from "./CommandCompletedEvent";
+import type { CommandCancelledEvent } from "./CommandCancelledEvent";
+import type { BackendErrorEvent } from "./BackendErrorEvent";
+export type BackendEvent = CloudLoadedEvent | CloudUnloadedEvent | CloudRaycastChangedEvent | RaycastReplacedEvent | BuffersReplacedEvent | BuffersPatchedEvent | CommandCompletedEvent | CommandCancelledEvent | BackendErrorEvent;
