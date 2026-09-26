@@ -16,10 +16,10 @@ import {
   vec3,
 } from "three/tsl";
 
-import { GaussianData } from "../src/GaussianData";
-import { GaussianLodColorHelper } from "../src/GaussianLodColorHelper";
-import { GaussianPass } from "../src/GaussianPass";
-import { GaussianStore } from "../src/GaussianStore";
+import { GaussianData } from "../src/renderer/GaussianData";
+import { GaussianLodColorHelper } from "../src/renderer/GaussianLodColorHelper";
+import { GaussianPass } from "../src/renderer/GaussianPass";
+import { LocalGaussianBackend as GaussianStore } from "../src/streaming-backend-impl/legacy/LocalGaussianBackend";
 import {
   createDefaultGaussianNodeSlots,
   gaussianColor,
@@ -30,12 +30,12 @@ import {
   rasterPower,
   rasterUV,
   rasterViewDepth,
-} from "../src/nodes/GaussianContextNodes";
-import { FrameUniforms } from "../src/pipeline/FrameUniforms";
-import { ObjectFrameState } from "../src/pipeline/ObjectFrameState";
-import { ProjectionStage } from "../src/pipeline/ProjectionStage";
-import { ProfileDiagnosticsStage } from "../src/pipeline/ProfileDiagnosticsStage";
-import { TileRasterizer } from "../src/pipeline/TileRasterizer";
+} from "../src/renderer/nodes/GaussianContextNodes";
+import { FrameUniforms } from "../src/renderer/pipeline/FrameUniforms";
+import { ObjectFrameState } from "../src/renderer/pipeline/ObjectFrameState";
+import { ProjectionStage } from "../src/renderer/pipeline/ProjectionStage";
+import { ProfileDiagnosticsStage } from "../src/renderer/pipeline/ProfileDiagnosticsStage";
+import { TileRasterizer } from "../src/renderer/pipeline/TileRasterizer";
 
 const TEST_LIMITS = {
   maxStorageBufferBindingSize: 1_073_741_824,

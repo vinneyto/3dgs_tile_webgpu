@@ -1,21 +1,21 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StorageBufferAttribute, Vector3 } from "three/webgpu";
 
-import { GaussianData } from "../src/GaussianData";
-import { GaussianLod } from "../src/GaussianLod";
+import { GaussianData } from "../src/renderer/GaussianData";
+import { GaussianLod } from "../src/streaming-backend-impl/GaussianLod";
 import {
   DistanceAwareRadialLodPackingStrategy,
   RadialLodWorkerPlanner,
   TieredRadialLodPackingStrategy,
-} from "../src/lod-packing";
+} from "../src/streaming-backend-impl/lod-packing";
 import type {
   RadialLodWorkerBufferSet,
   RadialLodWorkerInitMessage,
   RadialLodWorkerMessage,
   RadialLodWorkerRequestMessage,
   RadialLodWorkerResultMessage,
-} from "../src/lod-packing/RadialLodWorkerProtocol";
-import { GaussianOctree } from "../src/GaussianOctree";
+} from "../src/streaming-backend-worker/lod-planner/RadialLodWorkerProtocol";
+import { GaussianOctree } from "../src/streaming-backend-impl/GaussianOctree";
 
 describe("RadialLodWorkerPlanner", () => {
   afterEach(() => {

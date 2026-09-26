@@ -5,20 +5,20 @@ import {
   reduceRadixHistogramsWGSL,
   scanAddRadixHistogramsWGSL,
   scanRadixReducedWGSL,
-} from "../src/kernels/radix";
+} from "../src/renderer/kernels/radix";
 import {
   radixWorkgroupHistogramWGSL,
   radixWorkgroupScatterWGSL,
   reduceRadixHistogramsWorkgroupWGSL,
-} from "../src/kernels/radixWorkgroup";
-import { emitIntersectionsWGSL } from "../src/kernels/intersections";
-import { countContributingTilesWGSL } from "../src/kernels/projectionHelpers";
-import { scanBlocksWGSL, scanVisibilityBlocksWGSL } from "../src/kernels/scan";
+} from "../src/renderer/kernels/radixWorkgroup";
+import { emitIntersectionsWGSL } from "../src/renderer/kernels/intersections";
+import { countContributingTilesWGSL } from "../src/renderer/kernels/projectionHelpers";
+import { scanBlocksWGSL, scanVisibilityBlocksWGSL } from "../src/renderer/kernels/scan";
 import {
   RADIX_BLOCK_ITEMS,
   RADIX_ELEMENTS_PER_THREAD,
-} from "../src/pipeline/constants";
-import { resolveRadixBackend } from "../src/pipeline/radixBackend";
+} from "../src/renderer/pipeline/constants";
+import { resolveRadixBackend } from "../src/renderer/pipeline/radixBackend";
 
 describe("depth/tile radix pipeline", () => {
   it("processes four records per thread with subgroup-stable scatter", () => {

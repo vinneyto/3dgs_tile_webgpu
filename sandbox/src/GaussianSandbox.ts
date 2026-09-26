@@ -29,19 +29,16 @@ import {
   vec4,
 } from "three/tsl";
 import {
-  CanonicalGaussianPlyLoader,
   gaussianPass,
   rasterPixelCoordinate,
   type GaussianCloud,
   type GaussianPass,
   GaussianStore,
 } from "../../src/index";
-import {
-  addDataWithSandboxLod,
-  measureCloud,
-  SANDBOX_LOD_LEVELS,
-  type CloudBounds,
-} from "./cloudData";
+import { StreamingGaussianBackend } from "../../src/streaming-backend-impl/StreamingGaussianBackend";
+import { DEFAULT_BACKEND_CONFIG } from "../../src/renderer/GaussianStore";
+import { WorkerStreamingGaussianBackend } from "../../src/streaming-backend-worker/WorkerStreamingGaussianBackend";
+import { SANDBOX_LOD_LEVELS, type CloudBounds } from "./cloudData";
 import { CloudStatus } from "./CloudStatus";
 import {
   CENTER_WEIGHTED_AUTOFOCUS_PATTERN,
@@ -59,7 +56,6 @@ import { SpatialDebugHelpers } from "./SpatialDebugHelpers";
 type DofPassNode = ReturnType<typeof dof> & Node<"vec4">;
 
 export class GaussianSandbox {
-  private readonly loader = new CanonicalGaussianPlyLoader();
   private readonly scene = new Scene();
   private readonly controls: OrbitControls;
   private readonly focusRaycaster = new Raycaster();
@@ -344,12 +340,10 @@ export class GaussianSandbox {
     this.cloudStatus.parsing(file.name);
     const store = this.createStore();
     try {
-      const data = this.loader.parse(await file.arrayBuffer());
-      const cloud = addDataWithSandboxLod(
-        store,
-        data,
-        `${file.name} Gaussian cloud`,
-      );
+      const cloud = await store.loadBuffer(await file.arrayBuffer(), {
+        name: `${file.name} Gaussian cloud`,
+        lod: { levels: SANDBOX_LOD_LEVELS },
+      });
       if (this.disposed) {
         store.dispose();
         return;
@@ -362,10 +356,16 @@ export class GaussianSandbox {
   }
 
   private createStore(): GaussianStore {
-    return new GaussianStore({
-      loader: this.loader,
-      defaultStreamingLod: this.options.streamingLod,
-    });
+    const config = {
+      ...DEFAULT_BACKEND_CONFIG,
+      streamingLod: {
+        maxChangedCellsPerUpdate: this.options.streamingLod.maxChangedCellsPerPack,
+        maxUploadBytesPerUpdate: this.options.streamingLod.maxUploadBytesPerPack,
+      },
+    };
+    return new GaussianStore(this.options.workerBackend
+      ? new WorkerStreamingGaussianBackend(config)
+      : new StreamingGaussianBackend(config));
   }
 
   private show(
@@ -374,8 +374,8 @@ export class GaussianSandbox {
     cloud: GaussianCloud,
   ): void {
     this.clearCloud();
-    const data = cloud.lod!.octree.data;
-    const bounds = measureCloud(data);
+    const sourceCount = store.getSourceCount(cloud);
+    const bounds = boundsFromWorker(store.getBounds(cloud));
     this.store = store;
     this.cloud = cloud;
     this.scene.add(cloud);
@@ -418,7 +418,7 @@ export class GaussianSandbox {
     this.spatialDebug.attach(cloud, this.pass);
     this.debugPanel.setPass(this.pass, {
       cloud,
-      onPack: () => this.cloudStatus.packed(source, data.count, cloud, store),
+      onPack: () => this.cloudStatus.packed(source, sourceCount, cloud, store),
     });
     this.pipeline = new RenderPipeline(this.renderer);
     const opaqueWithGaussians = compositePremultipliedOver(
@@ -463,7 +463,7 @@ export class GaussianSandbox {
     this.pipeline.outputNode = this.options.depthDebugEnabled
       ? sceneOutput
       : compositePremultipliedOver(sceneOutput, this.overlayPass);
-    this.cloudStatus.preparing(source, data.count);
+    this.cloudStatus.preparing(source, sourceCount);
   }
 
   private clearCloud(): void {
@@ -561,4 +561,23 @@ export class GaussianSandbox {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
   }
+}
+
+function boundsFromWorker([minX, minY, minZ, maxX, maxY, maxZ]: readonly [
+  number,
+  number,
+  number,
+  number,
+  number,
+  number,
+]): CloudBounds {
+  return {
+    centerX: (minX + maxX) * 0.5,
+    centerY: (minY + maxY) * 0.5,
+    centerZ: (minZ + maxZ) * 0.5,
+    radius: Math.max(
+      Math.hypot(maxX - minX, maxY - minY, maxZ - minZ) * 0.5,
+      0.1,
+    ),
+  };
 }

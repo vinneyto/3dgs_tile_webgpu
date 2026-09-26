@@ -8,7 +8,7 @@ import {
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import {
   GaussianData,
-  GaussianStore,
+  LocalGaussianBackend,
   gaussianPass,
   type DepthSortMode,
 } from "./index";
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
   );
 
   const scene = new Scene();
-  const store = new GaussianStore();
+  const store = new LocalGaussianBackend();
   const cloud = store.add(data, { name: "Demo Gaussian cloud" });
   scene.add(cloud);
 

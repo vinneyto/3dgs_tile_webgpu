@@ -5,10 +5,10 @@ import {
   type WebGPURenderer,
 } from "three/webgpu";
 
-import { GaussianData } from "../src/GaussianData";
-import { GaussianLodColorHelper } from "../src/GaussianLodColorHelper";
-import { GaussianPass } from "../src/GaussianPass";
-import { GaussianStore } from "../src/GaussianStore";
+import { GaussianData } from "../src/renderer/GaussianData";
+import { GaussianLodColorHelper } from "../src/renderer/GaussianLodColorHelper";
+import { GaussianPass } from "../src/renderer/GaussianPass";
+import { LocalGaussianBackend as GaussianStore } from "../src/streaming-backend-impl/legacy/LocalGaussianBackend";
 
 const TEST_LIMITS = {
   maxStorageBufferBindingSize: 1_073_741_824,

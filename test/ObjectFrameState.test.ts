@@ -6,9 +6,9 @@ import {
   StorageBufferAttribute,
 } from "three/webgpu";
 
-import { GaussianData } from "../src/GaussianData";
-import { GaussianStore } from "../src/GaussianStore";
-import { ObjectFrameState } from "../src/pipeline/ObjectFrameState";
+import { GaussianData } from "../src/renderer/GaussianData";
+import { LocalGaussianBackend as GaussianStore } from "../src/streaming-backend-impl/legacy/LocalGaussianBackend";
+import { ObjectFrameState } from "../src/renderer/pipeline/ObjectFrameState";
 
 const TEST_LIMITS = {
   maxStorageBufferBindingSize: 1_073_741_824,

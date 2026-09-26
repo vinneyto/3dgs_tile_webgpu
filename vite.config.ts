@@ -11,6 +11,6 @@ export default defineConfig({
     rollupOptions: {
       external: ["three", "three/webgpu", "three/tsl"],
     },
-    sourcemap: true,
+    sourcemap: false,
   },
 });

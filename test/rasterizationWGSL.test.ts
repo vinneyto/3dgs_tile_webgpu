@@ -5,8 +5,8 @@ import {
   maxRasterChunkTasks,
   prepareRasterChunkDispatchWGSL,
   validateRasterChunkSize,
-} from "../src/kernels/rasterChunks";
-import { compactMortonBitsWGSL } from "../src/kernels/rasterHelpers";
+} from "../src/renderer/kernels/rasterChunks";
+import { compactMortonBitsWGSL } from "../src/renderer/kernels/rasterHelpers";
 
 describe("rasterizationWGSL", () => {
   it("maps each tile lane to a unique Morton-ordered pixel", () => {
