@@ -31,10 +31,11 @@ export declare class GaussianLodNode {
 /** Leaf-cell LOD representations built over a GaussianOctree. */
 export declare class GaussianLod {
     readonly octree: GaussianOctree;
+    private readonly ownsOctree;
     static build(octree: GaussianOctree, options?: GaussianLodBuildOptions): GaussianLod;
+    static buildAsync(octree: GaussianOctree, options: GaussianLodBuildOptions | undefined, signal: AbortSignal): Promise<GaussianLod>;
     readonly levels: readonly GaussianLodLevelOptions[];
     readonly nodes: readonly GaussianLodNode[];
-    private readonly ownsOctree;
     private disposed;
     private constructor();
     get levelCount(): number;

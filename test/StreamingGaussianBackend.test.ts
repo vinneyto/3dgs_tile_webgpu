@@ -212,6 +212,30 @@ describe("message backend", () => {
     await expect(parsing).rejects.toMatchObject({ name: "AbortError" });
   });
 
+  it("interrupts octree and LOD building inside their CPU work", async () => {
+    const { CanonicalGaussianPlyLoader } = await import("../src/streaming-backend-impl/CanonicalGaussianPlyLoader");
+    const { GaussianOctree } = await import("../src/streaming-backend-impl/GaussianOctree");
+    const { GaussianLod } = await import("../src/streaming-backend-impl/GaussianLod");
+    const single = new TextDecoder().decode(ply(0));
+    const [header, row] = single.split("end_header\n");
+    const input = new TextEncoder().encode(
+      `${header!.replace("element vertex 1", "element vertex 8193")}end_header\n${row!.repeat(8193)}`,
+    ).buffer as ArrayBuffer;
+    const source = new CanonicalGaussianPlyLoader().parse(input);
+    const first = new AbortController();
+    const buildingTree = GaussianOctree.buildAsync(source, {}, first.signal);
+    queueMicrotask(() => first.abort());
+    await expect(buildingTree).rejects.toMatchObject({ name: "AbortError" });
+
+    const octree = GaussianOctree.build(source);
+    const second = new AbortController();
+    const buildingLod = GaussianLod.buildAsync(octree, {}, second.signal);
+    queueMicrotask(() => second.abort());
+    await expect(buildingLod).rejects.toMatchObject({ name: "AbortError" });
+    octree.dispose();
+    source.dispose();
+  });
+
   it("computes a scene revision once for multiple transforms and a camera update", async () => {
     const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
     const events: BackendEvent[] = [];

@@ -193,9 +193,9 @@ export class StreamingGaussianBackend implements GaussianBackend {
           }
           await this.loadCheckpoint(controller.signal);
           const options = command.options ?? {};
-          const octree = GaussianOctree.build(source, options.octree);
+          const octree = await GaussianOctree.buildAsync(source, options.octree, controller.signal);
           await this.loadCheckpoint(controller.signal);
-          const lod = GaussianLod.build(octree, options.lod);
+          const lod = await GaussianLod.buildAsync(octree, options.lod, controller.signal);
           await this.loadCheckpoint(controller.signal);
           const entry: CloudEntry = {
             id: command.cloudId,

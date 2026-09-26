@@ -58,13 +58,14 @@ export declare class GaussianOctree {
     readonly data: GaussianSource;
     readonly leafCapacity: number;
     readonly maxDepth: number;
+    private readonly ownsData;
     static build(data: GaussianSource, options?: GaussianOctreeBuildOptions): GaussianOctree;
+    static buildAsync(data: GaussianSource, options: GaussianOctreeBuildOptions | undefined, signal: AbortSignal): Promise<GaussianOctree>;
     readonly bounds: Box3;
     readonly rootBounds: Box3;
     readonly rootNode = 0;
     readonly nodes: readonly GaussianOctreeNode[];
     readonly leafNodeIds: Uint32Array;
-    private readonly ownsData;
     private disposed;
     private constructor();
     raycast(ray: Ray, options?: GaussianOctreeRaycastOptions): GaussianOctreeRaycastHit[];

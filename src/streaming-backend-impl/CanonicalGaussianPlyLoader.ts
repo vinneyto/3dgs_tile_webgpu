@@ -1,4 +1,5 @@
 import { CpuGaussianSource } from "./GaussianSource";
+import { buildAsync, buildSync } from "./buildChunks";
 
 type PlyFormat = "ascii" | "binary_little_endian" | "binary_big_endian";
 type PlyScalarType =
@@ -86,26 +87,14 @@ export class CanonicalGaussianPlyLoader {
   }
 
   parse(buffer: ArrayBuffer): CpuGaussianSource {
-    const rows = this.parseChunks(buffer);
-    let step = rows.next();
-    while (!step.done) step = rows.next();
-    return step.value;
+    return buildSync(this.parseChunks(buffer));
   }
 
   async parseAsync(
     buffer: ArrayBuffer,
     signal: AbortSignal,
   ): Promise<CpuGaussianSource> {
-    const rows = this.parseChunks(buffer);
-    let step = rows.next();
-    while (!step.done) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      if (signal.aborted)
-        throw new DOMException("Load cancelled", "AbortError");
-      step = rows.next();
-    }
-    if (signal.aborted) throw new DOMException("Load cancelled", "AbortError");
-    return step.value;
+    return buildAsync(this.parseChunks(buffer), signal);
   }
 
   private *parseChunks(
