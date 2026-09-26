@@ -204,11 +204,13 @@ export class GaussianStore implements GaussianRenderStore {
     if (this.disposed) return { appliedBatches: 0, pending: false, clouds: [] };
     camera.updateWorldMatrix(true, false);
     const position = camera.getWorldPosition(new Vector3());
+    const cameraWorldMatrix = camera.matrixWorld.elements.slice();
+    const projectionMatrix = camera.projectionMatrix.elements.slice();
     const transforms = this.clouds.map((cloud) => {
       cloud.updateWorldMatrix(true, false);
       return [this.requireId(cloud), ...cloud.matrixWorld.elements] as const;
     });
-    const key = JSON.stringify([position.toArray(), transforms]);
+    const key = JSON.stringify([cameraWorldMatrix, projectionMatrix, transforms]);
     if (key !== this.lastView) {
       this.lastView = key;
       const sceneRevision = ++this.revision;
@@ -220,7 +222,8 @@ export class GaussianStore implements GaussianRenderStore {
       }
       this.backend.dispatch({
         type: "set-camera", id: this.nextCommandId(), sceneRevision,
-        position: [position.x, position.y, position.z],
+        worldMatrix: cameraWorldMatrix,
+        projectionMatrix,
       });
     }
     return {

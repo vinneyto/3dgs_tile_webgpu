@@ -264,9 +264,13 @@ export class StreamingGaussianBackend implements GaussianBackend {
         this.updateTarget();
         break;
       case "set-camera":
+        if (command.worldMatrix.length !== 16 || command.projectionMatrix.length !== 16)
+          throw new RangeError("Camera matrices need sixteen numbers each");
         if (command.sceneRevision < this.sceneRevision) break;
         this.sceneRevision = command.sceneRevision;
-        this.cameraPosition.set(...command.position);
+        this.cameraPosition.set(
+          command.worldMatrix[12]!, command.worldMatrix[13]!, command.worldMatrix[14]!,
+        );
         this.updateTarget();
         break;
     }

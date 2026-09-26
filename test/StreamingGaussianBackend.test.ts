@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Raycaster, Vector3 } from "three/webgpu";
+import { PerspectiveCamera, Raycaster, Vector3 } from "three/webgpu";
 import { GaussianStore } from "../src/renderer/GaussianStore";
 import { DEFAULT_BACKEND_CONFIG } from "../src/renderer/GaussianStore";
 import { StreamingGaussianBackend } from "../src/streaming-backend-impl/StreamingGaussianBackend";
 import { WorkerStreamingGaussianBackend } from "../src/streaming-backend-worker/WorkerStreamingGaussianBackend";
 import { transferBuffers, type WorkerInbound, type WorkerOutbound } from "../src/streaming-backend-worker/WorkerMessages";
 import type { BackendEvent } from "../src/streaming-backend/events/BackendEvent";
+import type { BackendCommand } from "../src/streaming-backend/commands/BackendCommand";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -126,12 +127,36 @@ describe("message backend", () => {
     expect(store.contentVersion).toBe(version);
     store.dispose();
   });
+
+  it("sends both camera matrices and reports projection-only changes", async () => {
+    const port = new InMemoryWorker();
+    const store = new GaussianStore(new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG,
+      port as never));
+    await store.loadBuffer(ply(0));
+    await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
+    const camera = new PerspectiveCamera(50, 1, 0.1, 100);
+    camera.position.set(3, 4, 5);
+    store.updateLod(camera);
+    const commands = () => port.commands.filter((command) => command.type === "set-camera");
+    expect(commands()).toHaveLength(1);
+    expect(commands()[0]?.worldMatrix.slice(12, 15)).toEqual([3, 4, 5]);
+    expect(commands()[0]?.projectionMatrix).toEqual(camera.projectionMatrix.elements);
+
+    camera.fov = 60;
+    camera.updateProjectionMatrix();
+    store.updateLod(camera);
+    expect(commands()).toHaveLength(2);
+    expect(commands()[1]?.worldMatrix).toEqual(commands()[0]?.worldMatrix);
+    expect(commands()[1]?.projectionMatrix).not.toEqual(commands()[0]?.projectionMatrix);
+    store.dispose();
+  });
 });
 
 class InMemoryWorker {
   private core: StreamingGaussianBackend | null = null;
   private listener: ((event: MessageEvent<WorkerOutbound>) => void) | null = null;
   readonly events: BackendEvent[] = [];
+  readonly commands: BackendCommand[] = [];
   terminated = false;
 
   addEventListener(type: string, listener: (event: MessageEvent<WorkerOutbound>) => void): void {
@@ -153,7 +178,10 @@ class InMemoryWorker {
         });
         queueMicrotask(() => this.listener?.({ data: received } as MessageEvent<WorkerOutbound>));
       });
-    } else if (cloned.type === "dispatch") this.core?.dispatch(cloned.command);
+    } else if (cloned.type === "dispatch") {
+      this.commands.push(cloned.command);
+      this.core?.dispatch(cloned.command);
+    }
     else this.core?.dispose();
   }
 }
