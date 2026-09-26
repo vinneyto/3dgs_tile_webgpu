@@ -103,6 +103,29 @@ describe("message backend", () => {
       .toBe(2));
     store.dispose();
   });
+
+  it("ignores patches from an obsolete layout or content version", async () => {
+    const port = new InMemoryWorker();
+    const store = new GaussianStore(new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG,
+      port as never));
+    await store.loadBuffer(ply(0));
+    await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
+    const version = store.contentVersion;
+    const layout = store.layoutVersion;
+    const forged = (layoutVersion: number, baseContentVersion: number): BackendEvent => ({
+      type: "buffers-patched", sceneRevision: 0,
+      layoutVersion, baseContentVersion, contentVersion: version + 1,
+      patches: [{ name: "means", firstSlot: 0, slotCount: 1,
+        data: new Float32Array([100, 0, 0, 0]).buffer }],
+      changedClouds: [{ cloudId: "cloud-1", objectId: 0, renderedCount: 1 }],
+      lodPending: false,
+    });
+    port.send(forged(layout - 1, version));
+    port.send(forged(layout, version - 1));
+    expect((store.getPackedData().means.array as Float32Array)[0]).toBe(0);
+    expect(store.contentVersion).toBe(version);
+    store.dispose();
+  });
 });
 
 class InMemoryWorker {
@@ -116,6 +139,9 @@ class InMemoryWorker {
   }
   removeEventListener(): void { this.listener = null; }
   terminate(): void { this.terminated = true; }
+  send(event: BackendEvent): void {
+    this.listener?.({ data: { type: "event", event } } as MessageEvent<WorkerOutbound>);
+  }
   postMessage(message: WorkerInbound, transfer: ArrayBuffer[] = []): void {
     const cloned = structuredClone(message, { transfer });
     if (cloned.type === "initialize") {
