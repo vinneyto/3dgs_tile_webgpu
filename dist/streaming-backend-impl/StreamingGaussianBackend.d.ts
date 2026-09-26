@@ -13,6 +13,7 @@ export declare class StreamingGaussianBackend implements GaussianBackend {
     private readonly usedCloudIds;
     private readonly usedCommandIds;
     private readonly cancelled;
+    private readonly pendingCommands;
     private readonly activeLoads;
     private readonly parser;
     private readonly config;
@@ -25,6 +26,8 @@ export declare class StreamingGaussianBackend implements GaussianBackend {
     private packed;
     private target;
     private updateScheduled;
+    private sceneUpdateTimer;
+    private readonly pendingTransforms;
     private disposed;
     constructor(config: BackendConfig);
     subscribe(listener: (event: BackendEvent) => void): () => void;
@@ -32,6 +35,9 @@ export declare class StreamingGaussianBackend implements GaussianBackend {
     dispose(): void;
     private emit;
     private handle;
+    private loadCheckpoint;
+    private scheduleSceneUpdate;
+    private flushSceneUpdate;
     private getCloud;
     private writeRange;
     private maxSlots;

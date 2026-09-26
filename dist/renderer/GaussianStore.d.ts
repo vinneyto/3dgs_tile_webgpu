@@ -24,6 +24,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private readonly cloudMap;
     private readonly cloudIds;
     private readonly pendingLoads;
+    private readonly pendingMutations;
     private readonly listeners;
     private readonly schemas;
     private readonly extraBuffers;
@@ -34,6 +35,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private cloudNumber;
     private lastView;
     private lastError;
+    private commandError;
     private capacity;
     private packedObjectCapacity;
     private packedDegree;
@@ -54,9 +56,10 @@ export declare class GaussianStore implements GaussianRenderStore {
     get needsPack(): boolean;
     get hasPackedData(): boolean;
     get lastPackStats(): GaussianStorePackStats | null;
+    get lastCommandError(): Error | null;
     subscribe(listener: GaussianBackendListener): () => void;
-    load(url: string, options?: CloudLoadOptions): Promise<GaussianCloud>;
-    loadBuffer(buffer: ArrayBuffer, options?: CloudLoadOptions): Promise<GaussianCloud>;
+    load(url: string, options?: CloudLoadOptions, signal?: AbortSignal): Promise<GaussianCloud>;
+    loadBuffer(buffer: ArrayBuffer, options?: CloudLoadOptions, signal?: AbortSignal): Promise<GaussianCloud>;
     remove(cloud: GaussianCloud): void;
     updatePackingPriority(cloud: GaussianCloud, priority: number): void;
     setCloudPacking(cloud: GaussianCloud, packingStrategy: PackingStrategy): void;
@@ -81,4 +84,5 @@ export declare class GaussianStore implements GaussianRenderStore {
     private nextCommandId;
     private requireId;
     private awaitLoad;
+    private rejectLoad;
 }

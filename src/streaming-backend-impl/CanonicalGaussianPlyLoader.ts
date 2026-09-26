@@ -86,6 +86,31 @@ export class CanonicalGaussianPlyLoader {
   }
 
   parse(buffer: ArrayBuffer): CpuGaussianSource {
+    const rows = this.parseChunks(buffer);
+    let step = rows.next();
+    while (!step.done) step = rows.next();
+    return step.value;
+  }
+
+  async parseAsync(
+    buffer: ArrayBuffer,
+    signal: AbortSignal,
+  ): Promise<CpuGaussianSource> {
+    const rows = this.parseChunks(buffer);
+    let step = rows.next();
+    while (!step.done) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (signal.aborted)
+        throw new DOMException("Load cancelled", "AbortError");
+      step = rows.next();
+    }
+    if (signal.aborted) throw new DOMException("Load cancelled", "AbortError");
+    return step.value;
+  }
+
+  private *parseChunks(
+    buffer: ArrayBuffer,
+  ): Generator<void, CpuGaussianSource> {
     const header = parseHeader(buffer);
     const propertyIndices = new Map(
       header.properties.map((property, index) => [property.name, index]),
@@ -130,6 +155,7 @@ export class CanonicalGaussianPlyLoader {
     const shCoefficients = new Float32Array(count * coefficientCount * 4);
 
     for (let gaussian = 0; gaussian < count; gaussian++) {
+      if (gaussian > 0 && gaussian % 4096 === 0) yield;
       const vectorOffset = gaussian * 4;
       means[vectorOffset] = read(gaussian, property("x"));
       means[vectorOffset + 1] = read(gaussian, property("y"));
