@@ -34,7 +34,8 @@ export declare class GaussianStore implements GaussianRenderStore {
     private revision;
     private commandNumber;
     private cloudNumber;
-    private lastView;
+    private lastCameraView;
+    private readonly lastCloudTransforms;
     private lastError;
     private commandError;
     private capacity;

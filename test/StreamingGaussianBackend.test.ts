@@ -576,6 +576,43 @@ describe("message backend", () => {
     );
     store.dispose();
   });
+
+  it("sends cloud transforms only when they change, independently of the camera", async () => {
+    const port = new InMemoryWorker();
+    const store = readyStore(
+      new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
+    );
+    const first = await store.loadBuffer(ply(0));
+    const camera = new PerspectiveCamera(50, 1, 0.1, 100);
+    const transforms = () => port.commands.filter((command) => command.type === "set-cloud-transform");
+    const cameras = () => port.commands.filter((command) => command.type === "set-camera");
+
+    store.updateLod(camera);
+    expect(transforms()).toHaveLength(1);
+    expect(cameras()).toHaveLength(1);
+    camera.position.x = 2;
+    store.updateLod(camera);
+    expect(transforms()).toHaveLength(1);
+    expect(cameras()).toHaveLength(2);
+
+    first.position.y = 3;
+    store.updateLod(camera);
+    expect(transforms()).toHaveLength(2);
+    expect(cameras()).toHaveLength(2);
+    store.updateLod(camera);
+    expect(transforms()).toHaveLength(2);
+
+    const second = await store.loadBuffer(ply(2));
+    store.updateLod(camera);
+    expect(transforms()).toHaveLength(3);
+    expect(cameras()).toHaveLength(2);
+    second.dispose();
+    camera.position.z = 1;
+    store.updateLod(camera);
+    expect(transforms()).toHaveLength(3);
+    expect(cameras()).toHaveLength(3);
+    store.dispose();
+  });
 });
 
 class InMemoryWorker {

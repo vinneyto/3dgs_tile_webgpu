@@ -2429,7 +2429,8 @@ class Cn {
   revision = 0;
   commandNumber = 0;
   cloudNumber = 0;
-  lastView = "";
+  lastCameraView = "";
+  lastCloudTransforms = /* @__PURE__ */ new Map();
   lastError = null;
   commandError = null;
   capacity = 0;
@@ -2610,37 +2611,37 @@ class Cn {
   updateLod(t) {
     if (this.disposed) return { appliedBatches: 0, pending: !1, clouds: [] };
     t.updateWorldMatrix(!0, !1);
-    const e = t.getWorldPosition(new at()), s = t.matrixWorld.elements.slice(), i = t.projectionMatrix.elements.slice(), r = this.clouds.map((a) => (a.updateWorldMatrix(!0, !1), [this.requireId(a), ...a.matrixWorld.elements])), n = JSON.stringify([
-      s,
-      i,
-      r
-    ]);
-    if (n !== this.lastView) {
-      this.lastView = n;
-      const a = ++this.revision;
-      for (const [c, ...l] of r)
+    const e = t.getWorldPosition(new at()), s = t.matrixWorld.elements.slice(), i = t.projectionMatrix.elements.slice(), r = this.clouds.map((u) => (u.updateWorldMatrix(!0, !1), [this.requireId(u), u.matrixWorld.elements.slice()])), n = new Set(r.map(([u]) => u));
+    for (const u of this.lastCloudTransforms.keys())
+      n.has(u) || this.lastCloudTransforms.delete(u);
+    const a = r.filter(
+      ([u, d]) => this.lastCloudTransforms.get(u) !== JSON.stringify(d)
+    ), c = JSON.stringify([s, i]), l = c !== this.lastCameraView;
+    if (l || a.length > 0) {
+      const u = ++this.revision;
+      for (const [d, h] of a)
         this.backend.dispatch({
           type: "set-cloud-transform",
           id: this.nextCommandId(),
-          cloudId: c,
-          sceneRevision: a,
-          worldMatrix: l
-        });
-      this.backend.dispatch({
+          cloudId: d,
+          sceneRevision: u,
+          worldMatrix: h
+        }), this.lastCloudTransforms.set(d, JSON.stringify(h));
+      l && (this.backend.dispatch({
         type: "set-camera",
         id: this.nextCommandId(),
-        sceneRevision: a,
+        sceneRevision: u,
         worldMatrix: s,
         projectionMatrix: i
-      });
+      }), this.lastCameraView = c);
     }
     return {
       appliedBatches: 0,
       pending: this.pendingLod,
-      clouds: this.clouds.map((a) => ({
-        cloud: a,
+      clouds: this.clouds.map((u) => ({
+        cloud: u,
         focusDistance: e.distanceTo(
-          a.getWorldPosition(new at())
+          u.getWorldPosition(new at())
         ),
         applied: !1,
         pending: this.pendingLod,
@@ -2696,7 +2697,7 @@ class Cn {
             priority: s,
             sourceVersion: 1,
             packingStrategy: e.packingStrategy
-          }), this.cloudIds.set(i, t.cloudId), this.pendingLoads.get(t.commandId)?.cleanup(), this.pendingLoads.get(t.commandId)?.resolve(i), this.pendingLoads.delete(t.commandId), this.lastView = "", this.notify("clouds");
+          }), this.cloudIds.set(i, t.cloudId), this.pendingLoads.get(t.commandId)?.cleanup(), this.pendingLoads.get(t.commandId)?.resolve(i), this.pendingLoads.delete(t.commandId), this.notify("clouds");
           break;
         }
         case "cloud-unloaded":
@@ -2811,7 +2812,7 @@ class Cn {
       clearedSlotRanges: [],
       planningMs: 0,
       slotUpdateMs: 0
-    }, this.awaitingLayout = !1, this.lastView = "", this.notify("layout");
+    }, this.awaitingLayout = !1, this.notify("layout");
   }
   patch(t) {
     if (t.layoutVersion !== this.packedLayoutVersion || t.baseContentVersion !== this.packedVersion)

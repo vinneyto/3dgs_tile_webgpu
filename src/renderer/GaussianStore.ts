@@ -73,7 +73,8 @@ export class GaussianStore implements GaussianRenderStore {
   private revision = 0;
   private commandNumber = 0;
   private cloudNumber = 0;
-  private lastView = "";
+  private lastCameraView = "";
+  private readonly lastCloudTransforms = new Map<string, string>();
   private lastError: Error | null = null;
   private commandError: Error | null = null;
   private capacity = 0;
@@ -346,32 +347,38 @@ export class GaussianStore implements GaussianRenderStore {
     const projectionMatrix = camera.projectionMatrix.elements.slice();
     const transforms = this.clouds.map((cloud) => {
       cloud.updateWorldMatrix(true, false);
-      return [this.requireId(cloud), ...cloud.matrixWorld.elements] as const;
+      return [this.requireId(cloud), cloud.matrixWorld.elements.slice()] as const;
     });
-    const key = JSON.stringify([
-      cameraWorldMatrix,
-      projectionMatrix,
-      transforms,
-    ]);
-    if (key !== this.lastView) {
-      this.lastView = key;
+    const activeIds = new Set(transforms.map(([cloudId]) => cloudId));
+    for (const cloudId of this.lastCloudTransforms.keys())
+      if (!activeIds.has(cloudId)) this.lastCloudTransforms.delete(cloudId);
+    const changedTransforms = transforms.filter(([cloudId, worldMatrix]) =>
+      this.lastCloudTransforms.get(cloudId) !== JSON.stringify(worldMatrix),
+    );
+    const cameraKey = JSON.stringify([cameraWorldMatrix, projectionMatrix]);
+    const cameraChanged = cameraKey !== this.lastCameraView;
+    if (cameraChanged || changedTransforms.length > 0) {
       const sceneRevision = ++this.revision;
-      for (const [cloudId, ...worldMatrix] of transforms) {
+      for (const [cloudId, worldMatrix] of changedTransforms) {
         this.backend.dispatch({
           type: "set-cloud-transform",
           id: this.nextCommandId(),
-          cloudId: cloudId as string,
+          cloudId,
           sceneRevision,
-          worldMatrix: worldMatrix as number[],
+          worldMatrix,
         });
+        this.lastCloudTransforms.set(cloudId, JSON.stringify(worldMatrix));
       }
-      this.backend.dispatch({
-        type: "set-camera",
-        id: this.nextCommandId(),
-        sceneRevision,
-        worldMatrix: cameraWorldMatrix,
-        projectionMatrix,
-      });
+      if (cameraChanged) {
+        this.backend.dispatch({
+          type: "set-camera",
+          id: this.nextCommandId(),
+          sceneRevision,
+          worldMatrix: cameraWorldMatrix,
+          projectionMatrix,
+        });
+        this.lastCameraView = cameraKey;
+      }
     }
     return {
       appliedBatches: 0,
@@ -460,7 +467,6 @@ export class GaussianStore implements GaussianRenderStore {
         this.pendingLoads.get(event.commandId)?.cleanup();
         this.pendingLoads.get(event.commandId)?.resolve(cloud);
         this.pendingLoads.delete(event.commandId);
-        this.lastView = "";
         this.notify("clouds");
         break;
       }
@@ -624,7 +630,6 @@ export class GaussianStore implements GaussianRenderStore {
       slotUpdateMs: 0,
     };
     this.awaitingLayout = false;
-    this.lastView = "";
     this.notify("layout");
   }
 
