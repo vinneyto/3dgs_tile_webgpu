@@ -25,6 +25,7 @@ import {
 const TEST_LIMITS = {
   maxStorageBufferBindingSize: 1_073_741_824,
   maxBufferSize: 1_073_741_824,
+  maxStorageBuffersPerShaderStage: 8,
 };
 
 describe("GaussianPass node slots", () => {
@@ -62,6 +63,30 @@ describe("GaussianPass node slots", () => {
       bounds: [0, 0, 0, 0, 0, 0],
     });
     expect(invalidate).toHaveBeenCalledOnce();
+    store.dispose();
+  });
+  it("reports the initialized device limits before any render buffers exist", () => {
+    const commands: unknown[] = [];
+    const backend: GaussianBackend = {
+      dispatch: (command) => commands.push(command),
+      subscribe: () => () => {},
+      dispose: () => {},
+    };
+    const store = new GaussianStoreClient(backend);
+    const renderer = createRenderer();
+    const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
+    const frame = { renderer } as unknown as NodeFrame;
+    pass.updateBefore(frame);
+    pass.updateBefore(frame);
+    expect(commands).toEqual([{
+      type: "set-frontend-capabilities",
+      id: expect.any(String),
+      capabilities: {
+        ...TEST_LIMITS,
+        supportsPartialBufferUpdates: true,
+      },
+    }]);
+    pass.dispose();
     store.dispose();
   });
   it("packs an uninitialized Store lazily on the first render", () => {

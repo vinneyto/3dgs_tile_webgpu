@@ -7,6 +7,7 @@ import type { SetCloudTransformCommand } from "./SetCloudTransformCommand";
 import type { SetCloudRaycastableCommand } from "./SetCloudRaycastableCommand";
 import type { WriteAttributeRangeCommand } from "./WriteAttributeRangeCommand";
 import type { SetCameraCommand } from "./SetCameraCommand";
+import type { SetFrontendCapabilitiesCommand } from "./SetFrontendCapabilitiesCommand";
 import type { CancelCommand } from "./CancelCommand";
 
 export type BackendCommand =
@@ -19,4 +20,5 @@ export type BackendCommand =
   | SetCloudRaycastableCommand
   | WriteAttributeRangeCommand
   | SetCameraCommand
+  | SetFrontendCapabilitiesCommand
   | CancelCommand;

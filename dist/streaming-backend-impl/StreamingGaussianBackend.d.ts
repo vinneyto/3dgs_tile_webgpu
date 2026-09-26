@@ -17,6 +17,7 @@ export declare class StreamingGaussianBackend implements GaussianBackend {
     private readonly activeLoads;
     private readonly parser;
     private readonly config;
+    private frontend;
     private work;
     private nextObjectId;
     private layoutVersion;

@@ -25,8 +25,8 @@ export {
 export { LocalGaussianBackend } from "./streaming-backend-impl/legacy/LocalGaussianBackend";
 export type { GaussianBackend as LegacyGaussianBackend } from "./renderer/legacy/GaussianBackend";
 export type { GaussianBackend } from "./streaming-backend/GaussianBackend";
-export type { GaussianBackendFactory } from "./streaming-backend/GaussianBackendFactory";
 export type { BackendConfig } from "./streaming-backend/BackendConfig";
+export type { FrontendCapabilities } from "./streaming-backend/FrontendCapabilities";
 export type { BackendCommand } from "./streaming-backend/commands/BackendCommand";
 export type { Command } from "./streaming-backend/commands/Command";
 export type { BackendEvent } from "./streaming-backend/events/BackendEvent";
@@ -45,8 +45,7 @@ export type {
   DistanceAwareRadialPackingStrategy,
 } from "./streaming-backend/PackingStrategy";
 export { StreamingGaussianBackend } from "./streaming-backend-impl/StreamingGaussianBackend";
-export { DirectStreamingGaussianBackendFactory } from "./streaming-backend-impl/DirectStreamingGaussianBackendFactory";
-export { WorkerStreamingGaussianBackend, WorkerStreamingGaussianBackendFactory } from "./streaming-backend-worker/WorkerStreamingGaussianBackend";
+export { WorkerStreamingGaussianBackend } from "./streaming-backend-worker/WorkerStreamingGaussianBackend";
 export type {
   GaussianBackendEvent,
   GaussianBackendEvents,

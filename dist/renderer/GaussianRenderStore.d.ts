@@ -1,4 +1,5 @@
 import type { Camera } from "three/webgpu";
+import type { FrontendCapabilities } from "../streaming-backend/FrontendCapabilities";
 import type { GaussianCloud } from "./GaussianCloud";
 import type { GaussianData } from "./GaussianData";
 import type { GaussianBackendListener } from "./legacy/GaussianBackendEvents";
@@ -21,6 +22,8 @@ export interface GaussianRenderStore {
     subscribe(listener: GaussianBackendListener): () => void;
     enablePackedLodLevelAttribute(): GaussianStorePackedAttribute;
     pack(options: GaussianStorePackOptions): void;
+    /** Streaming stores report device limits once the renderer is initialized. */
+    setFrontendCapabilities?(capabilities: FrontendCapabilities): void;
     updateLod(camera: Camera): GaussianStoreLodUpdate;
     getPackedData(): GaussianData;
 }
