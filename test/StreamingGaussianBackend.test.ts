@@ -39,6 +39,44 @@ function readyStore(
 }
 
 describe("message backend", () => {
+  it("coalesces camera messages before posting them to a busy worker", async () => {
+    const port = new InMemoryWorker();
+    const backend = new WorkerStreamingGaussianBackend(
+      DEFAULT_BACKEND_CONFIG,
+      port as never,
+    );
+    const events: BackendEvent[] = [];
+    backend.subscribe((event) => events.push(event));
+    const matrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    for (let sceneRevision = 1; sceneRevision <= 40; sceneRevision++) {
+      backend.dispatch({
+        type: "set-camera",
+        id: `camera-${sceneRevision}`,
+        sceneRevision,
+        worldMatrix: matrix,
+        projectionMatrix: matrix,
+      });
+    }
+    expect(
+      port.commands.filter((command) => command.type === "set-camera"),
+    ).toHaveLength(1);
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "command-completed",
+        commandId: "camera-40",
+      }),
+    );
+    expect(
+      port.commands
+        .filter((command) => command.type === "set-camera")
+        .map((command) => command.id),
+    ).toEqual(["camera-1", "camera-40"]);
+    expect(
+      events.filter((event) => event.type === "command-cancelled"),
+    ).toHaveLength(38);
+    backend.dispose();
+  });
+
   it("reports worker failures as backend-failure and rejects pending loads", async () => {
     const port = new InMemoryWorker();
     const backend = new WorkerStreamingGaussianBackend(
@@ -208,9 +246,12 @@ describe("message backend", () => {
     await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
     const previous = store.getPackedData();
     let finishFetch!: (response: Response) => void;
-    const fetcher = vi.fn(() => new Promise<Response>((resolve) => {
-      finishFetch = resolve;
-    }));
+    const fetcher = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          finishFetch = resolve;
+        }),
+    );
     vi.stubGlobal("fetch", fetcher);
 
     const loading = store.load("http://example.test/second.ply");
@@ -428,6 +469,59 @@ describe("message backend", () => {
     backend.dispose();
   });
 
+  it("keeps only the latest queued camera without crossing a scene mutation", async () => {
+    const backend = readyBackend();
+    const events: BackendEvent[] = [];
+    backend.subscribe((event) => events.push(event));
+    const matrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    const camera = (id: string, sceneRevision: number) => ({
+      type: "set-camera" as const,
+      id,
+      sceneRevision,
+      worldMatrix: matrix,
+      projectionMatrix: matrix,
+    });
+    backend.dispatch(camera("old", 1));
+    backend.dispatch(camera("latest-before-mutation", 2));
+    backend.dispatch({
+      type: "load-cloud-from-buffer",
+      id: "load",
+      cloudId: "cloud",
+      buffer: ply(0),
+    });
+    backend.dispatch(camera("old-after-mutation", 3));
+    backend.dispatch(camera("latest-after-mutation", 4));
+    await vi.waitFor(() =>
+      expect(events).toContainEqual({
+        type: "command-completed",
+        commandId: "latest-after-mutation",
+      }),
+    );
+    expect(
+      events.filter((event) => event.type === "command-cancelled"),
+    ).toEqual([
+      { type: "command-cancelled", commandId: "old" },
+      { type: "command-cancelled", commandId: "old-after-mutation" },
+    ]);
+    const firstCamera = events.findIndex(
+      (event) =>
+        event.type === "command-completed" &&
+        event.commandId === "latest-before-mutation",
+    );
+    const loaded = events.findIndex(
+      (event) => event.type === "cloud-loaded" && event.cloudId === "cloud",
+    );
+    const lastCamera = events.findIndex(
+      (event) =>
+        event.type === "command-completed" &&
+        event.commandId === "latest-after-mutation",
+    );
+    expect(firstCamera).toBeGreaterThan(-1);
+    expect(loaded).toBeGreaterThan(firstCamera);
+    expect(lastCamera).toBeGreaterThan(loaded);
+    backend.dispose();
+  });
+
   it("applies a standalone transform without waiting for a camera command", async () => {
     const backend = readyBackend();
     const events: BackendEvent[] = [];
@@ -595,7 +689,7 @@ describe("message backend", () => {
     camera.fov = 60;
     camera.updateProjectionMatrix();
     store.updateLod(camera);
-    expect(commands()).toHaveLength(2);
+    await vi.waitFor(() => expect(commands()).toHaveLength(2));
     expect(commands()[1]?.worldMatrix).toEqual(commands()[0]?.worldMatrix);
     expect(commands()[1]?.projectionMatrix).not.toEqual(
       commands()[0]?.projectionMatrix,
@@ -610,8 +704,10 @@ describe("message backend", () => {
     );
     const first = await store.loadBuffer(ply(0));
     const camera = new PerspectiveCamera(50, 1, 0.1, 100);
-    const transforms = () => port.commands.filter((command) => command.type === "set-cloud-transform");
-    const cameras = () => port.commands.filter((command) => command.type === "set-camera");
+    const transforms = () =>
+      port.commands.filter((command) => command.type === "set-cloud-transform");
+    const cameras = () =>
+      port.commands.filter((command) => command.type === "set-camera");
 
     store.updateLod(camera);
     expect(transforms()).toHaveLength(1);
@@ -619,7 +715,7 @@ describe("message backend", () => {
     camera.position.x = 2;
     store.updateLod(camera);
     expect(transforms()).toHaveLength(1);
-    expect(cameras()).toHaveLength(2);
+    await vi.waitFor(() => expect(cameras()).toHaveLength(2));
 
     first.position.y = 3;
     store.updateLod(camera);
@@ -636,7 +732,7 @@ describe("message backend", () => {
     camera.position.z = 1;
     store.updateLod(camera);
     expect(transforms()).toHaveLength(3);
-    expect(cameras()).toHaveLength(3);
+    await vi.waitFor(() => expect(cameras()).toHaveLength(3));
     store.dispose();
   });
 });
