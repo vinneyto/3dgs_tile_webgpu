@@ -8,11 +8,17 @@ export declare class WorkerStreamingGaussianBackend implements GaussianBackend {
     private readonly listeners;
     private readonly port;
     private disposed;
+    private readonly sceneInFlight;
+    private readonly pendingScene;
+    private sceneFlushScheduled;
     constructor(config: BackendConfig, port?: WorkerPort);
     subscribe(listener: (event: BackendEvent) => void): () => void;
     dispatch(command: BackendCommand): void;
     dispose(): void;
     private readonly onMessage;
+    private scheduleSceneFlush;
+    private flushScene;
+    private emit;
     private readonly onError;
     private readonly onMessageError;
 }

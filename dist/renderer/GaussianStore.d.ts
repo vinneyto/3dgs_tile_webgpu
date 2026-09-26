@@ -34,7 +34,8 @@ export declare class GaussianStore implements GaussianRenderStore {
     private revision;
     private commandNumber;
     private cloudNumber;
-    private lastView;
+    private lastCameraView;
+    private readonly lastCloudTransforms;
     private lastError;
     private commandError;
     private capacity;
@@ -45,7 +46,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private pendingLod;
     private packStats;
     private disposed;
-    private awaitingLayout;
+    private awaitingCapabilities;
     private frontendCapabilities;
     constructor(backend?: GaussianBackend);
     get clouds(): readonly GaussianCloud[];

@@ -19,6 +19,7 @@ export declare class StreamingGaussianBackend implements GaussianBackend {
     private readonly config;
     private frontend;
     private work;
+    private pendingCamera;
     private nextObjectId;
     private layoutVersion;
     private contentVersion;

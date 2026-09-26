@@ -836,6 +836,7 @@ class we {
   config;
   frontend = null;
   work = Promise.resolve();
+  pendingCamera = null;
   nextObjectId = 0;
   layoutVersion = 0;
   contentVersion = 0;
@@ -862,23 +863,31 @@ class we {
       this.pendingCommands.has(e.targetCommandId) && (this.cancelled.add(e.targetCommandId), this.activeLoads.get(e.targetCommandId)?.abort()), this.emit({ type: "command-completed", commandId: e.id });
       return;
     }
-    this.pendingCommands.add(e.id), this.work = this.work.then(async () => {
+    if (this.pendingCommands.add(e.id), e.type === "set-camera" && this.pendingCamera) {
+      const s = this.pendingCamera.command;
+      this.pendingCamera.command = e, this.pendingCommands.delete(s.id), this.emit({ type: "command-cancelled", commandId: s.id });
+      return;
+    }
+    const t = e.type === "set-camera" ? { command: e } : null;
+    this.pendingCamera = t, this.work = this.work.then(async () => {
+      const s = t?.command ?? e;
+      t && this.pendingCamera === t && (this.pendingCamera = null);
       try {
-        if (this.cancelled.delete(e.id)) {
-          this.emit({ type: "command-cancelled", commandId: e.id });
+        if (this.cancelled.delete(s.id)) {
+          this.emit({ type: "command-cancelled", commandId: s.id });
           return;
         }
-        await this.handle(e);
-      } catch (t) {
-        this.cancelled.delete(e.id) ? this.emit({ type: "command-cancelled", commandId: e.id }) : this.emit({
+        await this.handle(s);
+      } catch (n) {
+        this.cancelled.delete(s.id) ? this.emit({ type: "command-cancelled", commandId: s.id }) : this.emit({
           type: "error",
-          commandId: e.id,
-          cloudId: "cloudId" in e ? e.cloudId : void 0,
-          code: t instanceof RangeError ? "invalid-range" : "backend-error",
-          message: t instanceof Error ? t.message : String(t)
+          commandId: s.id,
+          cloudId: "cloudId" in s ? s.cloudId : void 0,
+          code: n instanceof RangeError ? "invalid-range" : "backend-error",
+          message: n instanceof Error ? n.message : String(n)
         });
       } finally {
-        this.pendingCommands.delete(e.id);
+        this.pendingCommands.delete(s.id);
       }
     });
   }
@@ -912,7 +921,8 @@ class we {
             if (f.headers.get("content-type")?.includes("text/html"))
               throw new Error("PLY URL returned HTML instead of a PLY file");
             const u = await f.arrayBuffer();
-            if (t.signal.aborted) throw new DOMException("Load cancelled", "AbortError");
+            if (t.signal.aborted)
+              throw new DOMException("Load cancelled", "AbortError");
             s = this.parser.parse(u);
           } else
             s = this.parser.parse(e.buffer);
@@ -1032,9 +1042,13 @@ class we {
           t.maxStorageBuffersPerShaderStage
         ])
           if (!Number.isSafeInteger(n) || n <= 0)
-            throw new RangeError("Frontend buffer limits must be positive integers");
+            throw new RangeError(
+              "Frontend buffer limits must be positive integers"
+            );
         if (typeof t.supportsPartialBufferUpdates != "boolean")
-          throw new TypeError("Frontend partial update support must be boolean");
+          throw new TypeError(
+            "Frontend partial update support must be boolean"
+          );
         const s = this.frontend;
         this.frontend = { ...t };
         try {

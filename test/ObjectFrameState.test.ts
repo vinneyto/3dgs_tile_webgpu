@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   Group,
   PerspectiveCamera,
@@ -7,6 +7,7 @@ import {
 } from "three/webgpu";
 
 import { GaussianData } from "../src/renderer/GaussianData";
+import { GaussianCloud } from "../src/renderer/GaussianCloud";
 import { packedStore } from "./helpers/packedStore";
 import { ObjectFrameState } from "../src/renderer/pipeline/ObjectFrameState";
 
@@ -33,6 +34,14 @@ describe("ObjectFrameState", () => {
     group.remove(cloud);
     state.update();
     expect(values(state)[40]).toBe(0);
+
+    group.add(cloud);
+    group.visible = true;
+    state.update();
+    expect(values(state)[40]).toBe(1);
+    vi.spyOn(store, "clouds", "get").mockReturnValue([]);
+    state.update();
+    expect(values(state)[40]).toBe(0);
   });
 
   it("creates independent camera-specific buffers for the same store", () => {
@@ -50,6 +59,20 @@ describe("ObjectFrameState", () => {
 
     expect(left.attribute).not.toBe(right.attribute);
     expect(values(left).slice(20, 40)).not.toEqual(values(right).slice(20, 40));
+  });
+
+  it("ignores a loaded cloud until its object slot arrives in packed buffers", () => {
+    const { store, cloud } = packedStore(oneGaussian());
+    const extra = new GaussianCloud(store, store.objectCapacity, 0);
+    const scene = new Scene();
+    scene.add(cloud, extra);
+    vi.spyOn(store, "clouds", "get").mockReturnValue([cloud, extra]);
+    const state = new ObjectFrameState(new PerspectiveCamera(), store, store.count);
+
+    expect(() => state.update()).not.toThrow();
+    expect(values(state)[40]).toBe(1);
+    state.dispose();
+    store.dispose();
   });
 });
 

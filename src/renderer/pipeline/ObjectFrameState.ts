@@ -41,7 +41,8 @@ export class ObjectFrameState {
   update(): void {
     this.camera.updateWorldMatrix(true, false);
     this.cameraWorldPosition.setFromMatrixPosition(this.camera.matrixWorld);
-    this.values.fill(0, this.frameComponentOffset);
+    // Removed clouds must become invisible even before the new layout arrives.
+    this.values.fill(0);
 
     for (const cloud of this.store.clouds) this.writeCloud(cloud);
     this.attribute.clearUpdateRanges();
@@ -57,6 +58,8 @@ export class ObjectFrameState {
   }
 
   private writeCloud(cloud: GaussianCloud): void {
+    // A newly loaded cloud can exist before the backend replaces packed buffers.
+    if (cloud.objectId >= this.store.objectCapacity) return;
     cloud.updateWorldMatrix(true, false);
     this.modelView.multiplyMatrices(
       this.camera.matrixWorldInverse,

@@ -73,7 +73,8 @@ export class GaussianStore implements GaussianRenderStore {
   private revision = 0;
   private commandNumber = 0;
   private cloudNumber = 0;
-  private lastView = "";
+  private lastCameraView = "";
+  private readonly lastCloudTransforms = new Map<string, string>();
   private lastError: Error | null = null;
   private commandError: Error | null = null;
   private capacity = 0;
@@ -84,7 +85,7 @@ export class GaussianStore implements GaussianRenderStore {
   private pendingLod = false;
   private packStats: GaussianStorePackStats | null = null;
   private disposed = false;
-  private awaitingLayout = false;
+  private awaitingCapabilities = false;
   private frontendCapabilities: FrontendCapabilities | null = null;
 
   constructor(
@@ -118,7 +119,7 @@ export class GaussianStore implements GaussianRenderStore {
     return this.packedVersion;
   }
   get hasPackedData(): boolean {
-    return this.data !== null && !this.awaitingLayout;
+    return this.data !== null && !this.awaitingCapabilities;
   }
   get lastPackStats(): GaussianStorePackStats | null {
     return this.packStats;
@@ -145,7 +146,6 @@ export class GaussianStore implements GaussianRenderStore {
     const id = this.nextCommandId();
     const cloudId = this.nextCloudId();
     const result = this.awaitLoad(id, options, signal);
-    this.awaitingLayout = true;
     try {
       this.backend.dispatch({
         type: "load-cloud",
@@ -169,7 +169,6 @@ export class GaussianStore implements GaussianRenderStore {
     const id = this.nextCommandId();
     const cloudId = this.nextCloudId();
     const result = this.awaitLoad(id, options, signal);
-    this.awaitingLayout = true;
     try {
       this.backend.dispatch({
         type: "load-cloud-from-buffer",
@@ -191,7 +190,6 @@ export class GaussianStore implements GaussianRenderStore {
     this.cloudIds.delete(cloud);
     cloud.setRaycastIndex(null);
     cloud.removeFromParent();
-    this.awaitingLayout = true;
     this.notify("clouds");
     this.backend.dispatch({
       type: "unload-cloud",
@@ -208,7 +206,6 @@ export class GaussianStore implements GaussianRenderStore {
     const previous = item.priority;
     item.priority = priority;
     cloud.updatePackingPriority(priority);
-    this.awaitingLayout = true;
     const commandId = this.nextCommandId();
     this.pendingMutations.set(commandId, () => {
       if (item.priority === priority) {
@@ -226,7 +223,6 @@ export class GaussianStore implements GaussianRenderStore {
     } catch (error) {
       this.pendingMutations.get(commandId)?.();
       this.pendingMutations.delete(commandId);
-      this.awaitingLayout = this.pendingLoads.size > 0;
       throw error;
     }
   }
@@ -239,7 +235,6 @@ export class GaussianStore implements GaussianRenderStore {
     const item = this.cloudMap.get(cloudId)!;
     const previous = item.packingStrategy;
     item.packingStrategy = packingStrategy;
-    this.awaitingLayout = true;
     const commandId = this.nextCommandId();
     this.pendingMutations.set(commandId, () => {
       if (item.packingStrategy === packingStrategy)
@@ -255,7 +250,6 @@ export class GaussianStore implements GaussianRenderStore {
     } catch (error) {
       this.pendingMutations.get(commandId)?.();
       this.pendingMutations.delete(commandId);
-      this.awaitingLayout = this.pendingLoads.size > 0;
       throw error;
     }
   }
@@ -322,8 +316,8 @@ export class GaussianStore implements GaussianRenderStore {
         capabilities.supportsPartialBufferUpdates
     )
       return;
-    const wasAwaitingLayout = this.awaitingLayout;
-    this.awaitingLayout = true;
+    const wasAwaitingCapabilities = this.awaitingCapabilities;
+    this.awaitingCapabilities = true;
     this.frontendCapabilities = { ...capabilities };
     try {
       this.backend.dispatch({
@@ -333,7 +327,7 @@ export class GaussianStore implements GaussianRenderStore {
       });
     } catch (error) {
       this.frontendCapabilities = previous;
-      this.awaitingLayout = wasAwaitingLayout;
+      this.awaitingCapabilities = wasAwaitingCapabilities;
       throw error;
     }
   }
@@ -346,32 +340,38 @@ export class GaussianStore implements GaussianRenderStore {
     const projectionMatrix = camera.projectionMatrix.elements.slice();
     const transforms = this.clouds.map((cloud) => {
       cloud.updateWorldMatrix(true, false);
-      return [this.requireId(cloud), ...cloud.matrixWorld.elements] as const;
+      return [this.requireId(cloud), cloud.matrixWorld.elements.slice()] as const;
     });
-    const key = JSON.stringify([
-      cameraWorldMatrix,
-      projectionMatrix,
-      transforms,
-    ]);
-    if (key !== this.lastView) {
-      this.lastView = key;
+    const activeIds = new Set(transforms.map(([cloudId]) => cloudId));
+    for (const cloudId of this.lastCloudTransforms.keys())
+      if (!activeIds.has(cloudId)) this.lastCloudTransforms.delete(cloudId);
+    const changedTransforms = transforms.filter(([cloudId, worldMatrix]) =>
+      this.lastCloudTransforms.get(cloudId) !== JSON.stringify(worldMatrix),
+    );
+    const cameraKey = JSON.stringify([cameraWorldMatrix, projectionMatrix]);
+    const cameraChanged = cameraKey !== this.lastCameraView;
+    if (cameraChanged || changedTransforms.length > 0) {
       const sceneRevision = ++this.revision;
-      for (const [cloudId, ...worldMatrix] of transforms) {
+      for (const [cloudId, worldMatrix] of changedTransforms) {
         this.backend.dispatch({
           type: "set-cloud-transform",
           id: this.nextCommandId(),
-          cloudId: cloudId as string,
+          cloudId,
           sceneRevision,
-          worldMatrix: worldMatrix as number[],
+          worldMatrix,
         });
+        this.lastCloudTransforms.set(cloudId, JSON.stringify(worldMatrix));
       }
-      this.backend.dispatch({
-        type: "set-camera",
-        id: this.nextCommandId(),
-        sceneRevision,
-        worldMatrix: cameraWorldMatrix,
-        projectionMatrix,
-      });
+      if (cameraChanged) {
+        this.backend.dispatch({
+          type: "set-camera",
+          id: this.nextCommandId(),
+          sceneRevision,
+          worldMatrix: cameraWorldMatrix,
+          projectionMatrix,
+        });
+        this.lastCameraView = cameraKey;
+      }
     }
     return {
       appliedBatches: 0,
@@ -395,7 +395,7 @@ export class GaussianStore implements GaussianRenderStore {
 
   getPackedData(): GaussianData {
     if (this.lastError) throw this.lastError;
-    if (!this.data || this.awaitingLayout)
+    if (!this.data || this.awaitingCapabilities)
       throw new Error("Gaussian buffers are not ready");
     return this.data;
   }
@@ -460,7 +460,6 @@ export class GaussianStore implements GaussianRenderStore {
         this.pendingLoads.get(event.commandId)?.cleanup();
         this.pendingLoads.get(event.commandId)?.resolve(cloud);
         this.pendingLoads.delete(event.commandId);
-        this.lastView = "";
         this.notify("clouds");
         break;
       }
@@ -497,7 +496,7 @@ export class GaussianStore implements GaussianRenderStore {
           this.pendingMutations.get(event.commandId)?.();
           this.pendingMutations.delete(event.commandId);
           this.commandError = error;
-          this.awaitingLayout = this.pendingLoads.size > 0;
+          this.awaitingCapabilities = false;
         } else this.lastError = error;
         this.notify("content");
         break;
@@ -509,7 +508,7 @@ export class GaussianStore implements GaussianRenderStore {
         for (const rollback of this.pendingMutations.values()) rollback();
         this.pendingMutations.clear();
         this.lastError = error;
-        this.awaitingLayout = false;
+        this.awaitingCapabilities = false;
         this.notify("content");
         break;
       }
@@ -623,8 +622,7 @@ export class GaussianStore implements GaussianRenderStore {
       planningMs: 0,
       slotUpdateMs: 0,
     };
-    this.awaitingLayout = false;
-    this.lastView = "";
+    this.awaitingCapabilities = false;
     this.notify("layout");
   }
 
@@ -762,7 +760,6 @@ export class GaussianStore implements GaussianRenderStore {
     if (!pending) return;
     pending.cleanup();
     this.pendingLoads.delete(id);
-    this.awaitingLayout = this.pendingLoads.size > 0;
     pending.reject(error);
   }
 }

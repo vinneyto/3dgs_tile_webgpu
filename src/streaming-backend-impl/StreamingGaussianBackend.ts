@@ -77,6 +77,9 @@ export class StreamingGaussianBackend implements GaussianBackend {
   private readonly config: BackendConfig;
   private frontend: FrontendCapabilities | null = null;
   private work: Promise<void> = Promise.resolve();
+  private pendingCamera: {
+    command: Extract<BackendCommand, { type: "set-camera" }>;
+  } | null = null;
   private nextObjectId = 0;
   private layoutVersion = 0;
   private contentVersion = 0;
@@ -113,30 +116,44 @@ export class StreamingGaussianBackend implements GaussianBackend {
       return;
     }
     this.pendingCommands.add(command.id);
+    if (command.type === "set-camera" && this.pendingCamera) {
+      const previous = this.pendingCamera.command;
+      this.pendingCamera.command = command;
+      this.pendingCommands.delete(previous.id);
+      this.emit({ type: "command-cancelled", commandId: previous.id });
+      return;
+    }
+    // Keep a camera slot only within a consecutive run of camera commands.
+    // Scene mutations must retain their place relative to camera updates.
+    const cameraSlot = command.type === "set-camera" ? { command } : null;
+    this.pendingCamera = cameraSlot;
     // Serialize scene mutations. Cancellation is handled outside the queue,
     // so it can interrupt a fetch or a command still waiting in the queue.
     this.work = this.work.then(async () => {
+      const current = cameraSlot?.command ?? command;
+      if (cameraSlot && this.pendingCamera === cameraSlot)
+        this.pendingCamera = null;
       try {
-        if (this.cancelled.delete(command.id)) {
-          this.emit({ type: "command-cancelled", commandId: command.id });
+        if (this.cancelled.delete(current.id)) {
+          this.emit({ type: "command-cancelled", commandId: current.id });
           return;
         }
-        await this.handle(command);
+        await this.handle(current);
       } catch (error) {
-        if (this.cancelled.delete(command.id)) {
-          this.emit({ type: "command-cancelled", commandId: command.id });
+        if (this.cancelled.delete(current.id)) {
+          this.emit({ type: "command-cancelled", commandId: current.id });
         } else {
           this.emit({
             type: "error",
-            commandId: command.id,
-            cloudId: "cloudId" in command ? command.cloudId : undefined,
+            commandId: current.id,
+            cloudId: "cloudId" in current ? current.cloudId : undefined,
             code:
               error instanceof RangeError ? "invalid-range" : "backend-error",
             message: error instanceof Error ? error.message : String(error),
           });
         }
       } finally {
-        this.pendingCommands.delete(command.id);
+        this.pendingCommands.delete(current.id);
       }
     });
   }
@@ -179,7 +196,8 @@ export class StreamingGaussianBackend implements GaussianBackend {
             if (response.headers.get("content-type")?.includes("text/html"))
               throw new Error("PLY URL returned HTML instead of a PLY file");
             const buffer = await response.arrayBuffer();
-            if (controller.signal.aborted) throw new DOMException("Load cancelled", "AbortError");
+            if (controller.signal.aborted)
+              throw new DOMException("Load cancelled", "AbortError");
             source = this.parser.parse(buffer);
           } else {
             source = this.parser.parse(command.buffer);
@@ -335,10 +353,14 @@ export class StreamingGaussianBackend implements GaussianBackend {
           capabilities.maxStorageBuffersPerShaderStage,
         ]) {
           if (!Number.isSafeInteger(limit) || limit <= 0)
-            throw new RangeError("Frontend buffer limits must be positive integers");
+            throw new RangeError(
+              "Frontend buffer limits must be positive integers",
+            );
         }
         if (typeof capabilities.supportsPartialBufferUpdates !== "boolean")
-          throw new TypeError("Frontend partial update support must be boolean");
+          throw new TypeError(
+            "Frontend partial update support must be boolean",
+          );
         const previous = this.frontend;
         this.frontend = { ...capabilities };
         try {
