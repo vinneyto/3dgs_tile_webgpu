@@ -1,5 +1,4 @@
 import { Vector3, type Ray } from "three";
-import { buildAsync, buildSync } from "./buildChunks";
 
 import {
   GaussianOctree,
@@ -48,29 +47,58 @@ const DEFAULT_LEVELS: readonly GaussianLodLevelOptions[] = [
 
 /** Leaf-cell LOD representations built over a GaussianOctree. */
 export class GaussianLod {
-  static build(octree: GaussianOctree, options: GaussianLodBuildOptions = {}): GaussianLod {
-    const levels = validateLevels(options.levels ?? DEFAULT_LEVELS);
-    return new GaussianLod(octree, levels, buildSync(buildLodChunks(octree, levels, options)),
-      options.ownsOctree ?? false);
-  }
-
-  static async buildAsync(octree: GaussianOctree, options: GaussianLodBuildOptions = {},
-    signal: AbortSignal): Promise<GaussianLod> {
-    const levels = validateLevels(options.levels ?? DEFAULT_LEVELS);
-    const nodes = await buildAsync(buildLodChunks(octree, levels, options), signal);
-    return new GaussianLod(octree, levels, nodes, options.ownsOctree ?? false);
+  static build(
+    octree: GaussianOctree,
+    options: GaussianLodBuildOptions = {},
+  ): GaussianLod {
+    return new GaussianLod(octree, options);
   }
 
   readonly levels: readonly GaussianLodLevelOptions[];
   readonly nodes: readonly GaussianLodNode[];
 
+  private readonly ownsOctree: boolean;
   private disposed = false;
 
-  private constructor(readonly octree: GaussianOctree,
-    levels: readonly GaussianLodLevelOptions[], nodes: readonly GaussianLodNode[],
-    private readonly ownsOctree: boolean) {
-    this.levels = levels;
-    this.nodes = nodes;
+  private constructor(
+    readonly octree: GaussianOctree,
+    options: GaussianLodBuildOptions,
+  ) {
+    this.levels = validateLevels(options.levels ?? DEFAULT_LEVELS);
+    this.ownsOctree = options.ownsOctree ?? false;
+    const importance = options.importance ?? defaultImportance;
+    const scores = new Float64Array(octree.data.count);
+    for (let index = 0; index < scores.length; index++) {
+      const score = importance(index, octree);
+      scores[index] = Number.isFinite(score) ? score : -Infinity;
+    }
+
+    this.nodes = octree.nodes.map((octreeNode) => {
+      if (octreeNode.gaussianIndices === null) {
+        return new GaussianLodNode(
+          octreeNode.id,
+          new Uint32Array(),
+          new Uint32Array(this.levels.length),
+        );
+      }
+      const sortedIndices = Uint32Array.from(
+        Array.from(octreeNode.gaussianIndices).sort(
+          (left, right) => scores[right]! - scores[left]! || left - right,
+        ),
+      );
+      return new GaussianLodNode(
+        octreeNode.id,
+        sortedIndices,
+        Uint32Array.from(
+          this.levels.map(({ retention }) =>
+            Math.min(
+              sortedIndices.length,
+              Math.max(1, Math.ceil(sortedIndices.length * retention)),
+            ),
+          ),
+        ),
+      );
+    });
   }
 
   get levelCount(): number {
@@ -218,37 +246,6 @@ export class GaussianLod {
     }
     return node;
   }
-}
-
-function* buildLodChunks(octree: GaussianOctree,
-  levels: readonly GaussianLodLevelOptions[],
-  options: GaussianLodBuildOptions): Generator<void, GaussianLodNode[]> {
-  const importance = options.importance ?? defaultImportance;
-  const scores = new Float64Array(octree.data.count);
-  for (let index = 0; index < scores.length; index++) {
-    if (index > 0 && index % 8192 === 0) yield;
-    const score = importance(index, octree);
-    scores[index] = Number.isFinite(score) ? score : -Infinity;
-  }
-  const nodes: GaussianLodNode[] = [];
-  for (const octreeNode of octree.nodes) {
-    if (nodes.length > 0 && nodes.length % 8192 === 0) yield;
-    if (octreeNode.gaussianIndices === null) {
-      nodes.push(new GaussianLodNode(octreeNode.id,
-        new Uint32Array(), new Uint32Array(levels.length)));
-      continue;
-    }
-    const sortedIndices = Uint32Array.from(
-      Array.from(octreeNode.gaussianIndices).sort(
-        (left, right) => scores[right]! - scores[left]! || left - right,
-      ),
-    );
-    nodes.push(new GaussianLodNode(octreeNode.id, sortedIndices,
-      Uint32Array.from(levels.map(({ retention }) =>
-        Math.min(sortedIndices.length,
-          Math.max(1, Math.ceil(sortedIndices.length * retention)))))));
-  }
-  return nodes;
 }
 
 function validateLevels(

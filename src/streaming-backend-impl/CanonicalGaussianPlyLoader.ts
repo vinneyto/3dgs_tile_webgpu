@@ -1,5 +1,4 @@
 import { CpuGaussianSource } from "./GaussianSource";
-import { buildAsync, buildSync } from "./buildChunks";
 
 type PlyFormat = "ascii" | "binary_little_endian" | "binary_big_endian";
 type PlyScalarType =
@@ -87,19 +86,6 @@ export class CanonicalGaussianPlyLoader {
   }
 
   parse(buffer: ArrayBuffer): CpuGaussianSource {
-    return buildSync(this.parseChunks(buffer));
-  }
-
-  async parseAsync(
-    buffer: ArrayBuffer,
-    signal: AbortSignal,
-  ): Promise<CpuGaussianSource> {
-    return buildAsync(this.parseChunks(buffer), signal);
-  }
-
-  private *parseChunks(
-    buffer: ArrayBuffer,
-  ): Generator<void, CpuGaussianSource> {
     const header = parseHeader(buffer);
     const propertyIndices = new Map(
       header.properties.map((property, index) => [property.name, index]),
@@ -144,7 +130,6 @@ export class CanonicalGaussianPlyLoader {
     const shCoefficients = new Float32Array(count * coefficientCount * 4);
 
     for (let gaussian = 0; gaussian < count; gaussian++) {
-      if (gaussian > 0 && gaussian % 4096 === 0) yield;
       const vectorOffset = gaussian * 4;
       means[vectorOffset] = read(gaussian, property("x"));
       means[vectorOffset + 1] = read(gaussian, property("y"));

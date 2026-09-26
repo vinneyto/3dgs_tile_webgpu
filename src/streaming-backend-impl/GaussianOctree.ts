@@ -1,7 +1,6 @@
 import { Box3, Quaternion, Ray, Vector3 } from "three";
 
 import type { GaussianSource } from "./GaussianSource";
-import { buildAsync, buildSync } from "./buildChunks";
 
 export interface GaussianOctreeBuildOptions {
   /** Maximum number of source Gaussians in a leaf. Defaults to 256. */
@@ -149,17 +148,25 @@ export class GaussianOctreeNode {
  * occupied cells split until leafCapacity or maxDepth is reached.
  */
 export class GaussianOctree {
-  static build(data: GaussianSource, options: GaussianOctreeBuildOptions = {}): GaussianOctree {
-    const [leafCapacity, maxDepth] = validateBuildOptions(options);
-    return new GaussianOctree(data, leafCapacity, maxDepth, options.ownsData ?? false,
-      buildSync(buildTreeChunks(data, leafCapacity, maxDepth)));
-  }
+  static build(
+    data: GaussianSource,
+    options: GaussianOctreeBuildOptions = {},
+  ): GaussianOctree {
+    const leafCapacity = options.leafCapacity ?? 256;
+    const maxDepth = options.maxDepth ?? 10;
+    if (!Number.isInteger(leafCapacity) || leafCapacity <= 0) {
+      throw new RangeError("GaussianOctree leafCapacity must be positive");
+    }
+    if (!Number.isInteger(maxDepth) || maxDepth < 0) {
+      throw new RangeError("GaussianOctree maxDepth must be non-negative");
+    }
 
-  static async buildAsync(data: GaussianSource, options: GaussianOctreeBuildOptions = {},
-    signal: AbortSignal): Promise<GaussianOctree> {
-    const [leafCapacity, maxDepth] = validateBuildOptions(options);
-    const built = await buildAsync(buildTreeChunks(data, leafCapacity, maxDepth), signal);
-    return new GaussianOctree(data, leafCapacity, maxDepth, options.ownsData ?? false, built);
+    return new GaussianOctree(
+      data,
+      leafCapacity,
+      maxDepth,
+      options.ownsData ?? false,
+    );
   }
 
   readonly bounds: Box3;
@@ -168,19 +175,103 @@ export class GaussianOctree {
   readonly nodes: readonly GaussianOctreeNode[];
   readonly leafNodeIds: Uint32Array;
 
+  private readonly ownsData: boolean;
   private disposed = false;
 
   private constructor(
     readonly data: GaussianSource,
     readonly leafCapacity: number,
     readonly maxDepth: number,
-    private readonly ownsData: boolean,
-    built: BuiltTree,
+    ownsData: boolean,
   ) {
-    this.bounds = built.bounds;
-    this.rootBounds = built.rootBounds;
-    this.nodes = built.nodes;
-    this.leafNodeIds = built.leafNodeIds;
+    this.ownsData = ownsData;
+    this.bounds = measureBounds(data);
+    this.rootBounds = enclosingCube(this.bounds);
+
+    const means = data.means.array as Float32Array;
+    const scalesOpacity = data.scalesOpacity.array as Float32Array;
+    const mutableNodes: GaussianOctreeNode[] = [];
+    const leafIds: number[] = [];
+    const indices = Array.from({ length: data.count }, (_, index) => index);
+
+    const buildNode = (
+      nodeIndices: number[],
+      cellBounds: Box3,
+      depth: number,
+    ): number => {
+      const id = mutableNodes.length;
+      mutableNodes.push(null as unknown as GaussianOctreeNode);
+
+      const canSplit =
+        nodeIndices.length > leafCapacity &&
+        depth < maxDepth &&
+        cellBounds.max.x - cellBounds.min.x > Number.EPSILON;
+      const childIds: number[] = [];
+
+      if (canSplit) {
+        const center = cellBounds.getCenter(new Vector3());
+        const partitions = Array.from({ length: 8 }, () => [] as number[]);
+        for (const gaussianIndex of nodeIndices) {
+          const offset = gaussianIndex * 4;
+          const octant =
+            (means[offset]! >= center.x ? 1 : 0) |
+            (means[offset + 1]! >= center.y ? 2 : 0) |
+            (means[offset + 2]! >= center.z ? 4 : 0);
+          partitions[octant]!.push(gaussianIndex);
+        }
+        for (let octant = 0; octant < 8; octant++) {
+          const partition = partitions[octant]!;
+          if (partition.length === 0) continue;
+          childIds.push(
+            buildNode(
+              partition,
+              childBounds(cellBounds, center, octant),
+              depth + 1,
+            ),
+          );
+        }
+      }
+
+      let maxSplatRadius = 0;
+      if (childIds.length > 0) {
+        for (const childId of childIds) {
+          maxSplatRadius = Math.max(
+            maxSplatRadius,
+            mutableNodes[childId]!.maxSplatRadius,
+          );
+        }
+      } else {
+        for (const gaussianIndex of nodeIndices) {
+          const offset = gaussianIndex * 4;
+          maxSplatRadius = Math.max(
+            maxSplatRadius,
+            scalesOpacity[offset]!,
+            scalesOpacity[offset + 1]!,
+            scalesOpacity[offset + 2]!,
+          );
+        }
+        leafIds.push(id);
+      }
+
+      const raycastBounds = cellBounds
+        .clone()
+        .expandByScalar(maxSplatRadius * 3);
+      mutableNodes[id] = new GaussianOctreeNode(
+        id,
+        depth,
+        cellBounds,
+        nodeIndices.length,
+        maxSplatRadius,
+        childIds,
+        childIds.length === 0 ? Uint32Array.from(nodeIndices) : null,
+        raycastBounds,
+      );
+      return id;
+    };
+
+    buildNode(indices, this.rootBounds.clone(), 0);
+    this.nodes = mutableNodes;
+    this.leafNodeIds = Uint32Array.from(leafIds);
   }
 
   raycast(
@@ -270,88 +361,16 @@ export class GaussianOctree {
   }
 }
 
-interface BuiltTree {
-  bounds: Box3;
-  rootBounds: Box3;
-  nodes: GaussianOctreeNode[];
-  leafNodeIds: Uint32Array;
-}
-
-function validateBuildOptions(options: GaussianOctreeBuildOptions): readonly [number, number] {
-  const leafCapacity = options.leafCapacity ?? 256;
-  const maxDepth = options.maxDepth ?? 10;
-  if (!Number.isInteger(leafCapacity) || leafCapacity <= 0)
-    throw new RangeError("GaussianOctree leafCapacity must be positive");
-  if (!Number.isInteger(maxDepth) || maxDepth < 0)
-    throw new RangeError("GaussianOctree maxDepth must be non-negative");
-  return [leafCapacity, maxDepth];
-}
-
-function* buildTreeChunks(data: GaussianSource, leafCapacity: number,
-  maxDepth: number): Generator<void, BuiltTree> {
+function measureBounds(data: GaussianSource): Box3 {
   const means = data.means.array as Float32Array;
-  const scalesOpacity = data.scalesOpacity.array as Float32Array;
-  const bounds = new Box3();
+  const result = new Box3();
   const point = new Vector3();
   for (let index = 0; index < data.count; index++) {
-    if (index > 0 && index % 8192 === 0) yield;
     const offset = index * 4;
     point.set(means[offset]!, means[offset + 1]!, means[offset + 2]!);
-    bounds.expandByPoint(point);
+    result.expandByPoint(point);
   }
-  const rootBounds = enclosingCube(bounds);
-  const nodes: GaussianOctreeNode[] = [];
-  const leafIds: number[] = [];
-  const indices = Array.from({ length: data.count }, (_, index) => index);
-  let operations = 0;
-
-  function* buildNode(nodeIndices: number[], cellBounds: Box3,
-    depth: number): Generator<void, number> {
-    const id = nodes.length;
-    nodes.push(null as unknown as GaussianOctreeNode);
-    const canSplit = nodeIndices.length > leafCapacity && depth < maxDepth &&
-      cellBounds.max.x - cellBounds.min.x > Number.EPSILON;
-    const childIds: number[] = [];
-    if (canSplit) {
-      const center = cellBounds.getCenter(new Vector3());
-      const partitions = Array.from({ length: 8 }, () => [] as number[]);
-      for (const gaussianIndex of nodeIndices) {
-        if (++operations % 8192 === 0) yield;
-        const offset = gaussianIndex * 4;
-        const octant =
-          (means[offset]! >= center.x ? 1 : 0) |
-          (means[offset + 1]! >= center.y ? 2 : 0) |
-          (means[offset + 2]! >= center.z ? 4 : 0);
-        partitions[octant]!.push(gaussianIndex);
-      }
-      for (let octant = 0; octant < 8; octant++) {
-        const partition = partitions[octant]!;
-        if (partition.length === 0) continue;
-        childIds.push(yield* buildNode(partition, childBounds(cellBounds, center, octant), depth + 1));
-      }
-    }
-    let maxSplatRadius = 0;
-    if (childIds.length > 0) {
-      for (const childId of childIds)
-        maxSplatRadius = Math.max(maxSplatRadius, nodes[childId]!.maxSplatRadius);
-    } else {
-      for (const gaussianIndex of nodeIndices) {
-        if (++operations % 8192 === 0) yield;
-        const offset = gaussianIndex * 4;
-        maxSplatRadius = Math.max(maxSplatRadius,
-          scalesOpacity[offset]!, scalesOpacity[offset + 1]!, scalesOpacity[offset + 2]!);
-      }
-      leafIds.push(id);
-    }
-    const raycastBounds = cellBounds.clone().expandByScalar(maxSplatRadius * 3);
-    nodes[id] = new GaussianOctreeNode(id, depth, cellBounds, nodeIndices.length,
-      maxSplatRadius, childIds, childIds.length === 0 ? Uint32Array.from(nodeIndices) : null,
-      raycastBounds);
-    return id;
-  }
-
-  yield* buildNode(indices, rootBounds.clone(), 0);
-  return { bounds, rootBounds, nodes, leafNodeIds: Uint32Array.from(leafIds) };
+  return result;
 }
 
 function enclosingCube(bounds: Box3): Box3 {

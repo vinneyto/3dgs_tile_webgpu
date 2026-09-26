@@ -182,21 +182,14 @@ export class StreamingGaussianBackend implements GaussianBackend {
             if (response.headers.get("content-type")?.includes("text/html"))
               throw new Error("PLY URL returned HTML instead of a PLY file");
             const buffer = await response.arrayBuffer();
-            await this.loadCheckpoint(controller.signal);
-            source = await this.parser.parseAsync(buffer, controller.signal);
+            if (controller.signal.aborted) throw new DOMException("Load cancelled", "AbortError");
+            source = this.parser.parse(buffer);
           } else {
-            await this.loadCheckpoint(controller.signal);
-            source = await this.parser.parseAsync(
-              command.buffer,
-              controller.signal,
-            );
+            source = this.parser.parse(command.buffer);
           }
-          await this.loadCheckpoint(controller.signal);
           const options = command.options ?? {};
-          const octree = await GaussianOctree.buildAsync(source, options.octree, controller.signal);
-          await this.loadCheckpoint(controller.signal);
-          const lod = await GaussianLod.buildAsync(octree, options.lod, controller.signal);
-          await this.loadCheckpoint(controller.signal);
+          const octree = GaussianOctree.build(source, options.octree);
+          const lod = GaussianLod.build(octree, options.lod);
           const entry: CloudEntry = {
             id: command.cloudId,
             objectId: this.nextObjectId++,
@@ -239,13 +232,11 @@ export class StreamingGaussianBackend implements GaussianBackend {
                   `Attribute schema differs across clouds: ${name}`,
                 );
             }
-          await this.loadCheckpoint(controller.signal);
           this.usedCloudIds.add(entry.id);
           this.clouds.set(entry.id, entry);
           let packed: PackedState;
           try {
             packed = this.compute();
-            await this.loadCheckpoint(controller.signal);
           } catch (error) {
             this.clouds.delete(entry.id);
             this.usedCloudIds.delete(entry.id);
@@ -352,12 +343,6 @@ export class StreamingGaussianBackend implements GaussianBackend {
         break;
     }
     this.emit({ type: "command-completed", commandId: command.id });
-  }
-
-  private async loadCheckpoint(signal: AbortSignal): Promise<void> {
-    // Let queued worker messages run between CPU phases, including cancel.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    if (signal.aborted) throw new DOMException("Load cancelled", "AbortError");
   }
 
   private scheduleSceneUpdate(): void {

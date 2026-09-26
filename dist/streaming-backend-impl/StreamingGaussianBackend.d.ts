@@ -35,7 +35,6 @@ export declare class StreamingGaussianBackend implements GaussianBackend {
     dispose(): void;
     private emit;
     private handle;
-    private loadCheckpoint;
     private scheduleSceneUpdate;
     private flushSceneUpdate;
     private getCloud;

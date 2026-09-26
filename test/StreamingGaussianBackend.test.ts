@@ -15,6 +15,31 @@ import type { BackendCommand } from "../src/streaming-backend/commands/BackendCo
 afterEach(() => vi.unstubAllGlobals());
 
 describe("message backend", () => {
+  it("parses, builds the octree and LOD, and packs once before the first buffers", async () => {
+    const { CanonicalGaussianPlyLoader } = await import("../src/streaming-backend-impl/CanonicalGaussianPlyLoader");
+    const { GaussianOctree } = await import("../src/streaming-backend-impl/GaussianOctree");
+    const { GaussianLod } = await import("../src/streaming-backend-impl/GaussianLod");
+    const parse = vi.spyOn(CanonicalGaussianPlyLoader.prototype, "parse");
+    const octree = vi.spyOn(GaussianOctree, "build");
+    const lod = vi.spyOn(GaussianLod, "build");
+    const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
+    const compute = vi.spyOn(backend as unknown as { compute: () => unknown }, "compute");
+    const events: BackendEvent[] = [];
+    backend.subscribe((event) => events.push(event));
+
+    backend.dispatch({ type: "load-cloud-from-buffer", id: "load", cloudId: "cloud", buffer: ply(0) });
+    await vi.waitFor(() => expect(events.some((event) => event.type === "buffers-replaced")).toBe(true));
+    expect(parse).toHaveBeenCalledTimes(1);
+    expect(octree).toHaveBeenCalledTimes(1);
+    expect(lod).toHaveBeenCalledTimes(1);
+    expect(compute).toHaveBeenCalledTimes(1);
+    backend.dispose();
+    parse.mockRestore();
+    octree.mockRestore();
+    lod.mockRestore();
+    compute.mockRestore();
+  });
+
   it("resolves relative PLY URLs on the client before loading", async () => {
     vi.stubGlobal("document", { baseURI: "http://localhost:5173/sandbox/" });
     const fetcher = vi.fn(async () => new Response(ply(0)));
@@ -162,78 +187,6 @@ describe("message backend", () => {
     expect(input.byteLength).toBeGreaterThan(0);
     expect(port.commands).toHaveLength(0);
     store.dispose();
-  });
-
-  it("honors cancellation after parsing before building the octree", async () => {
-    const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
-    const events: BackendEvent[] = [];
-    backend.subscribe((event) => events.push(event));
-    const { CanonicalGaussianPlyLoader } =
-      await import("../src/streaming-backend-impl/CanonicalGaussianPlyLoader");
-    const parse = CanonicalGaussianPlyLoader.prototype.parse;
-    const spy = vi
-      .spyOn(CanonicalGaussianPlyLoader.prototype, "parseAsync")
-      .mockImplementation(async function (this: InstanceType<typeof CanonicalGaussianPlyLoader>, buffer) {
-        const source = parse.call(this, buffer);
-        backend.dispatch({
-          type: "cancel",
-          id: "cancel",
-          targetCommandId: "load",
-        });
-        return source;
-      });
-    backend.dispatch({
-      type: "load-cloud-from-buffer",
-      id: "load",
-      cloudId: "cloud",
-      buffer: ply(0),
-    });
-    await vi.waitFor(() =>
-      expect(events).toContainEqual({
-        type: "command-cancelled",
-        commandId: "load",
-      }),
-    );
-    expect(events.some((event) => event.type === "cloud-loaded")).toBe(false);
-    spy.mockRestore();
-    backend.dispose();
-  });
-
-  it("interrupts a long PLY parse at a chunk boundary", async () => {
-    const { CanonicalGaussianPlyLoader } = await import("../src/streaming-backend-impl/CanonicalGaussianPlyLoader");
-    const single = new TextDecoder().decode(ply(0));
-    const [header, row] = single.split("end_header\n");
-    const input = new TextEncoder().encode(
-      `${header!.replace("element vertex 1", "element vertex 8193")}end_header\n${row!.repeat(8193)}`,
-    ).buffer as ArrayBuffer;
-    const controller = new AbortController();
-    const parsing = new CanonicalGaussianPlyLoader().parseAsync(input, controller.signal);
-    queueMicrotask(() => controller.abort());
-    await expect(parsing).rejects.toMatchObject({ name: "AbortError" });
-  });
-
-  it("interrupts octree and LOD building inside their CPU work", async () => {
-    const { CanonicalGaussianPlyLoader } = await import("../src/streaming-backend-impl/CanonicalGaussianPlyLoader");
-    const { GaussianOctree } = await import("../src/streaming-backend-impl/GaussianOctree");
-    const { GaussianLod } = await import("../src/streaming-backend-impl/GaussianLod");
-    const single = new TextDecoder().decode(ply(0));
-    const [header, row] = single.split("end_header\n");
-    const input = new TextEncoder().encode(
-      `${header!.replace("element vertex 1", "element vertex 8193")}end_header\n${row!.repeat(8193)}`,
-    ).buffer as ArrayBuffer;
-    const source = new CanonicalGaussianPlyLoader().parse(input);
-    const first = new AbortController();
-    const buildingTree = GaussianOctree.buildAsync(source, {}, first.signal);
-    queueMicrotask(() => first.abort());
-    await expect(buildingTree).rejects.toMatchObject({ name: "AbortError" });
-
-    const octree = GaussianOctree.build(source);
-    const second = new AbortController();
-    const buildingLod = GaussianLod.buildAsync(octree, {}, second.signal);
-    queueMicrotask(() => second.abort());
-    await expect(buildingLod).rejects.toMatchObject({ name: "AbortError" });
-    octree.dispose();
-    source.dispose();
   });
 
   it("computes a scene revision once for multiple transforms and a camera update", async () => {
