@@ -10,6 +10,7 @@ A tiled 3D Gaussian Splatting pass for Three.js WebGPU. The renderer consumes pa
 | `src/streaming-backend` | Transport-neutral plain-object commands and events, `GaussianBackend` and `GaussianBackendFactory` contracts. Individual commands and events have separate files. |
 | `src/streaming-backend-impl` | `StreamingGaussianBackend`: PLY parsing, source attributes, octree, LOD, packing, budgets, and versioned buffer updates. It does not own WebGPU objects or a worker transport. |
 | `src/streaming-backend-worker` | Worker endpoint and client proxy. ArrayBuffers cross the worker boundary with transferable ownership. |
+| `node` | Node TCP server and client adapter for the same backend messages, with JSON metadata and raw binary buffer attachments. |
 
 `GaussianStore` takes a `GaussianBackend` in its constructor and uses the worker implementation by default. `GaussianPass` takes the smaller `GaussianRenderStore` interface; it does not inspect the backend implementation. A separate `3dgs-tile-webgpu/backend` entry exports the protocol and computation engine for a future server transport, without importing the renderer or browser worker.
 
@@ -51,6 +52,32 @@ renderer.setAnimationLoop(() => pipeline.render());
 The optional config supplied to `new WorkerStreamingGaussianBackend(config)` specifies frontend storage-buffer limits, the maximum Gaussian count, default packing strategy and per-update upload budget. `new StreamingGaussianBackend(config)` runs the same engine without a worker, useful for tests and transport adapters. The browser sandbox at `npm run sandbox` supports `?backend=main` for that direct engine.
 
 The legacy `LocalGaussianBackend` and `WorkerGaussianBackend` remain exported for applications that still create `GaussianData` directly. The new `GaussianStore` accepts the message-based `GaussianBackend` contract.
+
+## Node transport for integration environments
+
+Run `npm run build` once when working from the source checkout, then start the server with `npm run backend:serve` (binds to `127.0.0.1:8765` by default; set `GAUSSIAN_BACKEND_PORT` to change it). The package also exports a programmatic server and client:
+
+```ts
+import { GaussianStore } from "3dgs-tile-webgpu";
+import type { BackendConfig } from "3dgs-tile-webgpu/backend";
+import { createNodeStreamingServer, NodeStreamingGaussianBackend } from "3dgs-tile-webgpu/node";
+
+const config: BackendConfig = { frontend: {
+  maxStorageBufferBindingSize: 128 * 1024 * 1024,
+  maxBufferSize: 256 * 1024 * 1024,
+  maxStorageBuffersPerShaderStage: 8,
+  supportsPartialBufferUpdates: true,
+} };
+const server = await createNodeStreamingServer({ port: 0 });
+const address = server.address();
+if (!address || typeof address === "string") throw new Error("No TCP address");
+const backend = new NodeStreamingGaussianBackend(config, { port: address.port });
+await backend.ready;
+const store = new GaussianStore(backend);
+// Load a PLY through store, then call store.dispose() and await server.close().
+```
+
+Each TCP connection gets its own `StreamingGaussianBackend`. A length-prefixed packet contains a JSON object and raw binary attachments for every `ArrayBuffer`, including packed attributes and raycast data. The server never imports Three.js WebGPU or the renderer. TCP makes independent copies: receiving a buffer does **not** detach the sender's `ArrayBuffer`. Worker transport instead uses `postMessage` with a transfer list, which detaches the sender's buffer; that ownership behavior needs a worker-specific test. Both transports can share cases for commands, event order, buffer bytes, patches, errors and versions.
 
 ## Development
 
