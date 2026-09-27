@@ -1,7 +1,7 @@
 import type { BackendConfig } from "../streaming-backend/BackendConfig";
 import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
 import type { BackendCommand } from "../streaming-backend/commands/BackendCommand";
-import type { BackendEvent } from "../streaming-backend/events/BackendEvent";
+import type { BackendResponse, BackendFailure } from "../streaming-backend/BackendResponse";
 /**
  * Session-local, transport-independent computation engine. The source and
  * current layout remain owned here; every emitted buffer is a separate,
@@ -9,17 +9,14 @@ import type { BackendEvent } from "../streaming-backend/events/BackendEvent";
  */
 export declare class StreamingGaussianBackend implements GaussianBackend {
     private readonly listeners;
+    private readonly failureListeners;
     private readonly clouds;
     private readonly usedCloudIds;
     private readonly usedCommandIds;
-    private readonly cancelled;
-    private readonly pendingCommands;
     private readonly activeLoads;
     private readonly parser;
     private readonly config;
     private frontend;
-    private work;
-    private pendingCamera;
     private nextObjectId;
     private layoutVersion;
     private contentVersion;
@@ -28,17 +25,20 @@ export declare class StreamingGaussianBackend implements GaussianBackend {
     private packed;
     private target;
     private updateScheduled;
-    private sceneUpdateTimer;
-    private readonly pendingTransforms;
+    private active;
+    private startedAt;
+    private drain;
     private disposed;
     constructor(config: BackendConfig);
-    subscribe(listener: (event: BackendEvent) => void): () => void;
+    subscribe(listener: (response: BackendResponse) => void): () => void;
+    onFailure(listener: (failure: BackendFailure) => void): () => void;
     dispatch(command: BackendCommand): void;
+    abort(commandId: string): void;
+    private run;
     dispose(): void;
+    private respond;
     private emit;
     private handle;
-    private scheduleSceneUpdate;
-    private flushSceneUpdate;
     private getCloud;
     private writeRange;
     private maxSlots;

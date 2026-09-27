@@ -12,23 +12,25 @@ scope.onmessage = ({ data }) => {
     if (data.type === "initialize") {
       if (backend) throw new Error("Streaming backend already initialized");
       backend = new StreamingGaussianBackend(data.config);
-      backend.subscribe((event) => {
-        scope.postMessage({ type: "event", event }, transferBuffers(event));
+      backend.subscribe((response) => {
+        scope.postMessage(
+          { type: "response", response },
+          transferBuffers(response),
+        );
       });
-      scope.postMessage({ type: "ready" });
     } else if (data.type === "dispatch") {
       if (!backend) throw new Error("Streaming backend not initialized");
       backend.dispatch(data.command);
+    } else if (data.type === "abort") {
+      backend?.abort(data.commandId);
     } else {
       backend?.dispose();
       backend = null;
     }
   } catch (error) {
     scope.postMessage({
-      type: "event",
-      event: {
-        type: "backend-failure",
-        commandId: data.type === "dispatch" ? data.command.id : undefined,
+      type: "failure",
+      failure: {
         code: "worker-dispatch-error",
         message: error instanceof Error ? error.message : String(error),
       },
@@ -38,9 +40,8 @@ scope.onmessage = ({ data }) => {
 
 globalThis.addEventListener("unhandledrejection", (event) => {
   scope.postMessage({
-    type: "event",
-    event: {
-      type: "backend-failure",
+    type: "failure",
+    failure: {
       code: "worker-unhandled-rejection",
       message:
         event.reason instanceof Error

@@ -17,8 +17,18 @@ export type { BackendConfig } from "./streaming-backend/BackendConfig";
 export type { FrontendCapabilities } from "./streaming-backend/FrontendCapabilities";
 export type { BackendCommand } from "./streaming-backend/commands/BackendCommand";
 export type { Command } from "./streaming-backend/commands/Command";
-export type { BackendEvent } from "./streaming-backend/events/BackendEvent";
-export type { BackendFailureEvent } from "./streaming-backend/events/BackendFailureEvent";
+export type {
+  BackendResponse,
+  BackendPayload,
+  BackendFailure,
+} from "./streaming-backend/BackendResponse";
+export type {
+  RequestScheduler,
+  RequestResult,
+  SchedulerState,
+} from "./streaming-backend/RequestScheduler";
+export { SerialRequestScheduler } from "./streaming-backend/RequestScheduler";
+export * from "./streaming-backend/commands/createCommands";
 export type { CloudLoadOptions } from "./streaming-backend/CloudLoadOptions";
 export type {
   AttributeInit,

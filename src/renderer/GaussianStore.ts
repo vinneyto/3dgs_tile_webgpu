@@ -29,7 +29,27 @@ import type { FrontendCapabilities } from "../streaming-backend/FrontendCapabili
 import type { CloudLoadOptions } from "../streaming-backend/CloudLoadOptions";
 import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
 import type { PackingStrategy } from "../streaming-backend/PackingStrategy";
-import type { BackendEvent } from "../streaming-backend/events/BackendEvent";
+import type {
+  BackendPayload,
+  BackendResponse,
+  BackendFailure,
+} from "../streaming-backend/BackendResponse";
+import type { BackendCommand } from "../streaming-backend/commands/BackendCommand";
+import {
+  SerialRequestScheduler,
+  type RequestScheduler,
+} from "../streaming-backend/RequestScheduler";
+import {
+  createLoadCloudCommand,
+  createLoadCloudFromBufferCommand,
+  createUnloadCloudCommand,
+  createSetCloudPriorityCommand,
+  createSetCloudPackingCommand,
+  createSetCloudRaycastableCommand,
+  createWriteAttributeRangeCommand,
+  createSetCloudTransformCommand,
+  createSetCameraCommand,
+} from "../streaming-backend/commands/createCommands";
 import type { PackedAttributeBuffer } from "../streaming-backend/PackedAttributeBuffer";
 import { WorkerStreamingGaussianBackend } from "../streaming-backend-worker/WorkerStreamingGaussianBackend";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
@@ -58,17 +78,19 @@ export const DEFAULT_BACKEND_CONFIG: BackendConfig = {
  */
 export class GaussianStore implements GaussianRenderStore {
   readonly attributes = new GaussianStoreAttributes();
-  readonly backend: GaussianBackend;
+  readonly scheduler: RequestScheduler;
   readonly packedShFormat = "rgb8e8" as const;
   readonly maxGaussiansOption: number | "auto" = "auto";
   private readonly cloudMap = new Map<string, ClientCloud>();
   private readonly cloudIds = new Map<GaussianCloud, string>();
   private readonly pendingLoads = new Map<string, PendingCloud>();
+  private readonly abortedLoads = new Set<string>();
   private readonly pendingMutations = new Map<string, () => void>();
   private readonly listeners = new Set<GaussianStoreListener>();
   private readonly schemas = new Map<string, PackedAttributeBuffer>();
   private readonly extraBuffers = new Map<string, StorageBufferAttribute>();
   private readonly unsubscribe: () => void;
+  private readonly unsubscribeFailure: () => void;
   private data: GaussianData | null = null;
   private revision = 0;
   private commandNumber = 0;
@@ -89,12 +111,18 @@ export class GaussianStore implements GaussianRenderStore {
   private frontendCapabilities: FrontendCapabilities | null = null;
 
   constructor(
-    backend: GaussianBackend = new WorkerStreamingGaussianBackend(
-      DEFAULT_BACKEND_CONFIG,
+    schedulerOrBackend:
+      RequestScheduler | GaussianBackend = new SerialRequestScheduler(
+      new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG),
     ),
   ) {
-    this.backend = backend;
-    this.unsubscribe = backend.subscribe(this.handleEvent);
+    // Accept an existing backend for applications that provide a debug transport.
+    this.scheduler =
+      "schedule" in schedulerOrBackend
+        ? schedulerOrBackend
+        : new SerialRequestScheduler(schedulerOrBackend);
+    this.unsubscribe = this.scheduler.onResponse(this.handleResponse);
+    this.unsubscribeFailure = this.scheduler.onFailure(this.handleFailure);
   }
 
   get clouds(): readonly GaussianCloud[] {
@@ -147,13 +175,7 @@ export class GaussianStore implements GaussianRenderStore {
     const cloudId = this.nextCloudId();
     const result = this.awaitLoad(id, options, signal);
     try {
-      this.backend.dispatch({
-        type: "load-cloud",
-        id,
-        cloudId,
-        url: resolvedUrl,
-        options,
-      });
+      this.submit(createLoadCloudCommand(id, cloudId, resolvedUrl, options));
     } catch (error) {
       this.rejectLoad(id, error as Error);
     }
@@ -170,13 +192,9 @@ export class GaussianStore implements GaussianRenderStore {
     const cloudId = this.nextCloudId();
     const result = this.awaitLoad(id, options, signal);
     try {
-      this.backend.dispatch({
-        type: "load-cloud-from-buffer",
-        id,
-        cloudId,
-        buffer,
-        options,
-      });
+      this.submit(
+        createLoadCloudFromBufferCommand(id, cloudId, buffer, options),
+      );
     } catch (error) {
       this.rejectLoad(id, error as Error);
     }
@@ -191,11 +209,7 @@ export class GaussianStore implements GaussianRenderStore {
     cloud.setRaycastIndex(null);
     cloud.removeFromParent();
     this.notify("clouds");
-    this.backend.dispatch({
-      type: "unload-cloud",
-      id: this.nextCommandId(),
-      cloudId: id,
-    });
+    this.submit(createUnloadCloudCommand(this.nextCommandId(), id));
   }
 
   updatePackingPriority(cloud: GaussianCloud, priority: number): void {
@@ -214,12 +228,7 @@ export class GaussianStore implements GaussianRenderStore {
       }
     });
     try {
-      this.backend.dispatch({
-        type: "set-cloud-priority",
-        id: commandId,
-        cloudId: id,
-        priority,
-      });
+      this.submit(createSetCloudPriorityCommand(commandId, id, priority));
     } catch (error) {
       this.pendingMutations.get(commandId)?.();
       this.pendingMutations.delete(commandId);
@@ -241,12 +250,9 @@ export class GaussianStore implements GaussianRenderStore {
         item.packingStrategy = previous;
     });
     try {
-      this.backend.dispatch({
-        type: "set-cloud-packing",
-        id: commandId,
-        cloudId,
-        packingStrategy,
-      });
+      this.submit(
+        createSetCloudPackingCommand(commandId, cloudId, packingStrategy),
+      );
     } catch (error) {
       this.pendingMutations.get(commandId)?.();
       this.pendingMutations.delete(commandId);
@@ -257,12 +263,13 @@ export class GaussianStore implements GaussianRenderStore {
   setCloudRaycastable(cloud: GaussianCloud, raycastable: boolean): void {
     const cloudId = this.requireId(cloud);
     if (!raycastable) cloud.setRaycastIndex(null);
-    this.backend.dispatch({
-      type: "set-cloud-raycastable",
-      id: this.nextCommandId(),
-      cloudId,
-      raycastable,
-    });
+    this.submit(
+      createSetCloudRaycastableCommand(
+        this.nextCommandId(),
+        cloudId,
+        raycastable,
+      ),
+    );
   }
 
   writeAttributeRange(
@@ -272,15 +279,16 @@ export class GaussianStore implements GaussianRenderStore {
     gaussianCount: number,
     data: ArrayBuffer,
   ): void {
-    this.backend.dispatch({
-      type: "write-attribute-range",
-      id: this.nextCommandId(),
-      cloudId: this.requireId(cloud),
-      attribute,
-      firstGaussian,
-      gaussianCount,
-      data,
-    });
+    this.submit(
+      createWriteAttributeRangeCommand(
+        this.nextCommandId(),
+        this.requireId(cloud),
+        attribute,
+        firstGaussian,
+        gaussianCount,
+        data,
+      ),
+    );
   }
 
   invalidateCloudPacking(cloud: GaussianCloud): void {
@@ -319,17 +327,31 @@ export class GaussianStore implements GaussianRenderStore {
     const wasAwaitingCapabilities = this.awaitingCapabilities;
     this.awaitingCapabilities = true;
     this.frontendCapabilities = { ...capabilities };
-    try {
-      this.backend.dispatch({
-        type: "set-frontend-capabilities",
-        id: this.nextCommandId(),
-        capabilities: { ...capabilities },
-      });
-    } catch (error) {
-      this.frontendCapabilities = previous;
-      this.awaitingCapabilities = wasAwaitingCapabilities;
-      throw error;
-    }
+    void this.scheduler.start(capabilities).then(
+      () => {
+        if (
+          this.frontendCapabilities === null ||
+          this.frontendCapabilities.maxBufferSize !==
+            capabilities.maxBufferSize ||
+          this.frontendCapabilities.maxStorageBufferBindingSize !==
+            capabilities.maxStorageBufferBindingSize ||
+          this.frontendCapabilities.maxStorageBuffersPerShaderStage !==
+            capabilities.maxStorageBuffersPerShaderStage ||
+          this.frontendCapabilities.supportsPartialBufferUpdates !==
+            capabilities.supportsPartialBufferUpdates
+        )
+          return;
+        this.awaitingCapabilities = false;
+        this.notify("content");
+      },
+      (error: unknown) => {
+        this.frontendCapabilities = previous;
+        this.awaitingCapabilities = wasAwaitingCapabilities;
+        this.lastError =
+          error instanceof Error ? error : new Error(String(error));
+        this.notify("content");
+      },
+    );
   }
 
   updateLod(camera: Camera): GaussianStoreLodUpdate {
@@ -340,36 +362,42 @@ export class GaussianStore implements GaussianRenderStore {
     const projectionMatrix = camera.projectionMatrix.elements.slice();
     const transforms = this.clouds.map((cloud) => {
       cloud.updateWorldMatrix(true, false);
-      return [this.requireId(cloud), cloud.matrixWorld.elements.slice()] as const;
+      return [
+        this.requireId(cloud),
+        cloud.matrixWorld.elements.slice(),
+      ] as const;
     });
     const activeIds = new Set(transforms.map(([cloudId]) => cloudId));
     for (const cloudId of this.lastCloudTransforms.keys())
       if (!activeIds.has(cloudId)) this.lastCloudTransforms.delete(cloudId);
-    const changedTransforms = transforms.filter(([cloudId, worldMatrix]) =>
-      this.lastCloudTransforms.get(cloudId) !== JSON.stringify(worldMatrix),
+    const changedTransforms = transforms.filter(
+      ([cloudId, worldMatrix]) =>
+        this.lastCloudTransforms.get(cloudId) !== JSON.stringify(worldMatrix),
     );
     const cameraKey = JSON.stringify([cameraWorldMatrix, projectionMatrix]);
     const cameraChanged = cameraKey !== this.lastCameraView;
     if (cameraChanged || changedTransforms.length > 0) {
       const sceneRevision = ++this.revision;
       for (const [cloudId, worldMatrix] of changedTransforms) {
-        this.backend.dispatch({
-          type: "set-cloud-transform",
-          id: this.nextCommandId(),
-          cloudId,
-          sceneRevision,
-          worldMatrix,
-        });
+        this.submit(
+          createSetCloudTransformCommand(
+            this.nextCommandId(),
+            cloudId,
+            sceneRevision,
+            worldMatrix,
+          ),
+        );
         this.lastCloudTransforms.set(cloudId, JSON.stringify(worldMatrix));
       }
       if (cameraChanged) {
-        this.backend.dispatch({
-          type: "set-camera",
-          id: this.nextCommandId(),
-          sceneRevision,
-          worldMatrix: cameraWorldMatrix,
-          projectionMatrix,
-        });
+        this.submit(
+          createSetCameraCommand(
+            this.nextCommandId(),
+            sceneRevision,
+            cameraWorldMatrix,
+            projectionMatrix,
+          ),
+        );
         this.lastCameraView = cameraKey;
       }
     }
@@ -413,12 +441,14 @@ export class GaussianStore implements GaussianRenderStore {
     if (this.disposed) return;
     this.disposed = true;
     this.unsubscribe();
-    this.backend.dispose();
+    this.unsubscribeFailure();
+    this.scheduler.dispose();
     for (const pending of this.pendingLoads.values()) {
       pending.cleanup();
       pending.reject(new Error("GaussianStore disposed"));
     }
     this.pendingLoads.clear();
+    this.abortedLoads.clear();
     this.pendingMutations.clear();
     for (const { cloud } of this.cloudMap.values()) {
       cloud.setRaycastIndex(null);
@@ -433,11 +463,72 @@ export class GaussianStore implements GaussianRenderStore {
     this.listeners.clear();
   }
 
-  private readonly handleEvent = (event: BackendEvent): void => {
+  private submit(command: BackendCommand): void {
+    void this.scheduler.schedule(command).then(
+      (result) => {
+        if (result === "superseded") {
+          this.pendingMutations.delete(command.id);
+          this.abortedLoads.delete(command.id);
+        }
+      },
+      (error: unknown) => {
+        const failure =
+          error instanceof Error ? error : new Error(String(error));
+        if (this.pendingLoads.has(command.id))
+          this.rejectLoad(command.id, failure);
+        else if (this.pendingMutations.has(command.id)) {
+          this.pendingMutations.get(command.id)?.();
+          this.pendingMutations.delete(command.id);
+          this.commandError = failure;
+          this.notify("content");
+        }
+      },
+    );
+  }
+
+  private readonly handleFailure = (failure: BackendFailure): void => {
+    const error = new Error(failure.message);
+    for (const id of [...this.pendingLoads.keys()]) this.rejectLoad(id, error);
+    for (const rollback of this.pendingMutations.values()) rollback();
+    this.pendingMutations.clear();
+    this.lastError = error;
+    this.awaitingCapabilities = false;
+    this.notify("content");
+  };
+
+  private readonly handleResponse = (response: BackendResponse): void => {
     if (this.disposed) return;
+    if (response.payload)
+      this.handlePayload(response.payload, response.command.id);
+    if (response.error) {
+      const error = new Error(response.error.message);
+      if (response.error.code === "cancelled") error.name = "AbortError";
+      if (this.pendingLoads.has(response.command.id))
+        this.rejectLoad(response.command.id, error);
+      else {
+        this.pendingMutations.get(response.command.id)?.();
+        this.pendingMutations.delete(response.command.id);
+        this.commandError = error;
+        this.awaitingCapabilities = false;
+      }
+      this.notify("content");
+    } else if (response.isFinal) {
+      this.pendingMutations.delete(response.command.id);
+      if (this.commandError) {
+        this.commandError = null;
+        this.notify("content");
+      }
+    }
+    if (response.isFinal) this.abortedLoads.delete(response.command.id);
+  };
+
+  private handlePayload(event: BackendPayload, commandId: string): void {
     switch (event.type) {
+      case "capabilities-accepted":
+        break;
       case "cloud-loaded": {
-        const options = this.pendingLoads.get(event.commandId)?.options ?? {};
+        if (this.abortedLoads.has(commandId)) break;
+        const options = this.pendingLoads.get(commandId)?.options ?? {};
         const priority = options.priority ?? 0;
         const cloud = new GaussianCloud(
           this,
@@ -457,9 +548,9 @@ export class GaussianStore implements GaussianRenderStore {
           packingStrategy: options.packingStrategy,
         });
         this.cloudIds.set(cloud, event.cloudId);
-        this.pendingLoads.get(event.commandId)?.cleanup();
-        this.pendingLoads.get(event.commandId)?.resolve(cloud);
-        this.pendingLoads.delete(event.commandId);
+        this.pendingLoads.get(commandId)?.cleanup();
+        this.pendingLoads.get(commandId)?.resolve(cloud);
+        this.pendingLoads.delete(commandId);
         this.notify("clouds");
         break;
       }
@@ -488,48 +579,11 @@ export class GaussianStore implements GaussianRenderStore {
       case "buffers-patched":
         this.patch(event);
         break;
-      case "error": {
-        const error = new Error(event.message);
-        if (event.commandId && this.pendingLoads.has(event.commandId)) {
-          this.rejectLoad(event.commandId, error);
-        } else if (event.commandId) {
-          this.pendingMutations.get(event.commandId)?.();
-          this.pendingMutations.delete(event.commandId);
-          this.commandError = error;
-          this.awaitingCapabilities = false;
-        } else this.lastError = error;
-        this.notify("content");
-        break;
-      }
-      case "backend-failure": {
-        const error = new Error(event.message);
-        for (const id of [...this.pendingLoads.keys()])
-          this.rejectLoad(id, error);
-        for (const rollback of this.pendingMutations.values()) rollback();
-        this.pendingMutations.clear();
-        this.lastError = error;
-        this.awaitingCapabilities = false;
-        this.notify("content");
-        break;
-      }
-      case "command-cancelled":
-        this.rejectLoad(
-          event.commandId,
-          new DOMException("Load cancelled", "AbortError"),
-        );
-        break;
-      case "command-completed":
-        this.pendingMutations.delete(event.commandId);
-        if (this.commandError) {
-          this.commandError = null;
-          this.notify("content");
-        }
-        break;
     }
-  };
+  }
 
   private replace(
-    event: Extract<BackendEvent, { type: "buffers-replaced" }>,
+    event: Extract<BackendPayload, { type: "buffers-replaced" }>,
   ): void {
     if (event.layoutVersion <= this.packedLayoutVersion) return;
     const lookup = new Map(
@@ -627,7 +681,7 @@ export class GaussianStore implements GaussianRenderStore {
   }
 
   private patch(
-    event: Extract<BackendEvent, { type: "buffers-patched" }>,
+    event: Extract<BackendPayload, { type: "buffers-patched" }>,
   ): void {
     if (
       event.layoutVersion !== this.packedLayoutVersion ||
@@ -740,12 +794,11 @@ export class GaussianStore implements GaussianRenderStore {
     signal?: AbortSignal,
   ): Promise<GaussianCloud> {
     return new Promise((resolve, reject) => {
-      const abort = () =>
-        this.backend.dispatch({
-          type: "cancel",
-          id: this.nextCommandId(),
-          targetCommandId: id,
-        });
+      const abort = () => {
+        this.abortedLoads.add(id);
+        this.scheduler.cancel(id);
+        this.rejectLoad(id, new DOMException("Load cancelled", "AbortError"));
+      };
       signal?.addEventListener("abort", abort, { once: true });
       this.pendingLoads.set(id, {
         resolve,

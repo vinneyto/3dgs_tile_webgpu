@@ -13,8 +13,8 @@ import { GaussianPass } from "../src/renderer/GaussianPass";
 import { GaussianStore } from "../src/renderer/GaussianStore";
 import { packedStore, TEST_FRONTEND } from "./helpers/packedStore";
 import { GaussianStore as GaussianStoreClient } from "../src/renderer/GaussianStore";
-import type { BackendEvent } from "../src/streaming-backend/events/BackendEvent";
-import type { GaussianBackend } from "../src/streaming-backend/GaussianBackend";
+import type { BackendResponse } from "../src/streaming-backend/BackendResponse";
+import type { RequestScheduler } from "../src/streaming-backend/RequestScheduler";
 import type { GaussianPassOptions } from "../src/renderer/pipeline/types";
 import {
   gaussianColor,
@@ -32,54 +32,61 @@ const TEST_LIMITS = {
 
 describe("GaussianPass node slots", () => {
   it("subscribes to the backend contract through a composed Store", () => {
-    const backendEvents: { listener?: (event: BackendEvent) => void } = {};
-    const dispatch = vi.fn();
-    const backend: GaussianBackend = {
-      dispatch,
-      subscribe: (listener) => {
+    const backendEvents: { listener?: (response: BackendResponse) => void } =
+      {};
+    const start = vi.fn(async (_capabilities: typeof TEST_FRONTEND) => {});
+    const scheduler: RequestScheduler = {
+      state: "ready",
+      start,
+      schedule: async () => "done",
+      cancel: () => {},
+      onResponse: (listener) => {
         backendEvents.listener = listener;
         return () => {
           backendEvents.listener = undefined;
         };
       },
+      onFailure: () => () => {},
       dispose: () => {},
     };
-    const store = new GaussianStoreClient(backend);
+    const store = new GaussianStoreClient(scheduler);
     const renderer = createRenderer();
     const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
     const invalidate = vi.spyOn(pass, "invalidate");
     const events: string[] = [];
     const unsubscribe = store.subscribe((event) => events.push(event.type));
     backendEvents.listener?.({
-      type: "cloud-loaded",
-      commandId: "load",
-      cloudId: "cloud",
-      objectId: 0,
-      sourceCount: 1,
-      shDegree: 0,
-      bounds: [0, 0, 0, 0, 0, 0],
+      command: { id: "load", type: "load-cloud-from-buffer" },
+      durationMs: 0,
+      isFinal: false,
+      payload: {
+        type: "cloud-loaded",
+        cloudId: "cloud",
+        objectId: 0,
+        sourceCount: 1,
+        shDegree: 0,
+        bounds: [0, 0, 0, 0, 0, 0],
+      },
     });
     expect(events).toEqual(["changed"]);
     expect(invalidate).toHaveBeenCalledOnce();
     pass.updateBefore({ renderer } as unknown as NodeFrame);
-    const requests = dispatch.mock.calls
-      .map(
-        ([command]) =>
-          command as { type: string; capabilities?: typeof TEST_FRONTEND },
-      )
-      .filter((command) => command.type === "set-frontend-capabilities");
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.capabilities).toMatchObject(TEST_FRONTEND);
+    expect(start).toHaveBeenCalledOnce();
+    expect(start.mock.calls[0]?.[0]).toMatchObject(TEST_FRONTEND);
     unsubscribe();
     pass.dispose();
     backendEvents.listener?.({
-      type: "cloud-loaded",
-      commandId: "load-2",
-      cloudId: "cloud-2",
-      objectId: 1,
-      sourceCount: 1,
-      shDegree: 0,
-      bounds: [0, 0, 0, 0, 0, 0],
+      command: { id: "load-2", type: "load-cloud-from-buffer" },
+      durationMs: 0,
+      isFinal: false,
+      payload: {
+        type: "cloud-loaded",
+        cloudId: "cloud-2",
+        objectId: 1,
+        sourceCount: 1,
+        shDegree: 0,
+        bounds: [0, 0, 0, 0, 0, 0],
+      },
     });
     expect(invalidate).toHaveBeenCalledOnce();
     store.dispose();

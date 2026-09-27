@@ -1,6 +1,6 @@
 import type { CloudRenderState } from "../CloudRenderState";
 import type { PackedAttributePatch } from "../PackedAttributePatch";
-export interface BuffersPatchedEvent {
+export interface BuffersPatchedPayload {
   type: "buffers-patched";
   sceneRevision: number;
   layoutVersion: number;

@@ -11,6 +11,7 @@ import type { FrontendCapabilities } from "../streaming-backend/FrontendCapabili
 import type { CloudLoadOptions } from "../streaming-backend/CloudLoadOptions";
 import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
 import type { PackingStrategy } from "../streaming-backend/PackingStrategy";
+import { type RequestScheduler } from "../streaming-backend/RequestScheduler";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
 export declare const DEFAULT_BACKEND_CONFIG: BackendConfig;
 /**
@@ -19,17 +20,19 @@ export declare const DEFAULT_BACKEND_CONFIG: BackendConfig;
  */
 export declare class GaussianStore implements GaussianRenderStore {
     readonly attributes: GaussianStoreAttributes;
-    readonly backend: GaussianBackend;
+    readonly scheduler: RequestScheduler;
     readonly packedShFormat: "rgb8e8";
     readonly maxGaussiansOption: number | "auto";
     private readonly cloudMap;
     private readonly cloudIds;
     private readonly pendingLoads;
+    private readonly abortedLoads;
     private readonly pendingMutations;
     private readonly listeners;
     private readonly schemas;
     private readonly extraBuffers;
     private readonly unsubscribe;
+    private readonly unsubscribeFailure;
     private data;
     private revision;
     private commandNumber;
@@ -48,7 +51,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private disposed;
     private awaitingCapabilities;
     private frontendCapabilities;
-    constructor(backend?: GaussianBackend);
+    constructor(schedulerOrBackend?: RequestScheduler | GaussianBackend);
     get clouds(): readonly GaussianCloud[];
     get count(): number;
     get shDegree(): 0 | 1 | 2 | 3;
@@ -76,7 +79,10 @@ export declare class GaussianStore implements GaussianRenderStore {
     getBounds(cloud: GaussianCloud): readonly [number, number, number, number, number, number];
     getSourceCount(cloud: GaussianCloud): number;
     dispose(): void;
-    private readonly handleEvent;
+    private submit;
+    private readonly handleFailure;
+    private readonly handleResponse;
+    private handlePayload;
     private replace;
     private patch;
     private attributeArray;

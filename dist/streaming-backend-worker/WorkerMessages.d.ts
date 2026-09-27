@@ -1,6 +1,6 @@
 import type { BackendConfig } from "../streaming-backend/BackendConfig";
 import type { BackendCommand } from "../streaming-backend/commands/BackendCommand";
-import type { BackendEvent } from "../streaming-backend/events/BackendEvent";
+import type { BackendResponse, BackendFailure } from "../streaming-backend/BackendResponse";
 export type WorkerInbound = {
     type: "initialize";
     config: BackendConfig;
@@ -8,13 +8,17 @@ export type WorkerInbound = {
     type: "dispatch";
     command: BackendCommand;
 } | {
+    type: "abort";
+    commandId: string;
+} | {
     type: "dispose";
 };
 export type WorkerOutbound = {
-    type: "ready";
+    type: "response";
+    response: BackendResponse;
 } | {
-    type: "event";
-    event: BackendEvent;
+    type: "failure";
+    failure: BackendFailure;
 };
 /** Transfer only protocol-owned buffers, never an engine's internal storage. */
 export declare function transferBuffers(value: unknown): ArrayBuffer[];

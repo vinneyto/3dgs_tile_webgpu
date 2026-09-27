@@ -1,8 +1,12 @@
 import type { GaussianData } from "../../src/renderer/GaussianData";
 import { GaussianStore } from "../../src/renderer/GaussianStore";
 import { packShRgb8e8 } from "../../src/streaming-backend-impl/GaussianSh";
-import type { GaussianBackend } from "../../src/streaming-backend/GaussianBackend";
-import type { BackendEvent } from "../../src/streaming-backend/events/BackendEvent";
+import type { RequestScheduler } from "../../src/streaming-backend/RequestScheduler";
+import type {
+  BackendResponse,
+  BackendPayload,
+} from "../../src/streaming-backend/BackendResponse";
+import type { BackendCommand } from "../../src/streaming-backend/commands/BackendCommand";
 import type { GaussianCloud } from "../../src/renderer/GaussianCloud";
 
 export const TEST_FRONTEND = {
@@ -22,23 +26,125 @@ export function packedStore(
   add: (data: GaussianData) => GaussianCloud;
   request: () => void;
 } {
-  let listener: ((event: BackendEvent) => void) | null = null;
+  let listener: ((response: BackendResponse) => void) | null = null;
   const sources: GaussianData[] = [];
+  const pending: GaussianData[] = [];
   let version = 0;
-  let pendingReplacement = false;
   let configured = false;
-  const emit = (event: BackendEvent) => listener?.(event);
-  const backend: GaussianBackend = {
-    subscribe: (callback) => {
-      listener = callback;
-      return () => {
-        listener = null;
-      };
+  let pendingReplacement = false;
+  let current: Pick<BackendCommand, "id" | "type"> = {
+    id: "fixture",
+    type: "set-frontend-capabilities",
+  };
+  const emit = (payload: BackendPayload) =>
+    listener?.({
+      command: current,
+      durationMs: 0,
+      isFinal: false,
+      payload,
+    });
+  const publishReplacement = (): void => {
+    if (!configured || !pendingReplacement) return;
+    pendingReplacement = false;
+    const count = sources.reduce((sum, source) => sum + source.count, 0);
+    const degree = Math.max(0, ...sources.map((source) => source.shDegree)) as
+      0 | 1 | 2 | 3;
+    const capacity = Math.max(1, count);
+    const coefficients = (degree + 1) ** 2;
+    const means = new Float32Array(capacity * 4);
+    const scales = new Float32Array(capacity * 4);
+    const rotations = new Float32Array(capacity * 4);
+    const sh = new Uint32Array(capacity * coefficients);
+    let offset = 0;
+    for (const [objectId, source] of sources.entries()) {
+      const sourceSh = source.shCoefficients.array as Float32Array;
+      for (let i = 0; i < source.count; i++) {
+        means.set(
+          (source.means.array as Float32Array).subarray(i * 4, i * 4 + 4),
+          (offset + i) * 4,
+        );
+        means[(offset + i) * 4 + 3] = objectId;
+        scales.set(
+          (source.scalesOpacity.array as Float32Array).subarray(
+            i * 4,
+            i * 4 + 4,
+          ),
+          (offset + i) * 4,
+        );
+        rotations.set(
+          (source.rotations.array as Float32Array).subarray(i * 4, i * 4 + 4),
+          (offset + i) * 4,
+        );
+        for (let j = 0; j < source.shCoefficientCount; j++) {
+          const base = (i * source.shCoefficientCount + j) * 4;
+          sh[(offset + i) * coefficients + j] = packShRgb8e8(
+            sourceSh[base]!,
+            sourceSh[base + 1]!,
+            sourceSh[base + 2]!,
+          );
+        }
+      }
+      offset += source.count;
+    }
+    emit({
+      type: "buffers-replaced",
+      sceneRevision: 0,
+      layoutVersion: ++version,
+      contentVersion: version,
+      count,
+      capacity,
+      objectCapacity: sources.length,
+      shDegree: degree,
+      shFormat: "rgb8e8",
+      attributes: [
+        {
+          name: "means",
+          format: "f32",
+          elementsPerGaussian: 4,
+          data: means.buffer,
+        },
+        {
+          name: "scalesOpacity",
+          format: "f32",
+          elementsPerGaussian: 4,
+          data: scales.buffer,
+        },
+        {
+          name: "rotations",
+          format: "f32",
+          elementsPerGaussian: 4,
+          data: rotations.buffer,
+        },
+        {
+          name: "shCoefficients",
+          format: "u32",
+          elementsPerGaussian: coefficients,
+          data: sh.buffer,
+        },
+        {
+          name: "lodLevel",
+          format: "u32",
+          elementsPerGaussian: 1,
+          data: new Uint32Array(capacity).buffer,
+        },
+      ],
+      clouds: sources.map((source, objectId) => ({
+        cloudId: `cloud-${objectId + 1}`,
+        objectId,
+        renderedCount: source.count,
+      })),
+    });
+  };
+  const scheduler: RequestScheduler = {
+    state: "ready",
+    start: async () => {
+      configured = true;
+      current = { id: "fixture-handshake", type: "set-frontend-capabilities" };
+      publishReplacement();
+      listener?.({ command: current, durationMs: 0, isFinal: true });
     },
-    dispose: () => {
-      listener = null;
-    },
-    dispatch: (command) => {
+    schedule: (command) => {
+      current = command;
       if (command.type === "load-cloud-from-buffer") {
         const objectId = sources.length;
         const source = pending.shift()!;
@@ -46,125 +152,38 @@ export function packedStore(
         pendingReplacement = true;
         emit({
           type: "cloud-loaded",
-          commandId: command.id,
           cloudId: command.cloudId,
           objectId,
           sourceCount: source.count,
           shDegree: source.shDegree,
           bounds: [0, 0, 0, 0, 0, 0],
         });
-        if (configured)
-          backend.dispatch({ type: "set-frontend-capabilities", id: `fixture-${objectId}`, capabilities: TEST_FRONTEND });
-      } else if (command.type === "set-cloud-priority" && configured) {
+        publishReplacement();
+      } else if (command.type === "set-cloud-priority") {
         pendingReplacement = true;
-        backend.dispatch({ type: "set-frontend-capabilities", id: `fixture-priority-${version}`, capabilities: TEST_FRONTEND });
-        emit({ type: "command-completed", commandId: command.id });
-      } else if (command.type === "set-frontend-capabilities") {
-        configured = true;
-        if (!pendingReplacement) {
-          emit({ type: "command-completed", commandId: command.id });
-          return;
-        }
-        pendingReplacement = false;
-        const count = sources.reduce((sum, source) => sum + source.count, 0);
-        const degree = Math.max(
-          0,
-          ...sources.map((source) => source.shDegree),
-        ) as 0 | 1 | 2 | 3;
-        const capacity = Math.max(1, count);
-        const coefficients = (degree + 1) ** 2;
-        const means = new Float32Array(capacity * 4);
-        const scales = new Float32Array(capacity * 4);
-        const rotations = new Float32Array(capacity * 4);
-        const sh = new Uint32Array(capacity * coefficients);
-        let offset = 0;
-        for (const [objectId, source] of sources.entries()) {
-          const sourceSh = source.shCoefficients.array as Float32Array;
-          for (let i = 0; i < source.count; i++) {
-            means.set(
-              (source.means.array as Float32Array).subarray(i * 4, i * 4 + 4),
-              (offset + i) * 4,
-            );
-            means[(offset + i) * 4 + 3] = objectId;
-            scales.set(
-              (source.scalesOpacity.array as Float32Array).subarray(
-                i * 4,
-                i * 4 + 4,
-              ),
-              (offset + i) * 4,
-            );
-            rotations.set(
-              (source.rotations.array as Float32Array).subarray(
-                i * 4,
-                i * 4 + 4,
-              ),
-              (offset + i) * 4,
-            );
-            for (let j = 0; j < source.shCoefficientCount; j++) {
-              const base = (i * source.shCoefficientCount + j) * 4;
-              sh[(offset + i) * coefficients + j] = packShRgb8e8(
-                sourceSh[base]!,
-                sourceSh[base + 1]!,
-                sourceSh[base + 2]!,
-              );
-            }
-          }
-          offset += source.count;
-        }
-        emit({
-          type: "buffers-replaced",
-          sceneRevision: 0,
-          layoutVersion: ++version,
-          contentVersion: version,
-          count,
-          capacity,
-          objectCapacity: sources.length,
-          shDegree: degree,
-          shFormat: "rgb8e8",
-          attributes: [
-            {
-              name: "means",
-              format: "f32",
-              elementsPerGaussian: 4,
-              data: means.buffer,
-            },
-            {
-              name: "scalesOpacity",
-              format: "f32",
-              elementsPerGaussian: 4,
-              data: scales.buffer,
-            },
-            {
-              name: "rotations",
-              format: "f32",
-              elementsPerGaussian: 4,
-              data: rotations.buffer,
-            },
-            {
-              name: "shCoefficients",
-              format: "u32",
-              elementsPerGaussian: coefficients,
-              data: sh.buffer,
-            },
-            {
-              name: "lodLevel",
-              format: "u32",
-              elementsPerGaussian: 1,
-              data: new Uint32Array(capacity).buffer,
-            },
-          ],
-          clouds: sources.map((source, objectId) => ({
-            cloudId: `cloud-${objectId + 1}`,
-            objectId,
-            renderedCount: source.count,
-          })),
-        });
-        emit({ type: "command-completed", commandId: command.id });
+        publishReplacement();
       }
+      listener?.({
+        command: { id: command.id, type: command.type },
+        durationMs: 0,
+        isFinal: true,
+      });
+      return Promise.resolve("done" as const);
+    },
+    cancel: () => {},
+    onResponse: (callback) => {
+      listener = callback;
+      return () => {
+        listener = null;
+      };
+    },
+    onFailure: () => () => {},
+    dispose: () => {
+      listener = null;
     },
   };
-  const pending: GaussianData[] = [];
-  const store = new GaussianStore(backend);
+
+  const store = new GaussianStore(scheduler);
   const add = (source: GaussianData): GaussianCloud => {
     pending.push(source);
     void store.loadBuffer(new ArrayBuffer(0));
