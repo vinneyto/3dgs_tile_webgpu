@@ -320,18 +320,28 @@ export class GaussianSandbox {
   async loadUrl(url: string): Promise<void> {
     this.cloudStatus.loading(url);
     const store = this.createStore();
+    let pass: GaussianPass | null = null;
+    let loading: Promise<GaussianCloud> | null = null;
     try {
-      const cloud = await store.load(url, {
+      loading = store.load(url, {
         name: `${url} Gaussian cloud`,
         lod: { levels: SANDBOX_LOD_LEVELS },
       });
+      pass = this.createPass(store);
+      const cloud = await loading;
       if (this.disposed) {
+        pass.dispose();
         store.dispose();
         return;
       }
-      this.show(store, url, cloud);
+      this.show(store, url, cloud, pass);
     } catch (error) {
-      store.dispose();
+      void loading?.catch(() => {});
+      if (this.pass === pass && pass !== null) this.clearCloud();
+      else {
+        pass?.dispose();
+        store.dispose();
+      }
       this.cloudStatus.error(error);
     }
   }
@@ -339,18 +349,29 @@ export class GaussianSandbox {
   async loadFile(file: File): Promise<void> {
     this.cloudStatus.parsing(file.name);
     const store = this.createStore();
+    let pass: GaussianPass | null = null;
+    let loading: Promise<GaussianCloud> | null = null;
     try {
-      const cloud = await store.loadBuffer(await file.arrayBuffer(), {
+      const buffer = await file.arrayBuffer();
+      loading = store.loadBuffer(buffer, {
         name: `${file.name} Gaussian cloud`,
         lod: { levels: SANDBOX_LOD_LEVELS },
       });
+      pass = this.createPass(store);
+      const cloud = await loading;
       if (this.disposed) {
+        pass.dispose();
         store.dispose();
         return;
       }
-      this.show(store, file.name, cloud);
+      this.show(store, file.name, cloud, pass);
     } catch (error) {
-      store.dispose();
+      void loading?.catch(() => {});
+      if (this.pass === pass && pass !== null) this.clearCloud();
+      else {
+        pass?.dispose();
+        store.dispose();
+      }
       this.cloudStatus.error(error);
     }
   }
@@ -365,33 +386,25 @@ export class GaussianSandbox {
           this.options.streamingLod.maxUploadBytesPerPack,
       },
     };
-    const store = new GaussianStore(
+    return new GaussianStore(
       this.options.workerBackend
         ? new WorkerStreamingGaussianBackend(config)
         : new StreamingGaussianBackend(config),
     );
-    // The pass is constructed in show(), after load() resolves. Start its
-    // handshake here so the scheduler can dispatch that load in the meantime.
-    const device = (this.renderer.backend as unknown as { device?: GPUDevice })
-      .device;
-    if (!device) {
-      store.dispose();
-      throw new Error("Sandbox requires an initialized WebGPURenderer");
-    }
-    store.setFrontendCapabilities({
-      maxStorageBufferBindingSize: device.limits.maxStorageBufferBindingSize,
-      maxBufferSize: device.limits.maxBufferSize,
-      maxStorageBuffersPerShaderStage:
-        device.limits.maxStorageBuffersPerShaderStage,
-      supportsPartialBufferUpdates: true,
+  }
+
+  private createPass(store: GaussianStore): GaussianPass {
+    return gaussianPass(this.renderer, this.camera, store, {
+      ...this.options.pass,
+      outputDepth: this.options.dofEnabled || this.options.depthDebugEnabled,
     });
-    return store;
   }
 
   private show(
     store: GaussianStore,
     source: string,
     cloud: GaussianCloud,
+    pass: GaussianPass,
   ): void {
     this.clearCloud();
     const sourceCount = store.getSourceCount(cloud);
@@ -407,10 +420,7 @@ export class GaussianSandbox {
     this.focusRaycastPending = true;
     this.hoverMarker.scale.setScalar(Math.max(bounds.radius * 0.012, 0.005));
 
-    this.pass = gaussianPass(this.renderer, this.camera, store, {
-      ...this.options.pass,
-      outputDepth: this.options.dofEnabled || this.options.depthDebugEnabled,
-    });
+    this.pass = pass;
     this.opaquePass = scenePass(this.scene, this.camera);
     this.opaquePass.transparent = false;
     this.opaquePass.opaque = true;

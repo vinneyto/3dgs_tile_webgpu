@@ -91,7 +91,7 @@ describe("GaussianPass node slots", () => {
     expect(invalidate).toHaveBeenCalledOnce();
     store.dispose();
   });
-  it("requests initial buffers before a Store has packed data", () => {
+  it("requests initial buffers when the Pass is created, before the first render", () => {
     const { store } = packedStore(oneGaussian(), false);
     const renderer = createRenderer();
     const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
@@ -107,7 +107,7 @@ describe("GaussianPass node slots", () => {
       pipelineLayoutVersion: 1,
     });
 
-    expect(store.hasPackedData).toBe(false);
+    expect(store.hasPackedData).toBe(true);
     pass.updateBefore({ renderer } as unknown as NodeFrame);
 
     expect(store.hasPackedData).toBe(true);

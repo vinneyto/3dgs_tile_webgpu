@@ -19,6 +19,7 @@ import {
 } from "three/webgpu";
 import { colorSpaceToWorking } from "three/tsl";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
+import type { FrontendCapabilities } from "../streaming-backend/FrontendCapabilities";
 import {
   createDefaultGaussianNodeSlots,
   type GaussianNodeSlots,
@@ -221,6 +222,14 @@ export class GaussianPass extends PassNode {
     } else {
       this.depthTexture = null;
     }
+
+    // An initialized renderer can start the handshake as soon as the pass
+    // exists, even when load() was queued before this pass was constructed.
+    const device = (
+      renderer.backend as unknown as { device?: GPUDevice } | undefined
+    )?.device;
+    if (device)
+      this.gaussianStore.setFrontendCapabilities(frontendCapabilities(device));
   }
 
   /** Resolved after the first render when omitted from GaussianPassOptions. */
@@ -439,12 +448,7 @@ export class GaussianPass extends PassNode {
       this.setSize(drawingBufferWidth, drawingBufferHeight);
     }
     const device = webGpuDevice(renderer);
-    this.gaussianStore.setFrontendCapabilities({
-      maxStorageBufferBindingSize: device.limits.maxStorageBufferBindingSize,
-      maxBufferSize: device.limits.maxBufferSize,
-      maxStorageBuffersPerShaderStage: device.limits.maxStorageBuffersPerShaderStage,
-      supportsPartialBufferUpdates: true,
-    });
+    this.gaussianStore.setFrontendCapabilities(frontendCapabilities(device));
     if (this.pipelineDevice !== null && this.pipelineDevice !== device) {
       this.pipeline?.dispose();
       this.pipeline = null;
@@ -788,4 +792,14 @@ function webGpuDevice(renderer: WebGPURenderer): GPUDevice {
     );
   }
   return backend.device;
+}
+
+function frontendCapabilities(device: GPUDevice): FrontendCapabilities {
+  return {
+    maxStorageBufferBindingSize: device.limits.maxStorageBufferBindingSize,
+    maxBufferSize: device.limits.maxBufferSize,
+    maxStorageBuffersPerShaderStage:
+      device.limits.maxStorageBuffersPerShaderStage,
+    supportsPartialBufferUpdates: true,
+  };
 }

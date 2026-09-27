@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PerspectiveCamera } from "three/webgpu";
+import { PerspectiveCamera, type WebGPURenderer } from "three/webgpu";
 import {
   GaussianStore,
   DEFAULT_BACKEND_CONFIG,
@@ -7,6 +7,7 @@ import {
 import { StreamingGaussianBackend } from "../src/streaming-backend-impl/StreamingGaussianBackend";
 import { WorkerStreamingGaussianBackend } from "../src/streaming-backend-worker/WorkerStreamingGaussianBackend";
 import { SerialRequestScheduler } from "../src/streaming-backend/RequestScheduler";
+import { GaussianPass } from "../src/renderer/GaussianPass";
 import {
   transferBuffers,
   type WorkerInbound,
@@ -181,14 +182,18 @@ describe("streaming backend request protocol", () => {
     scheduler.dispose();
   });
 
-  it("moves a transferred cloud through the worker and leaves full raycast on the client", async () => {
+  it("drains a load queued before GaussianPass starts the handshake", async () => {
     const port = new InMemoryWorker();
     const store = new GaussianStore(
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
     const pending = store.loadBuffer(ply(0), { name: "first" });
     expect(port.commands).toHaveLength(0);
-    store.setFrontendCapabilities(capabilities);
+    const renderer = {
+      hasFeature: () => false,
+      backend: { device: { limits: capabilities } },
+    } as unknown as WebGPURenderer;
+    const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
     const cloud = await pending;
     await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
     expect(port.commands.map(({ type }) => type)).toEqual([
@@ -197,6 +202,7 @@ describe("streaming backend request protocol", () => {
     ]);
     expect(cloud.name).toBe("first");
     expect(cloud.getRaycastIndex()).not.toBeNull();
+    pass.dispose();
     store.dispose();
     expect(port.terminated).toBe(true);
   });
