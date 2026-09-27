@@ -3,7 +3,8 @@ import type { GaussianBackend } from "./GaussianBackend";
 import type { BackendFailure, BackendResponse } from "./BackendResponse";
 
 export type RequestResult = "done" | "superseded";
-export type SchedulerState = "waiting" | "handshaking" | "ready" | "failed";
+export type SchedulerState = "waiting" | "ready" | "failed";
+
 export interface RequestScheduler {
   readonly state: SchedulerState;
   start(): void;
@@ -20,7 +21,7 @@ interface Pending {
   reject: (error: Error) => void;
 }
 
-/** Exactly one in-flight request; only pending entries may be superseded. */
+/** Exactly one in-flight command; only queued commands may be superseded. */
 export class SerialRequestScheduler implements RequestScheduler {
   state: SchedulerState = "waiting";
   private readonly queue: Pending[] = [];
@@ -29,7 +30,6 @@ export class SerialRequestScheduler implements RequestScheduler {
   private readonly unsubscribe: () => void;
   private readonly unsubscribeFailure: () => void;
   private active: Pending | null = null;
-  private handshakeAccepted = false;
   private disposed = false;
 
   constructor(private readonly backend: GaussianBackend) {
@@ -38,23 +38,31 @@ export class SerialRequestScheduler implements RequestScheduler {
   }
 
   start(): void {
-    if (this.disposed || this.state === "failed")
+    if (this.disposed || this.state === "failed") {
       throw new Error("RequestScheduler unavailable");
-    if (this.state === "waiting") this.state = "ready";
+    }
+
+    this.state = "ready";
     this.pump();
   }
 
   schedule(command: BackendCommand): Promise<RequestResult> {
-    if (this.disposed || this.state === "failed")
+    if (this.disposed || this.state === "failed") {
       return Promise.reject(new Error("RequestScheduler unavailable"));
+    }
+
     return new Promise((resolve, reject) => {
-      const key = command.latestKey;
-      if (key !== undefined) {
+      if (command.latestKey !== undefined) {
         const index = this.queue.findIndex(
-          (pending) => pending.command.latestKey === key,
+          (pending) => pending.command.latestKey === command.latestKey,
         );
-        if (index >= 0) this.queue.splice(index, 1)[0]!.resolve("superseded");
+
+        if (index >= 0) {
+          const [superseded] = this.queue.splice(index, 1);
+          superseded!.resolve("superseded");
+        }
       }
+
       this.queue.push({ command, resolve, reject });
       this.pump();
     });
@@ -62,32 +70,44 @@ export class SerialRequestScheduler implements RequestScheduler {
 
   cancel(commandId: string): void {
     const index = this.queue.findIndex(
-      ({ command }) => command.id === commandId,
+      (pending) => pending.command.id === commandId,
     );
+
     if (index >= 0) {
-      this.queue.splice(index, 1)[0]!.resolve("superseded");
+      const [cancelled] = this.queue.splice(index, 1);
+      cancelled!.resolve("superseded");
     } else if (this.active?.command.id === commandId) {
-      // An abort must interrupt an active fetch; it cannot wait behind that fetch.
+      // An active fetch must be interrupted without waiting for the queue.
       this.backend.abort(commandId);
     }
   }
 
   onResponse(listener: (response: BackendResponse) => void): () => void {
     this.responses.add(listener);
-    return () => this.responses.delete(listener);
+    return () => {
+      this.responses.delete(listener);
+    };
   }
+
   onFailure(listener: (failure: BackendFailure) => void): () => void {
     this.failures.add(listener);
-    return () => this.failures.delete(listener);
+    return () => {
+      this.failures.delete(listener);
+    };
   }
 
   dispose(): void {
-    if (this.disposed) return;
+    if (this.disposed) {
+      return;
+    }
+
     this.disposed = true;
     const error = new Error("RequestScheduler disposed");
     this.active?.reject(error);
     this.active = null;
-    for (const pending of this.queue.splice(0)) pending.reject(error);
+    for (const pending of this.queue.splice(0)) {
+      pending.reject(error);
+    }
     this.unsubscribe();
     this.unsubscribeFailure();
     this.responses.clear();
@@ -96,81 +116,68 @@ export class SerialRequestScheduler implements RequestScheduler {
   }
 
   private pump(): void {
-    if (this.disposed || this.active || this.state === "failed") return;
-    const next = this.state === "ready" ? this.queue.shift() : undefined;
-    if (!next) return;
-    this.active = next;
-    if (next.command.type === "set-frontend-capabilities") {
-      this.handshakeAccepted = false;
-      this.state = "handshaking";
+    if (this.disposed || this.state !== "ready" || this.active) {
+      return;
     }
+
+    const next = this.queue.shift();
+    if (!next) {
+      return;
+    }
+
+    this.active = next;
     try {
       this.backend.dispatch(next.command);
     } catch (error) {
       this.active = null;
-      const failure = error instanceof Error ? error : new Error(String(error));
-      next.reject(failure);
-      if (next.command.type === "set-frontend-capabilities")
-        this.fail({ code: "handshake-failed", message: failure.message });
-      else queueMicrotask(() => this.pump());
+      next.reject(error instanceof Error ? error : new Error(String(error)));
+      queueMicrotask(() => this.pump());
     }
   }
 
   private readonly receive = (response: BackendResponse): void => {
-    if (
-      response.command.id !== this.active?.command.id ||
-      response.command.type !== this.active.command.type ||
-      (response.error !== undefined &&
-        (!response.isFinal || response.payload !== undefined))
-    ) {
-      this.fail({
-        code: "protocol-error",
-        message: `Invalid response to ${response.command.id}`,
-      });
+    if (this.disposed || this.state === "failed") {
       return;
     }
-    if (
-      this.active.command.type === "set-frontend-capabilities" &&
-      response.payload?.type === "capabilities-accepted" &&
-      response.payload.protocolVersion === 1
-    )
-      this.handshakeAccepted = true;
-    for (const listener of this.responses) listener(response);
-    if (!response.isFinal) return;
+
+    for (const listener of this.responses) {
+      listener(response);
+    }
+
+    if (!response.isFinal || response.command.id !== this.active?.command.id) {
+      return;
+    }
+
     const finished = this.active;
     this.active = null;
-    const wasHandshake = finished.command.type === "set-frontend-capabilities";
-    if (wasHandshake && !response.error && !this.handshakeAccepted) {
-      const error = new Error(
-        "Backend did not confirm the frontend capabilities",
-      );
-      finished.reject(error);
-      this.fail({ code: "handshake-failed", message: error.message });
-      return;
-    }
-    if (wasHandshake) {
-      if (!response.error) this.state = "ready";
-    }
     if (response.error) {
       const error = new Error(response.error.message);
-      if (response.error.code === "cancelled") error.name = "AbortError";
+      if (response.error.code === "cancelled") {
+        error.name = "AbortError";
+      }
       finished.reject(error);
-      if (wasHandshake)
-        this.fail({ code: response.error.code, message: error.message });
     } else {
       finished.resolve("done");
     }
-    // Avoid dispatching the next command inside a backend response callback.
+
+    // Do not dispatch the next command inside a backend response callback.
     queueMicrotask(() => this.pump());
   };
 
   private readonly fail = (failure: BackendFailure): void => {
-    if (this.disposed || this.state === "failed") return;
+    if (this.disposed || this.state === "failed") {
+      return;
+    }
+
     this.state = "failed";
     const error = new Error(failure.message);
     this.active?.reject(error);
     this.active = null;
-    for (const pending of this.queue.splice(0)) pending.reject(error);
-    for (const listener of this.failures) listener(failure);
+    for (const pending of this.queue.splice(0)) {
+      pending.reject(error);
+    }
+    for (const listener of this.failures) {
+      listener(failure);
+    }
   };
 }

@@ -2,7 +2,7 @@ import type { BackendCommand } from "./commands/BackendCommand";
 import type { GaussianBackend } from "./GaussianBackend";
 import type { BackendFailure, BackendResponse } from "./BackendResponse";
 export type RequestResult = "done" | "superseded";
-export type SchedulerState = "waiting" | "handshaking" | "ready" | "failed";
+export type SchedulerState = "waiting" | "ready" | "failed";
 export interface RequestScheduler {
     readonly state: SchedulerState;
     start(): void;
@@ -12,7 +12,7 @@ export interface RequestScheduler {
     onFailure(listener: (failure: BackendFailure) => void): () => void;
     dispose(): void;
 }
-/** Exactly one in-flight request; only pending entries may be superseded. */
+/** Exactly one in-flight command; only queued commands may be superseded. */
 export declare class SerialRequestScheduler implements RequestScheduler {
     private readonly backend;
     state: SchedulerState;
@@ -22,7 +22,6 @@ export declare class SerialRequestScheduler implements RequestScheduler {
     private readonly unsubscribe;
     private readonly unsubscribeFailure;
     private active;
-    private handshakeAccepted;
     private disposed;
     constructor(backend: GaussianBackend);
     start(): void;

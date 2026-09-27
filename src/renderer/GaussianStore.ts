@@ -87,6 +87,7 @@ export class GaussianStore implements GaussianRenderStore {
   private readonly pendingLoads = new Map<string, PendingCloud>();
   private readonly abortedLoads = new Set<string>();
   private readonly pendingMutations = new Map<string, () => void>();
+  private readonly capabilitiesAcknowledged = new Map<string, boolean>();
   private readonly listeners = new Set<GaussianStoreListener>();
   private readonly schemas = new Map<string, PackedAttributeBuffer>();
   private readonly extraBuffers = new Map<string, StorageBufferAttribute>();
@@ -340,42 +341,56 @@ export class GaussianStore implements GaussianRenderStore {
         worldMatrix: cloud.matrixWorld.elements.slice(),
       };
     });
-    void this.scheduler
-      .schedule(
-        createSetFrontendCapabilitiesCommand(
-          this.nextCommandId(),
-          capabilities,
-          ++this.revision,
-          camera.matrixWorld.elements.slice(),
-          camera.projectionMatrix.elements.slice(),
-          transforms,
-        ),
-      )
-      .then(
-        () => {
-          if (
-            this.frontendCapabilities === null ||
-            this.frontendCapabilities.maxBufferSize !==
-              capabilities.maxBufferSize ||
-            this.frontendCapabilities.maxStorageBufferBindingSize !==
-              capabilities.maxStorageBufferBindingSize ||
-            this.frontendCapabilities.maxStorageBuffersPerShaderStage !==
-              capabilities.maxStorageBuffersPerShaderStage ||
-            this.frontendCapabilities.supportsPartialBufferUpdates !==
-              capabilities.supportsPartialBufferUpdates
-          )
-            return;
-          this.awaitingCapabilities = false;
-          this.notify("content");
-        },
-        (error: unknown) => {
-          this.frontendCapabilities = previous;
-          this.awaitingCapabilities = wasAwaitingCapabilities;
-          this.lastError =
-            error instanceof Error ? error : new Error(String(error));
-          this.notify("content");
-        },
-      );
+    const command = createSetFrontendCapabilitiesCommand(
+      this.nextCommandId(),
+      capabilities,
+      ++this.revision,
+      camera.matrixWorld.elements.slice(),
+      camera.projectionMatrix.elements.slice(),
+      transforms,
+    );
+    this.capabilitiesAcknowledged.set(command.id, false);
+    const rejectCapabilities = (error: unknown): void => {
+      this.frontendCapabilities = previous;
+      this.awaitingCapabilities = wasAwaitingCapabilities;
+      this.lastError =
+        error instanceof Error ? error : new Error(String(error));
+      this.notify("content");
+    };
+    void this.scheduler.schedule(command).then(
+      (result) => {
+        const acknowledged = this.capabilitiesAcknowledged.get(command.id);
+        this.capabilitiesAcknowledged.delete(command.id);
+        if (result === "superseded") {
+          return;
+        }
+        if (!acknowledged) {
+          rejectCapabilities(
+            new Error("Backend did not confirm the frontend capabilities"),
+          );
+          return;
+        }
+        if (
+          this.frontendCapabilities === null ||
+          this.frontendCapabilities.maxBufferSize !==
+            capabilities.maxBufferSize ||
+          this.frontendCapabilities.maxStorageBufferBindingSize !==
+            capabilities.maxStorageBufferBindingSize ||
+          this.frontendCapabilities.maxStorageBuffersPerShaderStage !==
+            capabilities.maxStorageBuffersPerShaderStage ||
+          this.frontendCapabilities.supportsPartialBufferUpdates !==
+            capabilities.supportsPartialBufferUpdates
+        ) {
+          return;
+        }
+        this.awaitingCapabilities = false;
+        this.notify("content");
+      },
+      (error: unknown) => {
+        this.capabilitiesAcknowledged.delete(command.id);
+        rejectCapabilities(error);
+      },
+    );
   }
 
   updateLod(camera: Camera): GaussianStoreLodUpdate {
@@ -474,6 +489,7 @@ export class GaussianStore implements GaussianRenderStore {
     this.pendingLoads.clear();
     this.abortedLoads.clear();
     this.pendingMutations.clear();
+    this.capabilitiesAcknowledged.clear();
     for (const { cloud } of this.cloudMap.values()) {
       cloud.setRaycastIndex(null);
       cloud.removeFromParent();
@@ -522,6 +538,13 @@ export class GaussianStore implements GaussianRenderStore {
 
   private readonly handleResponse = (response: BackendResponse): void => {
     if (this.disposed) return;
+    if (
+      this.capabilitiesAcknowledged.has(response.command.id) &&
+      response.payload?.type === "capabilities-accepted" &&
+      response.payload.protocolVersion === 1
+    ) {
+      this.capabilitiesAcknowledged.set(response.command.id, true);
+    }
     if (response.payload)
       this.handlePayload(response.payload, response.command.id);
     if (response.error) {

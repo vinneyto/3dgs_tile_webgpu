@@ -28,6 +28,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private readonly pendingLoads;
     private readonly abortedLoads;
     private readonly pendingMutations;
+    private readonly capabilitiesAcknowledged;
     private readonly listeners;
     private readonly schemas;
     private readonly extraBuffers;

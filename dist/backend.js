@@ -1,5 +1,5 @@
 import { Vector3 as C, Box3 as G, Matrix4 as q } from "three";
-class we {
+class me {
   constructor(e) {
     this.backend = e, this.unsubscribe = e.subscribe(this.receive), this.unsubscribeFailure = e.onFailure(this.fail);
   }
@@ -11,94 +11,93 @@ class we {
   unsubscribe;
   unsubscribeFailure;
   active = null;
-  handshakeAccepted = !1;
   disposed = !1;
   start() {
     if (this.disposed || this.state === "failed")
       throw new Error("RequestScheduler unavailable");
-    this.state === "waiting" && (this.state = "ready"), this.pump();
+    this.state = "ready", this.pump();
   }
   schedule(e) {
     return this.disposed || this.state === "failed" ? Promise.reject(new Error("RequestScheduler unavailable")) : new Promise((t, s) => {
-      const r = e.latestKey;
-      if (r !== void 0) {
-        const o = this.queue.findIndex(
-          (c) => c.command.latestKey === r
+      if (e.latestKey !== void 0) {
+        const r = this.queue.findIndex(
+          (o) => o.command.latestKey === e.latestKey
         );
-        o >= 0 && this.queue.splice(o, 1)[0].resolve("superseded");
+        if (r >= 0) {
+          const [o] = this.queue.splice(r, 1);
+          o.resolve("superseded");
+        }
       }
       this.queue.push({ command: e, resolve: t, reject: s }), this.pump();
     });
   }
   cancel(e) {
     const t = this.queue.findIndex(
-      ({ command: s }) => s.id === e
+      (s) => s.command.id === e
     );
-    t >= 0 ? this.queue.splice(t, 1)[0].resolve("superseded") : this.active?.command.id === e && this.backend.abort(e);
+    if (t >= 0) {
+      const [s] = this.queue.splice(t, 1);
+      s.resolve("superseded");
+    } else this.active?.command.id === e && this.backend.abort(e);
   }
   onResponse(e) {
-    return this.responses.add(e), () => this.responses.delete(e);
+    return this.responses.add(e), () => {
+      this.responses.delete(e);
+    };
   }
   onFailure(e) {
-    return this.failures.add(e), () => this.failures.delete(e);
+    return this.failures.add(e), () => {
+      this.failures.delete(e);
+    };
   }
   dispose() {
-    if (this.disposed) return;
+    if (this.disposed)
+      return;
     this.disposed = !0;
     const e = new Error("RequestScheduler disposed");
     this.active?.reject(e), this.active = null;
-    for (const t of this.queue.splice(0)) t.reject(e);
+    for (const t of this.queue.splice(0))
+      t.reject(e);
     this.unsubscribe(), this.unsubscribeFailure(), this.responses.clear(), this.failures.clear(), this.backend.dispose();
   }
   pump() {
-    if (this.disposed || this.active || this.state === "failed") return;
-    const e = this.state === "ready" ? this.queue.shift() : void 0;
+    if (this.disposed || this.state !== "ready" || this.active)
+      return;
+    const e = this.queue.shift();
     if (e) {
-      this.active = e, e.command.type === "set-frontend-capabilities" && (this.handshakeAccepted = !1, this.state = "handshaking");
+      this.active = e;
       try {
         this.backend.dispatch(e.command);
       } catch (t) {
-        this.active = null;
-        const s = t instanceof Error ? t : new Error(String(t));
-        e.reject(s), e.command.type === "set-frontend-capabilities" ? this.fail({ code: "handshake-failed", message: s.message }) : queueMicrotask(() => this.pump());
+        this.active = null, e.reject(t instanceof Error ? t : new Error(String(t))), queueMicrotask(() => this.pump());
       }
     }
   }
   receive = (e) => {
-    if (e.command.id !== this.active?.command.id || e.command.type !== this.active.command.type || e.error !== void 0 && (!e.isFinal || e.payload !== void 0)) {
-      this.fail({
-        code: "protocol-error",
-        message: `Invalid response to ${e.command.id}`
-      });
+    if (this.disposed || this.state === "failed")
       return;
-    }
-    this.active.command.type === "set-frontend-capabilities" && e.payload?.type === "capabilities-accepted" && e.payload.protocolVersion === 1 && (this.handshakeAccepted = !0);
-    for (const r of this.responses) r(e);
-    if (!e.isFinal) return;
+    for (const s of this.responses)
+      s(e);
+    if (!e.isFinal || e.command.id !== this.active?.command.id)
+      return;
     const t = this.active;
-    this.active = null;
-    const s = t.command.type === "set-frontend-capabilities";
-    if (s && !e.error && !this.handshakeAccepted) {
-      const r = new Error(
-        "Backend did not confirm the frontend capabilities"
-      );
-      t.reject(r), this.fail({ code: "handshake-failed", message: r.message });
-      return;
-    }
-    if (s && (e.error || (this.state = "ready")), e.error) {
-      const r = new Error(e.error.message);
-      e.error.code === "cancelled" && (r.name = "AbortError"), t.reject(r), s && this.fail({ code: e.error.code, message: r.message });
+    if (this.active = null, e.error) {
+      const s = new Error(e.error.message);
+      e.error.code === "cancelled" && (s.name = "AbortError"), t.reject(s);
     } else
       t.resolve("done");
     queueMicrotask(() => this.pump());
   };
   fail = (e) => {
-    if (this.disposed || this.state === "failed") return;
+    if (this.disposed || this.state === "failed")
+      return;
     this.state = "failed";
     const t = new Error(e.message);
     this.active?.reject(t), this.active = null;
-    for (const s of this.queue.splice(0)) s.reject(t);
-    for (const s of this.failures) s(e);
+    for (const s of this.queue.splice(0))
+      s.reject(t);
+    for (const s of this.failures)
+      s(e);
   };
 }
 const be = (a, e, t, s) => ({ type: "load-cloud", id: a, cloudId: e, url: t, options: s }), ve = (a, e, t, s) => ({
@@ -137,14 +136,14 @@ const be = (a, e, t, s) => ({ type: "load-cloud", id: a, cloudId: e, url: t, opt
   firstGaussian: s,
   gaussianCount: r,
   data: o
-}), ke = (a, e, t, s) => ({
+}), Re = (a, e, t, s) => ({
   type: "set-camera",
   id: a,
   sceneRevision: e,
   worldMatrix: t,
   projectionMatrix: s,
   latestKey: "camera"
-}), Re = (a, e, t, s, r, o) => ({
+}), Pe = (a, e, t, s, r, o) => ({
   type: "set-frontend-capabilities",
   id: a,
   protocolVersion: 1,
@@ -159,8 +158,8 @@ function Y(a, e, t) {
   if (!Number.isFinite(s))
     throw new RangeError("SH coefficients must be finite");
   if (s === 0) return 0;
-  const r = Math.min(127, Math.max(-126, Math.ceil(Math.log2(s)))), o = 127 / 2 ** r, c = B(a, o), n = B(e, o), i = B(t, o), d = r + 127;
-  return (c | n << 8 | i << 16 | d << 24) >>> 0;
+  const r = Math.min(127, Math.max(-126, Math.ceil(Math.log2(s)))), o = 127 / 2 ** r, c = B(a, o), n = B(e, o), i = B(t, o), u = r + 127;
+  return (c | n << 8 | i << 16 | u << 24) >>> 0;
 }
 function B(a, e) {
   return Math.min(127, Math.max(-127, Math.round(a * e))) & 255;
@@ -181,7 +180,7 @@ function T(a, e) {
     (n, i) => n.radius - i.radius || n.nodeId - i.nodeId
   ), c;
 }
-class H {
+class W {
   cameraCenter = new C();
   center;
   levelDistance;
@@ -200,19 +199,19 @@ class H {
     );
   }
   pack({ lod: e, maxGaussians: t }) {
-    if (N(t), t === 0) return W();
+    if (N(t), t === 0) return H();
     const s = T(e, this.center), r = s.map(
       ({ radius: n }) => Math.max(0, e.finestLevel - Math.floor(n / this.levelDistance))
     );
     let o = s.reduce(
-      (n, i, d) => n + e.nodes[i.nodeId].levelCounts[r[d]],
+      (n, i, u) => n + e.nodes[i.nodeId].levelCounts[r[u]],
       0
     );
     for (let n = s.length - 1; n >= 0 && o > t; n--) {
       const i = e.nodes[s[n].nodeId];
       for (; r[n] > 0 && o > t; ) {
-        const d = i.levelCounts[r[n]];
-        r[n] = r[n] - 1, o -= d - i.levelCounts[r[n]];
+        const u = i.levelCounts[r[n]];
+        r[n] = r[n] - 1, o -= u - i.levelCounts[r[n]];
       }
     }
     let c = s.length;
@@ -230,7 +229,7 @@ class H {
     };
   }
 }
-function W() {
+function H() {
   return {
     nodeIds: new Uint32Array(),
     lodLevels: new Uint8Array(),
@@ -279,9 +278,9 @@ class J {
     const r = T(e, this.center), o = [];
     let c = 0;
     for (const i of r) {
-      const d = e.nodes[i.nodeId].levelCounts[s];
-      if (c + d > t) break;
-      o.push(i.nodeId), c += d;
+      const u = e.nodes[i.nodeId].levelCounts[s];
+      if (c + u > t) break;
+      o.push(i.nodeId), c += u;
     }
     const n = new Uint8Array(o.length);
     return n.fill(s), {
@@ -319,23 +318,23 @@ class X {
     if (N(t), t === 0) return ee();
     const s = e.octree.data.count;
     if (s <= t) {
-      const f = e.octree.leafNodeIds.slice(), u = new Uint8Array(f.length);
-      return u.fill(e.finestLevel), { nodeIds: f, lodLevels: u, gaussianCount: s };
+      const f = e.octree.leafNodeIds.slice(), d = new Uint8Array(f.length);
+      return d.fill(e.finestLevel), { nodeIds: f, lodLevels: d, gaussianCount: s };
     }
     const r = T(e, this.center), o = [
       e.finestLevel,
       Math.max(0, e.finestLevel - 1),
       0
     ], c = [], n = [];
-    let i = 0, d = 0, h = 0;
+    let i = 0, u = 0, h = 0;
     for (let f = 0; f < o.length; f++) {
-      const u = this.budgetShares[f];
-      if (h += u, u === 0) continue;
-      const m = f === o.length - 1 ? t : Math.floor(t * h), p = o[f];
-      for (; d < r.length; ) {
-        const w = r[d], l = e.nodes[w.nodeId].levelCounts[p];
-        if (i + l > m) break;
-        c.push(w.nodeId), n.push(p), i += l, d++;
+      const d = this.budgetShares[f];
+      if (h += d, d === 0) continue;
+      const w = f === o.length - 1 ? t : Math.floor(t * h), p = o[f];
+      for (; u < r.length; ) {
+        const m = r[u], l = e.nodes[m.nodeId].levelCounts[p];
+        if (i + l > w) break;
+        c.push(m.nodeId), n.push(p), i += l, u++;
       }
     }
     return {
@@ -442,34 +441,34 @@ class re {
       throw new Error(
         "PLY must contain one, four, nine, or sixteen SH coefficients per channel"
       );
-    const i = oe(e, t), d = (l) => s.get(l), h = r.map(
-      (l) => d(`f_rest_${l}`)
-    ), f = t.vertexCount, u = new Float32Array(f * 4), m = new Float32Array(f * 4), p = new Float32Array(f * 4), w = new Float32Array(f * c * 4);
+    const i = oe(e, t), u = (l) => s.get(l), h = r.map(
+      (l) => u(`f_rest_${l}`)
+    ), f = t.vertexCount, d = new Float32Array(f * 4), w = new Float32Array(f * 4), p = new Float32Array(f * 4), m = new Float32Array(f * c * 4);
     for (let l = 0; l < f; l++) {
       const y = l * 4;
-      u[y] = i(l, d("x")), u[y + 1] = i(l, d("y")), u[y + 2] = i(l, d("z")), m[y] = Math.max(
-        Math.exp(i(l, d("scale_0"))),
+      d[y] = i(l, u("x")), d[y + 1] = i(l, u("y")), d[y + 2] = i(l, u("z")), w[y] = Math.max(
+        Math.exp(i(l, u("scale_0"))),
         1e-6
-      ), m[y + 1] = Math.max(
-        Math.exp(i(l, d("scale_1"))),
+      ), w[y + 1] = Math.max(
+        Math.exp(i(l, u("scale_1"))),
         1e-6
-      ), m[y + 2] = Math.max(
-        Math.exp(i(l, d("scale_2"))),
+      ), w[y + 2] = Math.max(
+        Math.exp(i(l, u("scale_2"))),
         1e-6
       );
-      const I = i(l, d("opacity"));
-      m[y + 3] = 1 / (1 + Math.exp(-I));
-      const x = i(l, d("rot_0")), g = i(l, d("rot_1")), b = i(l, d("rot_2")), v = i(l, d("rot_3")), L = Math.hypot(g, b, v, x);
+      const I = i(l, u("opacity"));
+      w[y + 3] = 1 / (1 + Math.exp(-I));
+      const x = i(l, u("rot_0")), g = i(l, u("rot_1")), b = i(l, u("rot_2")), v = i(l, u("rot_3")), L = Math.hypot(g, b, v, x);
       L > 1e-12 ? (p[y] = g / L, p[y + 1] = b / L, p[y + 2] = v / L, p[y + 3] = x / L) : p[y + 3] = 1;
       const E = l * c * 4;
-      w[E] = i(l, d("f_dc_0")), w[E + 1] = i(l, d("f_dc_1")), w[E + 2] = i(l, d("f_dc_2"));
-      for (let k = 1; k < c; k++) {
-        const P = E + k * 4, M = k - 1;
+      m[E] = i(l, u("f_dc_0")), m[E + 1] = i(l, u("f_dc_1")), m[E + 2] = i(l, u("f_dc_2"));
+      for (let R = 1; R < c; R++) {
+        const k = E + R * 4, M = R - 1;
         for (let S = 0; S < 3; S++) {
-          const R = h[S * o + M];
-          w[P + S] = i(
+          const P = h[S * o + M];
+          m[k + S] = i(
             l,
-            R
+            P
           );
         }
       }
@@ -477,10 +476,10 @@ class re {
     return new te(
       f,
       n - 1,
-      u,
-      m,
+      d,
+      w,
       p,
-      w
+      m
     );
   }
 }
@@ -488,13 +487,13 @@ function ne(a) {
   const e = new Uint8Array(a), t = new TextEncoder().encode("end_header");
   let s = -1;
   for (let p = 0; p <= e.length - t.length; p++) {
-    let w = !0;
+    let m = !0;
     for (let l = 0; l < t.length; l++)
       if (e[p + l] !== t[l]) {
-        w = !1;
+        m = !1;
         break;
       }
-    if (w) {
+    if (m) {
       s = p;
       break;
     }
@@ -506,38 +505,38 @@ function ne(a) {
   r++;
   const c = new TextDecoder().decode(e.subarray(0, r)).split(/\r?\n/);
   if (c[0]?.trim() !== "ply") throw new Error("Invalid PLY signature");
-  let n = null, i = "", d = -1, h = 0;
-  const f = [], u = [];
+  let n = null, i = "", u = -1, h = 0;
+  const f = [], d = [];
   for (const p of c) {
-    const w = p.trim().split(/\s+/);
-    if (w[0] === "format") {
-      if (w[1] !== "ascii" && w[1] !== "binary_little_endian" && w[1] !== "binary_big_endian")
-        throw new Error(`Unsupported PLY format: ${w[1] ?? "unknown"}`);
-      n = w[1];
-    } else if (w[0] === "element") {
-      i = w[1] ?? "";
-      const l = Number(w[2]);
+    const m = p.trim().split(/\s+/);
+    if (m[0] === "format") {
+      if (m[1] !== "ascii" && m[1] !== "binary_little_endian" && m[1] !== "binary_big_endian")
+        throw new Error(`Unsupported PLY format: ${m[1] ?? "unknown"}`);
+      n = m[1];
+    } else if (m[0] === "element") {
+      i = m[1] ?? "";
+      const l = Number(m[2]);
       if (!Number.isInteger(l) || l < 0)
         throw new Error(`Invalid element count for ${i}`);
-      u.push({ name: i, count: l }), i === "vertex" && (d = l);
-    } else if (w[0] === "property" && i === "vertex") {
-      if (w[1] === "list")
+      d.push({ name: i, count: l }), i === "vertex" && (u = l);
+    } else if (m[0] === "property" && i === "vertex") {
+      if (m[1] === "list")
         throw new Error(
           "List properties are not supported in the vertex element"
         );
-      const l = w[1], y = w[2];
+      const l = m[1], y = m[2];
       if (!(l in V) || y === void 0)
         throw new Error(`Unsupported vertex property: ${p}`);
       f.push({ name: y, type: l, byteOffset: h }), h += V[l];
     }
   }
   if (n === null) throw new Error("Invalid PLY: format is missing");
-  if (d <= 0) throw new Error("PLY must contain at least one vertex");
-  if (u.find(
+  if (u <= 0) throw new Error("PLY must contain at least one vertex");
+  if (d.find(
     (p) => p.count > 0
   )?.name !== "vertex")
     throw new Error("The canonical 3DGS vertex element must be first");
-  return { format: n, vertexCount: d, properties: f, vertexStride: h, dataOffset: r };
+  return { format: n, vertexCount: u, properties: f, vertexStride: h, dataOffset: r };
 }
 function oe(a, e) {
   if (e.format === "ascii") {
@@ -549,14 +548,14 @@ function oe(a, e) {
     let n = 0;
     for (let i = 0; i < c.length; i++) {
       for (; n < o.length && /\s/.test(o[n]); ) n++;
-      const d = n;
+      const u = n;
       for (; n < o.length && !/\s/.test(o[n]); ) n++;
-      const h = Number(o.slice(d, n));
+      const h = Number(o.slice(u, n));
       if (!Number.isFinite(h))
         throw new Error(`Invalid ASCII PLY value at scalar ${i}`);
       c[i] = h;
     }
-    return (i, d) => c[i * e.properties.length + d];
+    return (i, u) => c[i * e.properties.length + u];
   }
   if (e.dataOffset + e.vertexCount * e.vertexStride > a.byteLength)
     throw new Error("Binary PLY ends before the vertex data is complete");
@@ -597,15 +596,15 @@ function ae(a, e, t, s) {
 function F(a) {
   const e = a.nodes, t = new Float32Array(e.length * 7), s = new Uint32Array(e.length * 2), r = new Uint32Array(e.length * 2), o = [], c = [];
   for (const i of e) {
-    const d = i.id * 7, { min: h, max: f } = i.raycastBounds;
+    const u = i.id * 7, { min: h, max: f } = i.raycastBounds;
     if (t.set(
       [h.x, h.y, h.z, f.x, f.y, f.z, i.maxSplatRadius],
-      d
+      u
     ), s.set([o.length, i.children.length], i.id * 2), o.push(...i.children), r.set(
       [c.length, i.gaussianIndices?.length ?? 0],
       i.id * 2
     ), i.gaussianIndices !== null)
-      for (const u of i.gaussianIndices) c.push(u);
+      for (const d of i.gaussianIndices) c.push(d);
   }
   const n = a.data;
   return {
@@ -700,12 +699,12 @@ class O {
           `GaussianLodPacking contains duplicate leaf node ${c}`
         );
       s.add(c);
-      const i = e.lodLevels[o], d = n.levelCounts[i];
-      if (d === void 0)
+      const i = e.lodLevels[o], u = n.levelCounts[i];
+      if (u === void 0)
         throw new RangeError(`GaussianLod level ${i} does not exist`);
-      if (r + d > t.length)
+      if (r + u > t.length)
         throw new RangeError("GaussianLodPacking gaussianCount is too small");
-      for (let h = 0; h < d; h++)
+      for (let h = 0; h < u; h++)
         t[r++] = n.sortedGaussianIndices[h];
     }
     if (r !== t.length)
@@ -725,18 +724,18 @@ class O {
     if (!(o > 0)) return [];
     if (t.nodeIds.length !== t.lodLevels.length)
       throw new RangeError("GaussianLodPacking arrays must have equal lengths");
-    const c = this.octree.data.means.array, n = this.octree.data.scalesOpacity.array, i = new C(), d = new C(), h = [], f = /* @__PURE__ */ new Set();
-    for (let u = 0; u < t.nodeIds.length; u++) {
-      const m = t.nodeIds[u], p = this.getLeafNode(m);
-      if (f.has(m))
+    const c = this.octree.data.means.array, n = this.octree.data.scalesOpacity.array, i = new C(), u = new C(), h = [], f = /* @__PURE__ */ new Set();
+    for (let d = 0; d < t.nodeIds.length; d++) {
+      const w = t.nodeIds[d], p = this.getLeafNode(w);
+      if (f.has(w))
         throw new Error(
-          `GaussianLodPacking contains duplicate leaf node ${m}`
+          `GaussianLodPacking contains duplicate leaf node ${w}`
         );
-      f.add(m);
-      const w = t.lodLevels[u], l = p.levelCounts[w];
+      f.add(w);
+      const m = t.lodLevels[d], l = p.levelCounts[m];
       if (l === void 0)
-        throw new RangeError(`GaussianLod level ${w} does not exist`);
-      const y = this.octree.nodes[m], I = Math.max(0, r - 3) * y.maxSplatRadius, x = I === 0 ? y.raycastBounds : y.raycastBounds.clone().expandByScalar(I);
+        throw new RangeError(`GaussianLod level ${m} does not exist`);
+      const y = this.octree.nodes[w], I = Math.max(0, r - 3) * y.maxSplatRadius, x = I === 0 ? y.raycastBounds : y.raycastBounds.clone().expandByScalar(I);
       if (e.intersectsBox(x))
         for (let g = 0; g < l; g++) {
           const b = p.sortedGaussianIndices[g], v = b * 4;
@@ -746,14 +745,14 @@ class O {
             n[v + 1],
             n[v + 2]
           ) * r;
-          e.closestPointToPoint(i, d), !(d.distanceToSquared(i) > L * L) && h.push({
+          e.closestPointToPoint(i, u), !(u.distanceToSquared(i) > L * L) && h.push({
             gaussianIndex: b,
-            distance: e.origin.distanceTo(d),
-            point: d.clone()
+            distance: e.origin.distanceTo(u),
+            point: u.clone()
           });
         }
     }
-    return h.sort((u, m) => u.distance - m.distance), h.length > o && (h.length = o), h;
+    return h.sort((d, w) => d.distance - w.distance), h.length > o && (h.length = o), h;
   }
   dispose() {
     this.disposed || (this.disposed = !0, this.ownsOctree && this.octree.dispose());
@@ -789,7 +788,7 @@ function le(a, e) {
   const t = e.data.scalesOpacity.array, s = a * 4, r = [t[s], t[s + 1], t[s + 2]];
   return r.sort((o, c) => c - o), t[s + 3] * r[0] * r[1];
 }
-class de {
+class ue {
   constructor(e, t, s, r, o, c, n, i) {
     this.id = e, this.depth = t, this.bounds = s, this.count = r, this.maxSplatRadius = o, this.raycastBounds = i, this.children = c, this.gaussianIndices = n;
   }
@@ -807,13 +806,13 @@ class de {
 }
 class U {
   constructor(e, t, s, r) {
-    this.data = e, this.leafCapacity = t, this.maxDepth = s, this.ownsData = r, this.bounds = ue(e), this.rootBounds = he(this.bounds);
-    const o = e.means.array, c = e.scalesOpacity.array, n = [], i = [], d = Array.from({ length: e.count }, (f, u) => u), h = (f, u, m) => {
+    this.data = e, this.leafCapacity = t, this.maxDepth = s, this.ownsData = r, this.bounds = de(e), this.rootBounds = he(this.bounds);
+    const o = e.means.array, c = e.scalesOpacity.array, n = [], i = [], u = Array.from({ length: e.count }, (f, d) => d), h = (f, d, w) => {
       const p = n.length;
       n.push(null);
-      const w = f.length > t && m < s && u.max.x - u.min.x > Number.EPSILON, l = [];
-      if (w) {
-        const x = u.getCenter(new C()), g = Array.from({ length: 8 }, () => []);
+      const m = f.length > t && w < s && d.max.x - d.min.x > Number.EPSILON, l = [];
+      if (m) {
+        const x = d.getCenter(new C()), g = Array.from({ length: 8 }, () => []);
         for (const b of f) {
           const v = b * 4, L = (o[v] >= x.x ? 1 : 0) | (o[v + 1] >= x.y ? 2 : 0) | (o[v + 2] >= x.z ? 4 : 0);
           g[L].push(b);
@@ -823,8 +822,8 @@ class U {
           v.length !== 0 && l.push(
             h(
               v,
-              fe(u, x, b),
-              m + 1
+              fe(d, x, b),
+              w + 1
             )
           );
         }
@@ -848,11 +847,11 @@ class U {
         }
         i.push(p);
       }
-      const I = u.clone().expandByScalar(y * 3);
-      return n[p] = new de(
+      const I = d.clone().expandByScalar(y * 3);
+      return n[p] = new ue(
         p,
-        m,
-        u,
+        w,
+        d,
         f.length,
         y,
         l,
@@ -860,7 +859,7 @@ class U {
         I
       ), p;
     };
-    h(d, this.rootBounds.clone(), 0), this.nodes = n, this.leafNodeIds = Uint32Array.from(i);
+    h(u, this.rootBounds.clone(), 0), this.nodes = n, this.leafNodeIds = Uint32Array.from(i);
   }
   data;
   leafCapacity;
@@ -896,8 +895,8 @@ class U {
     if (!(r > 0)) return [];
     const o = [], c = [this.rootNode];
     for (; c.length > 0; ) {
-      const n = this.nodes[c.pop()], i = Math.max(0, s - 3) * n.maxSplatRadius, d = i === 0 ? n.raycastBounds : n.raycastBounds.clone().expandByScalar(i);
-      if (e.intersectsBox(d))
+      const n = this.nodes[c.pop()], i = Math.max(0, s - 3) * n.maxSplatRadius, u = i === 0 ? n.raycastBounds : n.raycastBounds.clone().expandByScalar(i);
+      if (e.intersectsBox(u))
         if (n.gaussianIndices !== null)
           for (const h of n.gaussianIndices) o.push(h);
         else
@@ -911,22 +910,22 @@ class U {
         "GaussianOctree raycast radiusScale must be positive"
       );
     if (!(r > 0)) return [];
-    const o = this.data.means.array, c = this.data.scalesOpacity.array, n = new C(), i = new C(), d = [];
+    const o = this.data.means.array, c = this.data.scalesOpacity.array, n = new C(), i = new C(), u = [];
     for (let h = 0; h < t.length; h++) {
-      const f = t[h], u = f * 4;
-      n.set(o[u], o[u + 1], o[u + 2]);
-      const m = Math.max(
-        c[u],
-        c[u + 1],
-        c[u + 2]
+      const f = t[h], d = f * 4;
+      n.set(o[d], o[d + 1], o[d + 2]);
+      const w = Math.max(
+        c[d],
+        c[d + 1],
+        c[d + 2]
       ) * s;
-      e.closestPointToPoint(n, i), !(i.distanceToSquared(n) > m * m) && d.push({
+      e.closestPointToPoint(n, i), !(i.distanceToSquared(n) > w * w) && u.push({
         gaussianIndex: f,
         distance: e.origin.distanceTo(i),
         point: i.clone()
       });
     }
-    return d.sort((h, f) => h.distance - f.distance), d.length > r && (d.length = r), d;
+    return u.sort((h, f) => h.distance - f.distance), u.length > r && (u.length = r), u;
   }
   dispose() {
     this.disposed || (this.disposed = !0, this.ownsData && this.data.dispose());
@@ -935,7 +934,7 @@ class U {
     if (this.disposed) throw new Error("GaussianOctree has been disposed");
   }
 }
-function ue(a) {
+function de(a) {
   const e = a.means.array, t = new G(), s = new C();
   for (let r = 0; r < a.count; r++) {
     const o = r * 4;
@@ -979,7 +978,7 @@ const pe = /* @__PURE__ */ new Set([
   "shCoefficients",
   "lodLevel"
 ]), ge = new q();
-class Pe {
+class ke {
   listeners = /* @__PURE__ */ new Set();
   failureListeners = /* @__PURE__ */ new Set();
   clouds = /* @__PURE__ */ new Map();
@@ -1078,10 +1077,10 @@ class Pe {
               throw new Error(`PLY fetch failed: ${f.status}`);
             if (f.headers.get("content-type")?.includes("text/html"))
               throw new Error("PLY URL returned HTML instead of a PLY file");
-            const u = await f.arrayBuffer();
+            const d = await f.arrayBuffer();
             if (t.signal.aborted)
               throw new DOMException("Load cancelled", "AbortError");
-            s = this.parser.parse(u);
+            s = this.parser.parse(d);
           } else
             s = this.parser.parse(e.buffer);
           const r = e.options ?? {}, o = U.build(s, r.octree), c = O.build(o, r.lod), n = {
@@ -1110,11 +1109,11 @@ class Pe {
             );
           }
           for (const f of this.clouds.values())
-            for (const [u, m] of n.attributes) {
-              const p = f.attributes.get(u);
-              if (p && (p.format !== m.format || p.elementsPerGaussian !== m.elementsPerGaussian))
+            for (const [d, w] of n.attributes) {
+              const p = f.attributes.get(d);
+              if (p && (p.format !== w.format || p.elementsPerGaussian !== w.elementsPerGaussian))
                 throw new Error(
-                  `Attribute schema differs across clouds: ${u}`
+                  `Attribute schema differs across clouds: ${d}`
                 );
             }
           this.usedCloudIds.add(n.id), this.clouds.set(n.id, n);
@@ -1125,14 +1124,14 @@ class Pe {
             } catch (f) {
               throw this.clouds.delete(n.id), this.usedCloudIds.delete(n.id), f;
             }
-          const { min: d, max: h } = o.bounds;
+          const { min: u, max: h } = o.bounds;
           this.emit({
             type: "cloud-loaded",
             cloudId: n.id,
             objectId: n.objectId,
             sourceCount: s.count,
             shDegree: s.shDegree,
-            bounds: [d.x, d.y, d.z, h.x, h.y, h.z],
+            bounds: [u.x, u.y, u.z, h.x, h.y, h.z],
             raycast: n.raycastable ? F(o) : void 0
           }), i && (this.target = null, this.replace(i));
           return;
@@ -1273,21 +1272,21 @@ class Pe {
         c = t.source.shCoefficients.array, n = t.source.shCoefficientCount * 4;
         break;
       default: {
-        const d = t.attributes.get(o);
-        if (!d) throw new Error(`Unknown source attribute: ${o}`);
-        c = d.values, n = d.elementsPerGaussian;
+        const u = t.attributes.get(o);
+        if (!u) throw new Error(`Unknown source attribute: ${o}`);
+        c = u.values, n = u.elementsPerGaussian;
       }
     }
     if (e.data.byteLength !== r * n * 4)
       throw new RangeError("Attribute update has the wrong byte length");
     const i = c instanceof Uint32Array ? new Uint32Array(e.data) : new Float32Array(e.data);
     if (c.set(i, s * n), (o === "means" || o === "scalesOpacity" || o === "rotations") && (t.octree = U.build(t.source, t.octreeOptions), t.lod = O.build(t.octree, t.lodOptions), t.sourceVersion++, t.raycastable)) {
-      const { min: d, max: h } = t.octree.bounds;
+      const { min: u, max: h } = t.octree.bounds;
       this.emit({
         type: "raycast-replaced",
         cloudId: t.id,
         sourceVersion: t.sourceVersion,
-        bounds: [d.x, d.y, d.z, h.x, h.y, h.z],
+        bounds: [u.x, u.y, u.z, h.x, h.y, h.z],
         raycast: F(t.octree)
       });
     }
@@ -1332,51 +1331,51 @@ class Pe {
         g,
         Math.min(o, g.source.count)
       ), v = g.lod.indicesForPacking(b), L = new Uint32Array(v.length), E = [];
-      let k = 0;
-      for (let P = 0; P < b.nodeIds.length; P++) {
-        const M = g.lod.nodes[b.nodeIds[P]], S = b.lodLevels[P], R = M.levelCounts[S];
-        L.fill(S, k, k + R), k += R, E.push(k);
+      let R = 0;
+      for (let k = 0; k < b.nodeIds.length; k++) {
+        const M = g.lod.nodes[b.nodeIds[k]], S = b.lodLevels[k], P = M.levelCounts[S];
+        L.fill(S, R, R + P), R += P, E.push(R);
       }
       c.push({ entry: g, indices: v, levels: L, cellEnds: E }), o -= v.length;
     }
     const n = c.reduce(
       (g, b) => g + b.indices.length,
       0
-    ), i = Math.max(1, n, e), d = /* @__PURE__ */ new Map(), h = (g, b, v) => {
+    ), i = Math.max(1, n, e), u = /* @__PURE__ */ new Map(), h = (g, b, v) => {
       const L = b === "f32" ? new Float32Array(i * v) : new Uint32Array(i * v);
-      return d.set(g, { format: b, elementsPerGaussian: v, values: L }), L;
-    }, f = h("means", "f32", 4), u = h("scalesOpacity", "f32", 4), m = h("rotations", "f32", 4), p = h("shCoefficients", "u32", (s + 1) ** 2), w = h("lodLevel", "u32", 1), l = new Uint32Array(i);
+      return u.set(g, { format: b, elementsPerGaussian: v, values: L }), L;
+    }, f = h("means", "f32", 4), d = h("scalesOpacity", "f32", 4), w = h("rotations", "f32", 4), p = h("shCoefficients", "u32", (s + 1) ** 2), m = h("lodLevel", "u32", 1), l = new Uint32Array(i);
     for (const [g, b] of r)
       h(g, b.format, b.elementsPerGaussian);
     const y = [];
     let I = 0, x = 1;
     for (const { entry: g, indices: b, levels: v, cellEnds: L } of c) {
-      const E = g.source, k = E.shCoefficients.array;
-      let P = 0;
+      const E = g.source, R = E.shCoefficients.array;
+      let k = 0;
       for (let M = 0; M < b.length; M++, I++) {
-        for (; M >= L[P]; ) P++;
-        l[I] = x + P;
+        for (; M >= L[k]; ) k++;
+        l[I] = x + k;
         const S = b[M];
         f.set(
           E.means.array.subarray(S * 4, S * 4 + 4),
           I * 4
-        ), f[I * 4 + 3] = g.objectId, u.set(
+        ), f[I * 4 + 3] = g.objectId, d.set(
           E.scalesOpacity.array.subarray(S * 4, S * 4 + 4),
           I * 4
-        ), m.set(
+        ), w.set(
           E.rotations.array.subarray(S * 4, S * 4 + 4),
           I * 4
-        ), w[I] = v[M];
-        for (let R = 0; R < E.shCoefficientCount; R++) {
-          const A = (S * E.shCoefficientCount + R) * 4;
-          p[I * (s + 1) ** 2 + R] = Y(
-            k[A],
-            k[A + 1],
-            k[A + 2]
+        ), m[I] = v[M];
+        for (let P = 0; P < E.shCoefficientCount; P++) {
+          const A = (S * E.shCoefficientCount + P) * 4;
+          p[I * (s + 1) ** 2 + P] = Y(
+            R[A],
+            R[A + 1],
+            R[A + 2]
           );
         }
-        for (const [R, A] of g.attributes) {
-          const j = d.get(R).values, _ = A.elementsPerGaussian;
+        for (const [P, A] of g.attributes) {
+          const j = u.get(P).values, _ = A.elementsPerGaussian;
           j.set(
             A.values.subarray(S * _, (S + 1) * _),
             I * _
@@ -1389,7 +1388,7 @@ class Pe {
         renderedCount: b.length
       });
     }
-    return { capacity: i, count: n, degree: s, attributes: d, cells: l, clouds: y };
+    return { capacity: i, count: n, degree: s, attributes: u, cells: l, clouds: y };
   }
   select(e, t) {
     const s = this.cameraPosition.clone().applyMatrix4(e.transform.clone().invert()), r = e.packingStrategy;
@@ -1410,7 +1409,7 @@ class Pe {
           budgetShares: r.budgetShares
         }).pack({ lod: e.lod, maxGaussians: t });
       case "distance-aware-radial":
-        return new H({
+        return new W({
           center: s,
           levelDistance: r.levelDistance
         }).pack({ lod: e.lod, maxGaussians: t });
@@ -1478,29 +1477,29 @@ class Pe {
       1,
       this.config.streamingLod?.maxChangedCellsPerUpdate ?? 16
     ), o = [...e.attributes.values()].reduce(
-      (u, m) => u + m.elementsPerGaussian * 4,
+      (d, w) => d + w.elementsPerGaussian * 4,
       0
     ), c = Math.max(1, Math.floor(s / o)), n = [], i = /* @__PURE__ */ new Set();
-    for (let u = 0; u < e.capacity && n.length < c; u++)
-      if ([...e.attributes].some(([m, p]) => {
-        const w = t.attributes.get(m).values, l = u * p.elementsPerGaussian;
+    for (let d = 0; d < e.capacity && n.length < c; d++)
+      if ([...e.attributes].some(([w, p]) => {
+        const m = t.attributes.get(w).values, l = d * p.elementsPerGaussian;
         for (let y = 0; y < p.elementsPerGaussian; y++)
-          if (p.values[l + y] !== w[l + y]) return !0;
+          if (p.values[l + y] !== m[l + y]) return !0;
         return !1;
       })) {
-        const m = t.cells[u];
-        if (!i.has(m) && i.size >= r) break;
-        i.add(m), n.push(u);
+        const w = t.cells[d];
+        if (!i.has(w) && i.size >= r) break;
+        i.add(w), n.push(d);
       }
-    const d = [];
+    const u = [];
     if (n.length === 0) {
       if (JSON.stringify(e.clouds) !== JSON.stringify(t.clouds)) {
-        const u = this.contentVersion++;
+        const d = this.contentVersion++;
         this.emit({
           type: "buffers-patched",
           sceneRevision: this.sceneRevision,
           layoutVersion: this.layoutVersion,
-          baseContentVersion: u,
+          baseContentVersion: d,
           contentVersion: this.contentVersion,
           patches: [],
           changedClouds: t.clouds,
@@ -1515,24 +1514,24 @@ class Pe {
       }, this.target = null, this.drain?.resolve(), this.drain = null;
       return;
     }
-    for (const [u, m] of e.attributes) {
-      const p = m.elementsPerGaussian, w = t.attributes.get(u).values;
+    for (const [d, w] of e.attributes) {
+      const p = w.elementsPerGaussian, m = t.attributes.get(d).values;
       let l = -1, y = -1;
       const I = () => {
         if (l < 0) return;
         const x = l * p, g = (y + 1) * p;
-        m.values.set(w.subarray(x, g), x), d.push({
-          name: u,
+        w.values.set(m.subarray(x, g), x), u.push({
+          name: d,
           firstSlot: l,
           slotCount: y - l + 1,
-          data: w.slice(x, g).buffer
+          data: m.slice(x, g).buffer
         }), l = -1;
       };
       for (const x of n) {
         const g = x * p;
         let b = !1;
         for (let v = 0; v < p; v++)
-          if (m.values[g + v] !== w[g + v]) {
+          if (w.values[g + v] !== m[g + v]) {
             b = !0;
             break;
           }
@@ -1544,9 +1543,9 @@ class Pe {
       }
       I();
     }
-    const h = [...e.attributes].some(([u, m]) => {
-      const p = t.attributes.get(u).values;
-      return m.values.some((w, l) => w !== p[l]);
+    const h = [...e.attributes].some(([d, w]) => {
+      const p = t.attributes.get(d).values;
+      return w.values.some((m, l) => m !== p[l]);
     }), f = this.contentVersion++;
     this.emit({
       type: "buffers-patched",
@@ -1554,7 +1553,7 @@ class Pe {
       layoutVersion: this.layoutVersion,
       baseContentVersion: f,
       contentVersion: this.contentVersion,
-      patches: d,
+      patches: u,
       changedClouds: h ? e.clouds : t.clouds,
       lodPending: h
     }), h ? this.scheduleUpdate() : (this.packed = {
@@ -1587,16 +1586,16 @@ function ye(a, e) {
   return { format: a.format, elementsPerGaussian: t, values: r };
 }
 export {
-  we as SerialRequestScheduler,
-  Pe as StreamingGaussianBackend,
+  me as SerialRequestScheduler,
+  ke as StreamingGaussianBackend,
   be as createLoadCloudCommand,
   ve as createLoadCloudFromBufferCommand,
-  ke as createSetCameraCommand,
+  Re as createSetCameraCommand,
   Ie as createSetCloudPackingCommand,
   Ce as createSetCloudPriorityCommand,
   Se as createSetCloudRaycastableCommand,
   Le as createSetCloudTransformCommand,
-  Re as createSetFrontendCapabilitiesCommand,
+  Pe as createSetFrontendCapabilitiesCommand,
   xe as createUnloadCloudCommand,
   Ee as createWriteAttributeRangeCommand
 };

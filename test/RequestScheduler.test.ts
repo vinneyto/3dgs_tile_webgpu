@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { PerspectiveCamera } from "three/webgpu";
+import { GaussianStore } from "../src/renderer/GaussianStore";
 import type { GaussianBackend } from "../src/streaming-backend/GaussianBackend";
 import type { BackendCommand } from "../src/streaming-backend/commands/BackendCommand";
 import type {
@@ -65,6 +67,9 @@ class ManualBackend implements GaussianBackend {
       durationMs: 1,
       isFinal: true,
     });
+  }
+  emit(response: BackendResponse): void {
+    this.response?.(response);
   }
   crash(): void {
     this.failure?.({ code: "worker-error", message: "worker crashed" });
@@ -187,7 +192,7 @@ describe("SerialRequestScheduler", () => {
     scheduler.dispose();
   });
 
-  it("rejects a handshake without acknowledgement and its waiting queue", async () => {
+  it("treats a handshake like any other command", async () => {
     const backend = new ManualBackend();
     const scheduler = new SerialRequestScheduler(backend);
     scheduler.start();
@@ -205,9 +210,59 @@ describe("SerialRequestScheduler", () => {
       createSetCameraCommand("camera", 1, matrix, matrix),
     );
     backend.answerWithoutAcknowledgement(backend.sent[0]!);
-    await expect(ready).rejects.toThrow("did not confirm");
-    await expect(pending).rejects.toThrow("did not confirm");
-    expect(backend.sent).toHaveLength(1);
+    await expect(ready).resolves.toBe("done");
+    await Promise.resolve();
+    expect(backend.sent.map(({ id }) => id)).toEqual(["handshake", "camera"]);
+    backend.answerWithoutAcknowledgement(backend.sent[1]!);
+    await expect(pending).resolves.toBe("done");
+    expect(scheduler.state).toBe("ready");
     scheduler.dispose();
+  });
+
+  it("forwards unrelated responses but only releases the matching active command", async () => {
+    const backend = new ManualBackend();
+    const scheduler = new SerialRequestScheduler(backend);
+    const received: BackendResponse[] = [];
+    scheduler.onResponse((response) => {
+      received.push(response);
+    });
+    scheduler.start();
+    const first = createSetCameraCommand("first", 1, matrix, matrix);
+    const second = createSetCameraCommand("second", 2, matrix, matrix);
+    const firstResult = scheduler.schedule(first);
+    const secondResult = scheduler.schedule(second);
+    const unrelated: BackendResponse = {
+      command: { id: "other", type: "set-camera" },
+      durationMs: 1,
+      isFinal: true,
+    };
+    backend.emit(unrelated);
+    backend.answer(first, false);
+    expect(received).toContain(unrelated);
+    expect(backend.sent).toEqual([first]);
+    backend.answer(first, true);
+    await firstResult;
+    await Promise.resolve();
+    expect(backend.sent).toEqual([first, second]);
+    backend.answer(second, true);
+    await secondResult;
+    scheduler.dispose();
+  });
+});
+
+describe("GaussianStore handshake", () => {
+  it("reports a missing capabilities acknowledgement", async () => {
+    const backend = new ManualBackend();
+    const store = new GaussianStore(backend);
+    store.setFrontendCapabilities(capabilities, new PerspectiveCamera());
+    expect(backend.sent[0]?.type).toBe("set-frontend-capabilities");
+    backend.answerWithoutAcknowledgement(backend.sent[0]!);
+    await vi.waitFor(() => {
+      expect(() => store.getPackedData()).toThrow(
+        "Backend did not confirm the frontend capabilities",
+      );
+    });
+    expect(store.scheduler.state).toBe("ready");
+    store.dispose();
   });
 });
