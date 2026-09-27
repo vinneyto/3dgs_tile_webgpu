@@ -5,4 +5,11 @@ import type { FrontendCapabilities } from "../FrontendCapabilities";
 export interface SetFrontendCapabilitiesCommand extends Command<"set-frontend-capabilities"> {
   protocolVersion: 1;
   capabilities: FrontendCapabilities;
+  sceneRevision: number;
+  cameraWorldMatrix: readonly number[];
+  projectionMatrix: readonly number[];
+  cloudTransforms: readonly {
+    cloudId: string;
+    worldMatrix: readonly number[];
+  }[];
 }

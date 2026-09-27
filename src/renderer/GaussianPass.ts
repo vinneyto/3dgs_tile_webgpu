@@ -223,13 +223,15 @@ export class GaussianPass extends PassNode {
       this.depthTexture = null;
     }
 
-    // An initialized renderer can start the handshake as soon as the pass
-    // exists, even when load() was queued before this pass was constructed.
+    // The store processes loads independently; the pass enables render output.
     const device = (
       renderer.backend as unknown as { device?: GPUDevice } | undefined
     )?.device;
     if (device)
-      this.gaussianStore.setFrontendCapabilities(frontendCapabilities(device));
+      this.gaussianStore.setFrontendCapabilities(
+        frontendCapabilities(device),
+        camera,
+      );
   }
 
   /** Resolved after the first render when omitted from GaussianPassOptions. */
@@ -448,7 +450,10 @@ export class GaussianPass extends PassNode {
       this.setSize(drawingBufferWidth, drawingBufferHeight);
     }
     const device = webGpuDevice(renderer);
-    this.gaussianStore.setFrontendCapabilities(frontendCapabilities(device));
+    this.gaussianStore.setFrontendCapabilities(
+      frontendCapabilities(device),
+      this.camera,
+    );
     if (this.pipelineDevice !== null && this.pipelineDevice !== device) {
       this.pipeline?.dispose();
       this.pipeline = null;

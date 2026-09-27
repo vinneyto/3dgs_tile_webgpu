@@ -34,11 +34,15 @@ describe("GaussianPass node slots", () => {
   it("subscribes to the backend contract through a composed Store", () => {
     const backendEvents: { listener?: (response: BackendResponse) => void } =
       {};
-    const start = vi.fn(async (_capabilities: typeof TEST_FRONTEND) => {});
+    const start = vi.fn(() => {});
+    const schedule = vi.fn(
+      async (_command: Parameters<RequestScheduler["schedule"]>[0]) =>
+        "done" as const,
+    );
     const scheduler: RequestScheduler = {
       state: "ready",
       start,
-      schedule: async () => "done",
+      schedule,
       cancel: () => {},
       onResponse: (listener) => {
         backendEvents.listener = listener;
@@ -72,7 +76,13 @@ describe("GaussianPass node slots", () => {
     expect(invalidate).toHaveBeenCalledOnce();
     pass.updateBefore({ renderer } as unknown as NodeFrame);
     expect(start).toHaveBeenCalledOnce();
-    expect(start.mock.calls[0]?.[0]).toMatchObject(TEST_FRONTEND);
+    expect(
+      schedule.mock.calls.some(
+        ([command]) =>
+          command.type === "set-frontend-capabilities" &&
+          command.capabilities.maxBufferSize === TEST_FRONTEND.maxBufferSize,
+      ),
+    ).toBe(true);
     unsubscribe();
     pass.dispose();
     backendEvents.listener?.({

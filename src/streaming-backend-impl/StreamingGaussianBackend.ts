@@ -119,8 +119,6 @@ export class StreamingGaussianBackend implements GaussianBackend {
     this.usedCommandIds.add(command.id);
     if (this.active)
       throw new Error("Backend accepts only one command at a time");
-    if (!this.frontend && command.type !== "set-frontend-capabilities")
-      throw new Error("Frontend handshake is required before commands");
     this.active = command;
     this.startedAt = performance.now();
     void this.run(command);
@@ -376,6 +374,24 @@ export class StreamingGaussianBackend implements GaussianBackend {
           throw new TypeError(
             "Frontend partial update support must be boolean",
           );
+        if (
+          command.cameraWorldMatrix.length !== 16 ||
+          command.projectionMatrix.length !== 16 ||
+          command.cloudTransforms.some(
+            ({ worldMatrix }) => worldMatrix.length !== 16,
+          )
+        )
+          throw new RangeError("Scene matrices need sixteen numbers each");
+        if (command.sceneRevision >= this.sceneRevision) {
+          for (const { cloudId, worldMatrix } of command.cloudTransforms)
+            this.getCloud(cloudId).transform.fromArray(worldMatrix);
+          this.cameraPosition.set(
+            command.cameraWorldMatrix[12]!,
+            command.cameraWorldMatrix[13]!,
+            command.cameraWorldMatrix[14]!,
+          );
+          this.sceneRevision = command.sceneRevision;
+        }
         const previous = this.frontend;
         this.frontend = { ...capabilities };
         try {

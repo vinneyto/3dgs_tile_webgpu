@@ -73,7 +73,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     invalidateCloudPacking(cloud: GaussianCloud): void;
     enablePackedLodLevelAttribute(): GaussianStorePackedAttribute;
     getPackedAttribute(name: string): StorageBufferAttribute | undefined;
-    setFrontendCapabilities(capabilities: FrontendCapabilities): void;
+    setFrontendCapabilities(capabilities: FrontendCapabilities, camera: Camera): void;
     updateLod(camera: Camera): GaussianStoreLodUpdate;
     getPackedData(): GaussianData;
     getBounds(cloud: GaussianCloud): readonly [number, number, number, number, number, number];

@@ -18,6 +18,7 @@ import type { BackendResponse } from "../src/streaming-backend/BackendResponse";
 import {
   createLoadCloudFromBufferCommand,
   createSetCameraCommand,
+  createSetFrontendCapabilitiesCommand,
   createWriteAttributeRangeCommand,
 } from "../src/streaming-backend/commands/createCommands";
 
@@ -109,17 +110,15 @@ class InMemoryWorker {
 }
 
 describe("streaming backend request protocol", () => {
-  it("loads only after handshake and labels every response with its command and duration", async () => {
+  it("loads without handshake, then renders after receiving capabilities", async () => {
     const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
     const scheduler = new SerialRequestScheduler(backend);
     const responses: BackendResponse[] = [];
     scheduler.onResponse((response) => responses.push(response));
+    scheduler.start();
     const load = scheduler.schedule(
       createLoadCloudFromBufferCommand("load", "cloud", ply(0)),
     );
-    expect(responses).toEqual([]);
-    const ready = scheduler.start(capabilities);
-    await ready;
     await expect(load).resolves.toBe("done");
     const loadResponses = responses.filter(
       ({ command }) => command.id === "load",
@@ -127,7 +126,7 @@ describe("streaming backend request protocol", () => {
     expect(loadResponses.map(({ payload }) => payload?.type)).toContain(
       "cloud-loaded",
     );
-    expect(loadResponses.map(({ payload }) => payload?.type)).toContain(
+    expect(loadResponses.map(({ payload }) => payload?.type)).not.toContain(
       "buffers-replaced",
     );
     expect(loadResponses.at(-1)?.isFinal).toBe(true);
@@ -137,7 +136,23 @@ describe("streaming backend request protocol", () => {
           command.type === "load-cloud-from-buffer" && durationMs >= 0,
       ),
     ).toBe(true);
-    expect(responses[0]?.command.type).toBe("set-frontend-capabilities");
+    expect(responses[0]?.command.type).toBe("load-cloud-from-buffer");
+    await scheduler.schedule(
+      createSetFrontendCapabilitiesCommand(
+        "handshake",
+        capabilities,
+        1,
+        matrix,
+        matrix,
+        [],
+      ),
+    );
+    expect(
+      responses.some(
+        ({ command, payload }) =>
+          command.id === "handshake" && payload?.type === "buffers-replaced",
+      ),
+    ).toBe(true);
     scheduler.dispose();
   });
 
@@ -149,7 +164,17 @@ describe("streaming backend request protocol", () => {
     const scheduler = new SerialRequestScheduler(backend);
     const responses: BackendResponse[] = [];
     scheduler.onResponse((response) => responses.push(response));
-    await scheduler.start(capabilities);
+    scheduler.start();
+    await scheduler.schedule(
+      createSetFrontendCapabilitiesCommand(
+        "handshake",
+        capabilities,
+        1,
+        matrix,
+        matrix,
+        [],
+      ),
+    );
     await scheduler.schedule(
       createLoadCloudFromBufferCommand(
         "load",
@@ -182,23 +207,26 @@ describe("streaming backend request protocol", () => {
     scheduler.dispose();
   });
 
-  it("drains a load queued before GaussianPass starts the handshake", async () => {
+  it("loads and enables raycast before GaussianPass exists, then produces LOD", async () => {
     const port = new InMemoryWorker();
     const store = new GaussianStore(
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
-    const pending = store.loadBuffer(ply(0), { name: "first" });
-    expect(port.commands).toHaveLength(0);
+    const cloud = await store.loadBuffer(ply(0), { name: "first" });
+    expect(port.commands.map(({ type }) => type)).toEqual([
+      "load-cloud-from-buffer",
+    ]);
+    expect(store.hasPackedData).toBe(false);
+    expect(cloud.getRaycastIndex()).not.toBeNull();
     const renderer = {
       hasFeature: () => false,
       backend: { device: { limits: capabilities } },
     } as unknown as WebGPURenderer;
     const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
-    const cloud = await pending;
     await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
     expect(port.commands.map(({ type }) => type)).toEqual([
-      "set-frontend-capabilities",
       "load-cloud-from-buffer",
+      "set-frontend-capabilities",
     ]);
     expect(cloud.name).toBe("first");
     expect(cloud.getRaycastIndex()).not.toBeNull();
@@ -207,12 +235,51 @@ describe("streaming backend request protocol", () => {
     expect(port.terminated).toBe(true);
   });
 
+  it("includes the current camera and loaded cloud transforms in the handshake", async () => {
+    const port = new InMemoryWorker();
+    const store = new GaussianStore(
+      new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
+    );
+    const cloud = await store.loadBuffer(ply(0));
+    cloud.position.x = 7;
+    const camera = new PerspectiveCamera();
+    camera.position.x = 3;
+    store.setFrontendCapabilities(capabilities, camera);
+    await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
+    const handshake = port.commands.find(
+      (command) => command.type === "set-frontend-capabilities",
+    );
+    expect(handshake).toMatchObject({
+      cameraWorldMatrix: expect.arrayContaining([3]),
+      cloudTransforms: [
+        { cloudId: "cloud-1", worldMatrix: expect.arrayContaining([7]) },
+      ],
+    });
+    store.dispose();
+  });
+
+  it("packs a cloud loaded after handshake with an unchanged camera", async () => {
+    const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
+    const store = new GaussianStore(backend);
+    const camera = new PerspectiveCamera();
+    store.setFrontendCapabilities(capabilities, camera);
+    await store.loadBuffer(ply(0));
+    await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
+    const version = store.layoutVersion;
+    await store.loadBuffer(ply(1));
+    await vi.waitFor(() =>
+      expect(store.layoutVersion).toBeGreaterThan(version),
+    );
+    expect(store.clouds).toHaveLength(2);
+    store.dispose();
+  });
+
   it("aborts an active URL fetch and settles its load promise", async () => {
     const port = new InMemoryWorker();
     const store = new GaussianStore(
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
-    store.setFrontendCapabilities(capabilities);
+    store.setFrontendCapabilities(capabilities, new PerspectiveCamera());
     let started!: () => void;
     const fetching = new Promise<void>((resolve) => {
       started = resolve;
@@ -256,17 +323,39 @@ describe("streaming backend request protocol", () => {
     const store = new GaussianStore(
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
+    let started!: () => void;
+    const fetching = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, { signal }: { signal: AbortSignal }) => {
+        started();
+        return new Promise<Response>((_resolve, reject) =>
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          ),
+        );
+      }),
+    );
+    const activeController = new AbortController();
+    const active = store.load(
+      "https://example.test/slow.ply",
+      {},
+      activeController.signal,
+    );
+    await fetching;
     const controller = new AbortController();
     const buffer = ply(0);
     const loading = store.loadBuffer(buffer, {}, controller.signal);
     controller.abort();
     await expect(loading).rejects.toMatchObject({ name: "AbortError" });
-    store.setFrontendCapabilities(capabilities);
-    await vi.waitFor(() => expect(store.scheduler.state).toBe("ready"));
     expect(buffer.byteLength).toBeGreaterThan(0);
-    expect(port.commands.map(({ type }) => type)).toEqual([
-      "set-frontend-capabilities",
-    ]);
+    expect(port.commands.map(({ type }) => type)).toEqual(["load-cloud"]);
+    activeController.abort();
+    await expect(active).rejects.toMatchObject({ name: "AbortError" });
     store.dispose();
   });
 
@@ -284,7 +373,7 @@ describe("streaming backend request protocol", () => {
   it("sends changed camera and cloud transforms, without frame-by-frame spam", async () => {
     const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
     const store = new GaussianStore(backend);
-    store.setFrontendCapabilities(capabilities);
+    store.setFrontendCapabilities(capabilities, new PerspectiveCamera());
     const cloud = await store.loadBuffer(ply(0));
     const camera = new PerspectiveCamera();
     store.updateLod(camera);
@@ -315,7 +404,17 @@ describe("streaming backend request protocol", () => {
     const scheduler = new SerialRequestScheduler(backend);
     const responses: BackendResponse[] = [];
     scheduler.onResponse((response) => responses.push(response));
-    await scheduler.start(capabilities);
+    scheduler.start();
+    await scheduler.schedule(
+      createSetFrontendCapabilitiesCommand(
+        "handshake",
+        capabilities,
+        1,
+        matrix,
+        matrix,
+        [],
+      ),
+    );
     const invalid = scheduler.schedule(
       createSetCameraCommand("invalid", 1, [], matrix),
     );

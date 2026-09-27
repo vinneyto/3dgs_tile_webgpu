@@ -1,6 +1,4 @@
 import type { BackendCommand } from "./commands/BackendCommand";
-import { createSetFrontendCapabilitiesCommand } from "./commands/createCommands";
-import type { FrontendCapabilities } from "./FrontendCapabilities";
 import type { GaussianBackend } from "./GaussianBackend";
 import type { BackendFailure, BackendResponse } from "./BackendResponse";
 
@@ -8,7 +6,7 @@ export type RequestResult = "done" | "superseded";
 export type SchedulerState = "waiting" | "handshaking" | "ready" | "failed";
 export interface RequestScheduler {
   readonly state: SchedulerState;
-  start(capabilities: FrontendCapabilities): Promise<void>;
+  start(): void;
   schedule(command: BackendCommand): Promise<RequestResult>;
   cancel(commandId: string): void;
   onResponse(listener: (response: BackendResponse) => void): () => void;
@@ -31,10 +29,7 @@ export class SerialRequestScheduler implements RequestScheduler {
   private readonly unsubscribe: () => void;
   private readonly unsubscribeFailure: () => void;
   private active: Pending | null = null;
-  private handshake: Pending | null = null;
-  private handshakePromise: Promise<void> | null = null;
   private handshakeAccepted = false;
-  private sequence = 0;
   private disposed = false;
 
   constructor(private readonly backend: GaussianBackend) {
@@ -42,26 +37,11 @@ export class SerialRequestScheduler implements RequestScheduler {
     this.unsubscribeFailure = backend.onFailure(this.fail);
   }
 
-  start(capabilities: FrontendCapabilities): Promise<void> {
+  start(): void {
     if (this.disposed || this.state === "failed")
-      return Promise.reject(new Error("RequestScheduler unavailable"));
-    if (this.handshake) {
-      return this.handshakePromise!.then(() => this.start(capabilities));
-    }
-    this.state = "handshaking";
-    this.handshakeAccepted = false;
-    this.handshakePromise = new Promise<void>((resolve, reject) => {
-      this.handshake = {
-        command: createSetFrontendCapabilitiesCommand(
-          `handshake-${++this.sequence}`,
-          capabilities,
-        ),
-        resolve: () => resolve(),
-        reject,
-      };
-      this.pump();
-    });
-    return this.handshakePromise;
+      throw new Error("RequestScheduler unavailable");
+    if (this.state === "waiting") this.state = "ready";
+    this.pump();
   }
 
   schedule(command: BackendCommand): Promise<RequestResult> {
@@ -107,9 +87,6 @@ export class SerialRequestScheduler implements RequestScheduler {
     const error = new Error("RequestScheduler disposed");
     this.active?.reject(error);
     this.active = null;
-    this.handshake?.reject(error);
-    this.handshake = null;
-    this.handshakePromise = null;
     for (const pending of this.queue.splice(0)) pending.reject(error);
     this.unsubscribe();
     this.unsubscribeFailure();
@@ -120,18 +97,20 @@ export class SerialRequestScheduler implements RequestScheduler {
 
   private pump(): void {
     if (this.disposed || this.active || this.state === "failed") return;
-    const next =
-      this.handshake ??
-      (this.state === "ready" ? this.queue.shift() : undefined);
+    const next = this.state === "ready" ? this.queue.shift() : undefined;
     if (!next) return;
     this.active = next;
+    if (next.command.type === "set-frontend-capabilities") {
+      this.handshakeAccepted = false;
+      this.state = "handshaking";
+    }
     try {
       this.backend.dispatch(next.command);
     } catch (error) {
       this.active = null;
       const failure = error instanceof Error ? error : new Error(String(error));
       next.reject(failure);
-      if (next === this.handshake)
+      if (next.command.type === "set-frontend-capabilities")
         this.fail({ code: "handshake-failed", message: failure.message });
       else queueMicrotask(() => this.pump());
     }
@@ -151,7 +130,7 @@ export class SerialRequestScheduler implements RequestScheduler {
       return;
     }
     if (
-      this.active === this.handshake &&
+      this.active.command.type === "set-frontend-capabilities" &&
       response.payload?.type === "capabilities-accepted" &&
       response.payload.protocolVersion === 1
     )
@@ -160,7 +139,7 @@ export class SerialRequestScheduler implements RequestScheduler {
     if (!response.isFinal) return;
     const finished = this.active;
     this.active = null;
-    const wasHandshake = finished === this.handshake;
+    const wasHandshake = finished.command.type === "set-frontend-capabilities";
     if (wasHandshake && !response.error && !this.handshakeAccepted) {
       const error = new Error(
         "Backend did not confirm the frontend capabilities",
@@ -170,8 +149,6 @@ export class SerialRequestScheduler implements RequestScheduler {
       return;
     }
     if (wasHandshake) {
-      this.handshake = null;
-      this.handshakePromise = null;
       if (!response.error) this.state = "ready";
     }
     if (response.error) {
@@ -193,9 +170,6 @@ export class SerialRequestScheduler implements RequestScheduler {
     const error = new Error(failure.message);
     this.active?.reject(error);
     this.active = null;
-    this.handshake?.reject(error);
-    this.handshake = null;
-    this.handshakePromise = null;
     for (const pending of this.queue.splice(0)) pending.reject(error);
     for (const listener of this.failures) listener(failure);
   };

@@ -49,6 +49,7 @@ import {
   createWriteAttributeRangeCommand,
   createSetCloudTransformCommand,
   createSetCameraCommand,
+  createSetFrontendCapabilitiesCommand,
 } from "../streaming-backend/commands/createCommands";
 import type { PackedAttributeBuffer } from "../streaming-backend/PackedAttributeBuffer";
 import { WorkerStreamingGaussianBackend } from "../streaming-backend-worker/WorkerStreamingGaussianBackend";
@@ -123,6 +124,7 @@ export class GaussianStore implements GaussianRenderStore {
         : new SerialRequestScheduler(schedulerOrBackend);
     this.unsubscribe = this.scheduler.onResponse(this.handleResponse);
     this.unsubscribeFailure = this.scheduler.onFailure(this.handleFailure);
+    this.scheduler.start();
   }
 
   get clouds(): readonly GaussianCloud[] {
@@ -310,7 +312,10 @@ export class GaussianStore implements GaussianRenderStore {
       : this.extraBuffers.get(name);
   }
 
-  setFrontendCapabilities(capabilities: FrontendCapabilities): void {
+  setFrontendCapabilities(
+    capabilities: FrontendCapabilities,
+    camera: Camera,
+  ): void {
     if (this.disposed) throw new Error("GaussianStore disposed");
     const previous = this.frontendCapabilities;
     if (
@@ -327,31 +332,50 @@ export class GaussianStore implements GaussianRenderStore {
     const wasAwaitingCapabilities = this.awaitingCapabilities;
     this.awaitingCapabilities = true;
     this.frontendCapabilities = { ...capabilities };
-    void this.scheduler.start(capabilities).then(
-      () => {
-        if (
-          this.frontendCapabilities === null ||
-          this.frontendCapabilities.maxBufferSize !==
-            capabilities.maxBufferSize ||
-          this.frontendCapabilities.maxStorageBufferBindingSize !==
-            capabilities.maxStorageBufferBindingSize ||
-          this.frontendCapabilities.maxStorageBuffersPerShaderStage !==
-            capabilities.maxStorageBuffersPerShaderStage ||
-          this.frontendCapabilities.supportsPartialBufferUpdates !==
-            capabilities.supportsPartialBufferUpdates
-        )
-          return;
-        this.awaitingCapabilities = false;
-        this.notify("content");
-      },
-      (error: unknown) => {
-        this.frontendCapabilities = previous;
-        this.awaitingCapabilities = wasAwaitingCapabilities;
-        this.lastError =
-          error instanceof Error ? error : new Error(String(error));
-        this.notify("content");
-      },
-    );
+    camera.updateWorldMatrix(true, false);
+    const transforms = this.clouds.map((cloud) => {
+      cloud.updateWorldMatrix(true, false);
+      return {
+        cloudId: this.requireId(cloud),
+        worldMatrix: cloud.matrixWorld.elements.slice(),
+      };
+    });
+    void this.scheduler
+      .schedule(
+        createSetFrontendCapabilitiesCommand(
+          this.nextCommandId(),
+          capabilities,
+          ++this.revision,
+          camera.matrixWorld.elements.slice(),
+          camera.projectionMatrix.elements.slice(),
+          transforms,
+        ),
+      )
+      .then(
+        () => {
+          if (
+            this.frontendCapabilities === null ||
+            this.frontendCapabilities.maxBufferSize !==
+              capabilities.maxBufferSize ||
+            this.frontendCapabilities.maxStorageBufferBindingSize !==
+              capabilities.maxStorageBufferBindingSize ||
+            this.frontendCapabilities.maxStorageBuffersPerShaderStage !==
+              capabilities.maxStorageBuffersPerShaderStage ||
+            this.frontendCapabilities.supportsPartialBufferUpdates !==
+              capabilities.supportsPartialBufferUpdates
+          )
+            return;
+          this.awaitingCapabilities = false;
+          this.notify("content");
+        },
+        (error: unknown) => {
+          this.frontendCapabilities = previous;
+          this.awaitingCapabilities = wasAwaitingCapabilities;
+          this.lastError =
+            error instanceof Error ? error : new Error(String(error));
+          this.notify("content");
+        },
+      );
   }
 
   updateLod(camera: Camera): GaussianStoreLodUpdate {

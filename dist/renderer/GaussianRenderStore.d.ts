@@ -21,7 +21,7 @@ export interface GaussianRenderStore {
     subscribe(listener: GaussianStoreListener): () => void;
     enablePackedLodLevelAttribute(): GaussianStorePackedAttribute;
     /** Report the initialized rendering device before the backend sends buffers. */
-    setFrontendCapabilities(capabilities: FrontendCapabilities): void;
+    setFrontendCapabilities(capabilities: FrontendCapabilities, camera: Camera): void;
     updateLod(camera: Camera): GaussianStoreLodUpdate;
     getPackedData(): GaussianData;
 }

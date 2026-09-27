@@ -20,4 +20,7 @@ export declare const createSetCloudTransformCommand: (id: string, cloudId: strin
 export declare const createSetCloudRaycastableCommand: (id: string, cloudId: string, raycastable: boolean) => SetCloudRaycastableCommand;
 export declare const createWriteAttributeRangeCommand: (id: string, cloudId: string, attribute: string, firstGaussian: number, gaussianCount: number, data: ArrayBuffer) => WriteAttributeRangeCommand;
 export declare const createSetCameraCommand: (id: string, sceneRevision: number, worldMatrix: readonly number[], projectionMatrix: readonly number[]) => SetCameraCommand;
-export declare const createSetFrontendCapabilitiesCommand: (id: string, capabilities: FrontendCapabilities) => SetFrontendCapabilitiesCommand;
+export declare const createSetFrontendCapabilitiesCommand: (id: string, capabilities: FrontendCapabilities, sceneRevision: number, cameraWorldMatrix: readonly number[], projectionMatrix: readonly number[], cloudTransforms: readonly {
+    cloudId: string;
+    worldMatrix: readonly number[];
+}[]) => SetFrontendCapabilitiesCommand;

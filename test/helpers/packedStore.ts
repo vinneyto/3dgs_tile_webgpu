@@ -8,6 +8,7 @@ import type {
 } from "../../src/streaming-backend/BackendResponse";
 import type { BackendCommand } from "../../src/streaming-backend/commands/BackendCommand";
 import type { GaussianCloud } from "../../src/renderer/GaussianCloud";
+import { PerspectiveCamera } from "three/webgpu";
 
 export const TEST_FRONTEND = {
   maxStorageBufferBindingSize: 1_073_741_824,
@@ -137,15 +138,14 @@ export function packedStore(
   };
   const scheduler: RequestScheduler = {
     state: "ready",
-    start: async () => {
-      configured = true;
-      current = { id: "fixture-handshake", type: "set-frontend-capabilities" };
-      publishReplacement();
-      listener?.({ command: current, durationMs: 0, isFinal: true });
-    },
+    start: () => {},
     schedule: (command) => {
       current = command;
-      if (command.type === "load-cloud-from-buffer") {
+      if (command.type === "set-frontend-capabilities") {
+        configured = true;
+        emit({ type: "capabilities-accepted", protocolVersion: 1 });
+        publishReplacement();
+      } else if (command.type === "load-cloud-from-buffer") {
         const objectId = sources.length;
         const source = pending.shift()!;
         sources.push(source);
@@ -191,7 +191,7 @@ export function packedStore(
   };
   const cloud = add(data);
   const request = () => {
-    store.setFrontendCapabilities(TEST_FRONTEND);
+    store.setFrontendCapabilities(TEST_FRONTEND, new PerspectiveCamera());
   };
   if (ready) request();
   return { store, cloud, add, request };

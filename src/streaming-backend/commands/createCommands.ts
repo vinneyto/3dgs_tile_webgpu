@@ -109,9 +109,20 @@ export const createSetCameraCommand = (
 export const createSetFrontendCapabilitiesCommand = (
   id: string,
   capabilities: FrontendCapabilities,
+  sceneRevision: number,
+  cameraWorldMatrix: readonly number[],
+  projectionMatrix: readonly number[],
+  cloudTransforms: readonly {
+    cloudId: string;
+    worldMatrix: readonly number[];
+  }[],
 ): SetFrontendCapabilitiesCommand => ({
   type: "set-frontend-capabilities",
   id,
   protocolVersion: 1,
   capabilities: { ...capabilities },
+  sceneRevision,
+  cameraWorldMatrix,
+  projectionMatrix,
+  cloudTransforms,
 });

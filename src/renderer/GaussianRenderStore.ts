@@ -5,7 +5,10 @@ import type { GaussianData } from "./GaussianData";
 import type { GaussianStoreListener } from "./GaussianStoreEvents";
 import type { GaussianStoreAttributes } from "./store-attributes/GaussianStoreAttributes";
 import type { GaussianStorePackedAttribute } from "./store-attributes/GaussianStorePackedAttribute";
-import type { GaussianStoreLodUpdate, GaussianStorePackStats } from "./GaussianStoreTypes";
+import type {
+  GaussianStoreLodUpdate,
+  GaussianStorePackStats,
+} from "./GaussianStoreTypes";
 
 /** Synchronous renderer-facing view maintained by GaussianStore. */
 export interface GaussianRenderStore {
@@ -22,7 +25,10 @@ export interface GaussianRenderStore {
   subscribe(listener: GaussianStoreListener): () => void;
   enablePackedLodLevelAttribute(): GaussianStorePackedAttribute;
   /** Report the initialized rendering device before the backend sends buffers. */
-  setFrontendCapabilities(capabilities: FrontendCapabilities): void;
+  setFrontendCapabilities(
+    capabilities: FrontendCapabilities,
+    camera: Camera,
+  ): void;
   updateLod(camera: Camera): GaussianStoreLodUpdate;
   getPackedData(): GaussianData;
 }

@@ -9,6 +9,7 @@ import { SerialRequestScheduler } from "../src/streaming-backend/RequestSchedule
 import {
   createSetCameraCommand,
   createSetCloudTransformCommand,
+  createSetFrontendCapabilitiesCommand,
 } from "../src/streaming-backend/commands/createCommands";
 
 const capabilities = {
@@ -72,34 +73,43 @@ class ManualBackend implements GaussianBackend {
 }
 
 describe("SerialRequestScheduler", () => {
-  it("gates commands behind the handshake and the final response", async () => {
+  it("runs loads before handshake, and waits for the final response", async () => {
     const backend = new ManualBackend();
     const scheduler = new SerialRequestScheduler(backend);
-    const camera = createSetCameraCommand("camera", 1, matrix, matrix);
-    const pending = scheduler.schedule(camera);
-    expect(backend.sent).toEqual([]);
-    const ready = scheduler.start(capabilities);
-    const handshake = backend.sent[0]!;
-    expect(handshake.type).toBe("set-frontend-capabilities");
-    backend.answer(handshake, false);
+    scheduler.start();
+    const load = {
+      type: "load-cloud" as const,
+      id: "load",
+      cloudId: "cloud",
+      url: "/cloud.ply",
+    };
+    const loading = scheduler.schedule(load);
+    const handshake = createSetFrontendCapabilitiesCommand(
+      "handshake",
+      capabilities,
+      1,
+      matrix,
+      matrix,
+      [],
+    );
+    const ready = scheduler.schedule(handshake);
+    expect(backend.sent).toEqual([load]);
+    backend.answer(load, false);
     expect(backend.sent).toHaveLength(1);
+    backend.answer(load, true);
+    await loading;
+    await Promise.resolve();
+    expect(backend.sent[1]).toEqual(handshake);
     backend.answer(handshake, true);
     await ready;
-    await Promise.resolve();
-    expect(backend.sent[1]).toEqual(camera);
-    backend.answer(camera, false);
     expect(scheduler.state).toBe("ready");
-    backend.answer(camera, true);
-    await expect(pending).resolves.toBe("done");
     scheduler.dispose();
   });
 
   it("keeps only the last waiting command for each latestKey and appends it to the tail", async () => {
     const backend = new ManualBackend();
     const scheduler = new SerialRequestScheduler(backend);
-    const ready = scheduler.start(capabilities);
-    backend.answer(backend.sent[0]!, true);
-    await ready;
+    scheduler.start();
     const first = createSetCameraCommand("camera-1", 1, matrix, matrix);
     const firstResult = scheduler.schedule(first);
     const stale = scheduler.schedule(
@@ -113,22 +123,18 @@ describe("SerialRequestScheduler", () => {
     const latestResult = scheduler.schedule(latest);
     await expect(stale).resolves.toBe("superseded");
     expect(backend.sent.at(-1)).toEqual(first);
-    backend.answer(first, true);
-    await firstResult;
-    await Promise.resolve();
-    expect(backend.sent.at(-1)).toEqual(cloudA);
-    backend.answer(cloudA, true);
-    await a;
-    await Promise.resolve();
-    expect(backend.sent.at(-1)).toEqual(cloudB);
-    backend.answer(cloudB, true);
-    await b;
-    await Promise.resolve();
-    expect(backend.sent.at(-1)).toEqual(latest);
-    backend.answer(latest, true);
-    await latestResult;
+    for (const [command, promise] of [
+      [first, firstResult],
+      [cloudA, a],
+      [cloudB, b],
+      [latest, latestResult],
+    ] as const) {
+      expect(backend.sent.at(-1)).toEqual(command);
+      backend.answer(command, true);
+      await promise;
+      await Promise.resolve();
+    }
     expect(backend.sent.map(({ id }) => id)).toEqual([
-      "handshake-1",
       "camera-1",
       "a",
       "b",
@@ -140,9 +146,7 @@ describe("SerialRequestScheduler", () => {
   it("rejects active and queued requests on transport failure", async () => {
     const backend = new ManualBackend();
     const scheduler = new SerialRequestScheduler(backend);
-    const ready = scheduler.start(capabilities);
-    backend.answer(backend.sent[0]!, true);
-    await ready;
+    scheduler.start();
     const active = scheduler.schedule(
       createSetCameraCommand("active", 1, matrix, matrix),
     );
@@ -156,12 +160,10 @@ describe("SerialRequestScheduler", () => {
     scheduler.dispose();
   });
 
-  it("collapses camera updates while a different command is executing", async () => {
+  it("collapses camera updates while a load is executing", async () => {
     const backend = new ManualBackend();
     const scheduler = new SerialRequestScheduler(backend);
-    const ready = scheduler.start(capabilities);
-    backend.answer(backend.sent[0]!, true);
-    await ready;
+    scheduler.start();
     const loading = scheduler.schedule({
       type: "load-cloud",
       id: "load",
@@ -175,8 +177,8 @@ describe("SerialRequestScheduler", () => {
       createSetCameraCommand("new-camera", 2, matrix, matrix),
     );
     await expect(stale).resolves.toBe("superseded");
-    expect(backend.sent.map(({ id }) => id)).toEqual(["handshake-1", "load"]);
-    backend.answer(backend.sent[1]!, true);
+    expect(backend.sent.map(({ id }) => id)).toEqual(["load"]);
+    backend.answer(backend.sent[0]!, true);
     await loading;
     await Promise.resolve();
     expect(backend.sent.at(-1)?.id).toBe("new-camera");
@@ -185,13 +187,23 @@ describe("SerialRequestScheduler", () => {
     scheduler.dispose();
   });
 
-  it("rejects the waiting queue when the backend omits the handshake acknowledgement", async () => {
+  it("rejects a handshake without acknowledgement and its waiting queue", async () => {
     const backend = new ManualBackend();
     const scheduler = new SerialRequestScheduler(backend);
+    scheduler.start();
+    const ready = scheduler.schedule(
+      createSetFrontendCapabilitiesCommand(
+        "handshake",
+        capabilities,
+        1,
+        matrix,
+        matrix,
+        [],
+      ),
+    );
     const pending = scheduler.schedule(
       createSetCameraCommand("camera", 1, matrix, matrix),
     );
-    const ready = scheduler.start(capabilities);
     backend.answerWithoutAcknowledgement(backend.sent[0]!);
     await expect(ready).rejects.toThrow("did not confirm");
     await expect(pending).rejects.toThrow("did not confirm");

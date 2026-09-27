@@ -1,12 +1,11 @@
 import type { BackendCommand } from "./commands/BackendCommand";
-import type { FrontendCapabilities } from "./FrontendCapabilities";
 import type { GaussianBackend } from "./GaussianBackend";
 import type { BackendFailure, BackendResponse } from "./BackendResponse";
 export type RequestResult = "done" | "superseded";
 export type SchedulerState = "waiting" | "handshaking" | "ready" | "failed";
 export interface RequestScheduler {
     readonly state: SchedulerState;
-    start(capabilities: FrontendCapabilities): Promise<void>;
+    start(): void;
     schedule(command: BackendCommand): Promise<RequestResult>;
     cancel(commandId: string): void;
     onResponse(listener: (response: BackendResponse) => void): () => void;
@@ -23,13 +22,10 @@ export declare class SerialRequestScheduler implements RequestScheduler {
     private readonly unsubscribe;
     private readonly unsubscribeFailure;
     private active;
-    private handshake;
-    private handshakePromise;
     private handshakeAccepted;
-    private sequence;
     private disposed;
     constructor(backend: GaussianBackend);
-    start(capabilities: FrontendCapabilities): Promise<void>;
+    start(): void;
     schedule(command: BackendCommand): Promise<RequestResult>;
     cancel(commandId: string): void;
     onResponse(listener: (response: BackendResponse) => void): () => void;
