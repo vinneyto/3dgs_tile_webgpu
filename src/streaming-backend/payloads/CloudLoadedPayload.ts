@@ -1,7 +1,6 @@
 import type { FullRaycastOctreeBuffers } from "../FullRaycastOctreeBuffers";
-export interface CloudLoadedEvent {
+export interface CloudLoadedPayload {
   type: "cloud-loaded";
-  commandId: string;
   cloudId: string;
   objectId: number;
   sourceCount: number;

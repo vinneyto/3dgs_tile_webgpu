@@ -320,18 +320,28 @@ export class GaussianSandbox {
   async loadUrl(url: string): Promise<void> {
     this.cloudStatus.loading(url);
     const store = this.createStore();
+    let pass: GaussianPass | null = null;
+    let loading: Promise<GaussianCloud> | null = null;
     try {
-      const cloud = await store.load(url, {
+      loading = store.load(url, {
         name: `${url} Gaussian cloud`,
         lod: { levels: SANDBOX_LOD_LEVELS },
       });
+      pass = this.createPass(store);
+      const cloud = await loading;
       if (this.disposed) {
+        pass.dispose();
         store.dispose();
         return;
       }
-      this.show(store, url, cloud);
+      this.show(store, url, cloud, pass);
     } catch (error) {
-      store.dispose();
+      void loading?.catch(() => {});
+      if (this.pass === pass && pass !== null) this.clearCloud();
+      else {
+        pass?.dispose();
+        store.dispose();
+      }
       this.cloudStatus.error(error);
     }
   }
@@ -339,18 +349,29 @@ export class GaussianSandbox {
   async loadFile(file: File): Promise<void> {
     this.cloudStatus.parsing(file.name);
     const store = this.createStore();
+    let pass: GaussianPass | null = null;
+    let loading: Promise<GaussianCloud> | null = null;
     try {
-      const cloud = await store.loadBuffer(await file.arrayBuffer(), {
+      const buffer = await file.arrayBuffer();
+      loading = store.loadBuffer(buffer, {
         name: `${file.name} Gaussian cloud`,
         lod: { levels: SANDBOX_LOD_LEVELS },
       });
+      pass = this.createPass(store);
+      const cloud = await loading;
       if (this.disposed) {
+        pass.dispose();
         store.dispose();
         return;
       }
-      this.show(store, file.name, cloud);
+      this.show(store, file.name, cloud, pass);
     } catch (error) {
-      store.dispose();
+      void loading?.catch(() => {});
+      if (this.pass === pass && pass !== null) this.clearCloud();
+      else {
+        pass?.dispose();
+        store.dispose();
+      }
       this.cloudStatus.error(error);
     }
   }
@@ -359,19 +380,31 @@ export class GaussianSandbox {
     const config = {
       ...DEFAULT_BACKEND_CONFIG,
       streamingLod: {
-        maxChangedCellsPerUpdate: this.options.streamingLod.maxChangedCellsPerPack,
-        maxUploadBytesPerUpdate: this.options.streamingLod.maxUploadBytesPerPack,
+        maxChangedCellsPerUpdate:
+          this.options.streamingLod.maxChangedCellsPerPack,
+        maxUploadBytesPerUpdate:
+          this.options.streamingLod.maxUploadBytesPerPack,
       },
     };
-    return new GaussianStore(this.options.workerBackend
-      ? new WorkerStreamingGaussianBackend(config)
-      : new StreamingGaussianBackend(config));
+    return new GaussianStore(
+      this.options.workerBackend
+        ? new WorkerStreamingGaussianBackend(config)
+        : new StreamingGaussianBackend(config),
+    );
+  }
+
+  private createPass(store: GaussianStore): GaussianPass {
+    return gaussianPass(this.renderer, this.camera, store, {
+      ...this.options.pass,
+      outputDepth: this.options.dofEnabled || this.options.depthDebugEnabled,
+    });
   }
 
   private show(
     store: GaussianStore,
     source: string,
     cloud: GaussianCloud,
+    pass: GaussianPass,
   ): void {
     this.clearCloud();
     const sourceCount = store.getSourceCount(cloud);
@@ -387,10 +420,7 @@ export class GaussianSandbox {
     this.focusRaycastPending = true;
     this.hoverMarker.scale.setScalar(Math.max(bounds.radius * 0.012, 0.005));
 
-    this.pass = gaussianPass(this.renderer, this.camera, store, {
-      ...this.options.pass,
-      outputDepth: this.options.dofEnabled || this.options.depthDebugEnabled,
-    });
+    this.pass = pass;
     this.opaquePass = scenePass(this.scene, this.camera);
     this.opaquePass.transparent = false;
     this.opaquePass.opaque = true;

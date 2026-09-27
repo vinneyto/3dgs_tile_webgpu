@@ -1,0 +1,26 @@
+import type { CloudLoadOptions } from "../CloudLoadOptions";
+import type { FrontendCapabilities } from "../FrontendCapabilities";
+import type { PackingStrategy } from "../PackingStrategy";
+import type { LoadCloudCommand } from "./LoadCloudCommand";
+import type { LoadCloudFromBufferCommand } from "./LoadCloudFromBufferCommand";
+import type { UnloadCloudCommand } from "./UnloadCloudCommand";
+import type { SetCloudPriorityCommand } from "./SetCloudPriorityCommand";
+import type { SetCloudPackingCommand } from "./SetCloudPackingCommand";
+import type { SetCloudTransformCommand } from "./SetCloudTransformCommand";
+import type { SetCloudRaycastableCommand } from "./SetCloudRaycastableCommand";
+import type { WriteAttributeRangeCommand } from "./WriteAttributeRangeCommand";
+import type { SetCameraCommand } from "./SetCameraCommand";
+import type { SetFrontendCapabilitiesCommand } from "./SetFrontendCapabilitiesCommand";
+export declare const createLoadCloudCommand: (id: string, cloudId: string, url: string, options?: CloudLoadOptions) => LoadCloudCommand;
+export declare const createLoadCloudFromBufferCommand: (id: string, cloudId: string, buffer: ArrayBuffer, options?: CloudLoadOptions) => LoadCloudFromBufferCommand;
+export declare const createUnloadCloudCommand: (id: string, cloudId: string) => UnloadCloudCommand;
+export declare const createSetCloudPriorityCommand: (id: string, cloudId: string, priority: number) => SetCloudPriorityCommand;
+export declare const createSetCloudPackingCommand: (id: string, cloudId: string, packingStrategy: PackingStrategy) => SetCloudPackingCommand;
+export declare const createSetCloudTransformCommand: (id: string, cloudId: string, sceneRevision: number, worldMatrix: readonly number[]) => SetCloudTransformCommand;
+export declare const createSetCloudRaycastableCommand: (id: string, cloudId: string, raycastable: boolean) => SetCloudRaycastableCommand;
+export declare const createWriteAttributeRangeCommand: (id: string, cloudId: string, attribute: string, firstGaussian: number, gaussianCount: number, data: ArrayBuffer) => WriteAttributeRangeCommand;
+export declare const createSetCameraCommand: (id: string, sceneRevision: number, worldMatrix: readonly number[], projectionMatrix: readonly number[]) => SetCameraCommand;
+export declare const createSetFrontendCapabilitiesCommand: (id: string, capabilities: FrontendCapabilities, sceneRevision: number, cameraWorldMatrix: readonly number[], projectionMatrix: readonly number[], cloudTransforms: readonly {
+    cloudId: string;
+    worldMatrix: readonly number[];
+}[]) => SetFrontendCapabilitiesCommand;

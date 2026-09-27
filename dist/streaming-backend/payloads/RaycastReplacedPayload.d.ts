@@ -1,5 +1,5 @@
 import type { FullRaycastOctreeBuffers } from "../FullRaycastOctreeBuffers";
-export interface RaycastReplacedEvent {
+export interface RaycastReplacedPayload {
     type: "raycast-replaced";
     cloudId: string;
     sourceVersion: number;

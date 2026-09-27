@@ -1,24 +1,22 @@
 import type { BackendConfig } from "../streaming-backend/BackendConfig";
 import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
 import type { BackendCommand } from "../streaming-backend/commands/BackendCommand";
-import type { BackendEvent } from "../streaming-backend/events/BackendEvent";
+import type { BackendResponse, BackendFailure } from "../streaming-backend/BackendResponse";
 type WorkerPort = Pick<Worker, "postMessage" | "addEventListener" | "removeEventListener" | "terminate">;
-/** Client-side endpoint: messages only, no computation or GPU objects. */
+/** Transport only. Request ordering and replacement belong to RequestScheduler. */
 export declare class WorkerStreamingGaussianBackend implements GaussianBackend {
     private readonly listeners;
+    private readonly failureListeners;
     private readonly port;
     private disposed;
-    private readonly sceneInFlight;
-    private readonly pendingScene;
-    private sceneFlushScheduled;
     constructor(config: BackendConfig, port?: WorkerPort);
-    subscribe(listener: (event: BackendEvent) => void): () => void;
+    subscribe(listener: (response: BackendResponse) => void): () => void;
+    onFailure(listener: (failure: BackendFailure) => void): () => void;
     dispatch(command: BackendCommand): void;
+    abort(commandId: string): void;
     dispose(): void;
     private readonly onMessage;
-    private scheduleSceneFlush;
-    private flushScene;
-    private emit;
+    private fail;
     private readonly onError;
     private readonly onMessageError;
 }

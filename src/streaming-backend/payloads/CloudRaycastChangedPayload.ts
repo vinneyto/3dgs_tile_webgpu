@@ -1,7 +1,6 @@
 import type { FullRaycastOctreeBuffers } from "../FullRaycastOctreeBuffers";
-export interface CloudRaycastChangedEvent {
+export interface CloudRaycastChangedPayload {
   type: "cloud-raycast-changed";
-  commandId: string;
   cloudId: string;
   raycastable: boolean;
   raycast?: FullRaycastOctreeBuffers;

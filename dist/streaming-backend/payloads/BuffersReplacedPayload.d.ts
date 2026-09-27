@@ -1,6 +1,6 @@
 import type { CloudRenderState } from "../CloudRenderState";
 import type { PackedAttributeBuffer } from "../PackedAttributeBuffer";
-export interface BuffersReplacedEvent {
+export interface BuffersReplacedPayload {
     type: "buffers-replaced";
     sceneRevision: number;
     layoutVersion: number;

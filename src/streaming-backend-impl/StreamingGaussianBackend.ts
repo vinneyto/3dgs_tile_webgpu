@@ -10,7 +10,11 @@ import type { PackedAttributeBuffer } from "../streaming-backend/PackedAttribute
 import type { PackedAttributePatch } from "../streaming-backend/PackedAttributePatch";
 import type { PackingStrategy } from "../streaming-backend/PackingStrategy";
 import type { BackendCommand } from "../streaming-backend/commands/BackendCommand";
-import type { BackendEvent } from "../streaming-backend/events/BackendEvent";
+import type {
+  BackendPayload,
+  BackendResponse,
+  BackendFailure,
+} from "../streaming-backend/BackendResponse";
 import { DistanceAwareRadialLodPackingStrategy } from "./lod-packing/DistanceAwareRadialLodPackingStrategy";
 import { MaximumLodPackingStrategy } from "./lod-packing/MaximumLodPackingStrategy";
 import { RadialLodPackingStrategy } from "./lod-packing/RadialLodPackingStrategy";
@@ -66,20 +70,17 @@ const IDENTITY_MATRIX = new Matrix4();
  * disposable copy which a worker is free to transfer to its client.
  */
 export class StreamingGaussianBackend implements GaussianBackend {
-  private readonly listeners = new Set<(event: BackendEvent) => void>();
+  private readonly listeners = new Set<(response: BackendResponse) => void>();
+  private readonly failureListeners = new Set<
+    (failure: BackendFailure) => void
+  >();
   private readonly clouds = new Map<string, CloudEntry>();
   private readonly usedCloudIds = new Set<string>();
   private readonly usedCommandIds = new Set<string>();
-  private readonly cancelled = new Set<string>();
-  private readonly pendingCommands = new Set<string>();
   private readonly activeLoads = new Map<string, AbortController>();
   private readonly parser = new CanonicalGaussianPlyLoader();
   private readonly config: BackendConfig;
   private frontend: FrontendCapabilities | null = null;
-  private work: Promise<void> = Promise.resolve();
-  private pendingCamera: {
-    command: Extract<BackendCommand, { type: "set-camera" }>;
-  } | null = null;
   private nextObjectId = 0;
   private layoutVersion = 0;
   private contentVersion = 0;
@@ -88,18 +89,27 @@ export class StreamingGaussianBackend implements GaussianBackend {
   private packed: PackedState | null = null;
   private target: PackedState | null = null;
   private updateScheduled = false;
-  private sceneUpdateTimer: ReturnType<typeof setTimeout> | null = null;
-  private readonly pendingTransforms: string[] = [];
+  private active: BackendCommand | null = null;
+  private startedAt = 0;
+  private drain: {
+    resolve: () => void;
+    reject: (error: Error) => void;
+  } | null = null;
   private disposed = false;
 
   constructor(config: BackendConfig) {
     this.config = config;
   }
 
-  subscribe(listener: (event: BackendEvent) => void): () => void {
+  subscribe(listener: (response: BackendResponse) => void): () => void {
     if (this.disposed) throw new Error("Backend disposed");
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  onFailure(listener: (failure: BackendFailure) => void): () => void {
+    this.failureListeners.add(listener);
+    return () => this.failureListeners.delete(listener);
   }
 
   dispatch(command: BackendCommand): void {
@@ -107,77 +117,80 @@ export class StreamingGaussianBackend implements GaussianBackend {
     if (this.usedCommandIds.has(command.id))
       throw new Error(`Duplicate backend command id: ${command.id}`);
     this.usedCommandIds.add(command.id);
-    if (command.type === "cancel") {
-      if (this.pendingCommands.has(command.targetCommandId)) {
-        this.cancelled.add(command.targetCommandId);
-        this.activeLoads.get(command.targetCommandId)?.abort();
-      }
-      this.emit({ type: "command-completed", commandId: command.id });
-      return;
+    if (this.active)
+      throw new Error("Backend accepts only one command at a time");
+    this.active = command;
+    this.startedAt = performance.now();
+    void this.run(command);
+  }
+
+  abort(commandId: string): void {
+    this.activeLoads.get(commandId)?.abort();
+  }
+
+  private async run(command: BackendCommand): Promise<void> {
+    try {
+      await this.handle(command);
+      if (this.target)
+        await new Promise<void>((resolve, reject) => {
+          this.drain = { resolve, reject };
+        });
+      this.respond(command, { isFinal: true });
+    } catch (error) {
+      this.respond(command, {
+        isFinal: true,
+        error: {
+          code:
+            error instanceof DOMException && error.name === "AbortError"
+              ? "cancelled"
+              : error instanceof RangeError
+                ? "invalid-range"
+                : "backend-error",
+          message: error instanceof Error ? error.message : String(error),
+          cloudId: "cloudId" in command ? command.cloudId : undefined,
+        },
+      });
+    } finally {
+      this.active = null;
     }
-    this.pendingCommands.add(command.id);
-    if (command.type === "set-camera" && this.pendingCamera) {
-      const previous = this.pendingCamera.command;
-      this.pendingCamera.command = command;
-      this.pendingCommands.delete(previous.id);
-      this.emit({ type: "command-cancelled", commandId: previous.id });
-      return;
-    }
-    // Keep a camera slot only within a consecutive run of camera commands.
-    // Scene mutations must retain their place relative to camera updates.
-    const cameraSlot = command.type === "set-camera" ? { command } : null;
-    this.pendingCamera = cameraSlot;
-    // Serialize scene mutations. Cancellation is handled outside the queue,
-    // so it can interrupt a fetch or a command still waiting in the queue.
-    this.work = this.work.then(async () => {
-      const current = cameraSlot?.command ?? command;
-      if (cameraSlot && this.pendingCamera === cameraSlot)
-        this.pendingCamera = null;
-      try {
-        if (this.cancelled.delete(current.id)) {
-          this.emit({ type: "command-cancelled", commandId: current.id });
-          return;
-        }
-        await this.handle(current);
-      } catch (error) {
-        if (this.cancelled.delete(current.id)) {
-          this.emit({ type: "command-cancelled", commandId: current.id });
-        } else {
-          this.emit({
-            type: "error",
-            commandId: current.id,
-            cloudId: "cloudId" in current ? current.cloudId : undefined,
-            code:
-              error instanceof RangeError ? "invalid-range" : "backend-error",
-            message: error instanceof Error ? error.message : String(error),
-          });
-        }
-      } finally {
-        this.pendingCommands.delete(current.id);
-      }
-    });
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    if (this.sceneUpdateTimer !== null) clearTimeout(this.sceneUpdateTimer);
     for (const controller of this.activeLoads.values()) controller.abort();
     this.activeLoads.clear();
+    this.drain?.reject(new Error("Backend disposed"));
+    this.drain = null;
     this.listeners.clear();
+    this.failureListeners.clear();
     this.clouds.clear();
     this.packed = null;
     this.target = null;
   }
 
-  private emit(event: BackendEvent): void {
+  private respond(
+    command: Pick<BackendCommand, "id" | "type">,
+    fields: Pick<BackendResponse, "isFinal" | "payload" | "error">,
+  ): void {
     if (this.disposed) return;
-    for (const listener of this.listeners) listener(event);
+    const response: BackendResponse = {
+      command: { id: command.id, type: command.type },
+      durationMs:
+        command === this.active || command.id === this.active?.id
+          ? performance.now() - this.startedAt
+          : 0,
+      ...fields,
+    };
+    for (const listener of this.listeners) listener(response);
   }
 
-  private async handle(
-    command: Exclude<BackendCommand, { type: "cancel" }>,
-  ): Promise<void> {
+  private emit(payload: BackendPayload): void {
+    if (!this.active) throw new Error("Unsolicited backend output");
+    this.respond(this.active, { isFinal: false, payload });
+  }
+
+  private async handle(command: BackendCommand): Promise<void> {
     switch (command.type) {
       case "load-cloud":
       case "load-cloud-from-buffer": {
@@ -262,7 +275,6 @@ export class StreamingGaussianBackend implements GaussianBackend {
           const { min, max } = octree.bounds;
           this.emit({
             type: "cloud-loaded",
-            commandId: command.id,
             cloudId: entry.id,
             objectId: entry.objectId,
             sourceCount: source.count,
@@ -285,7 +297,6 @@ export class StreamingGaussianBackend implements GaussianBackend {
         this.clouds.delete(command.cloudId);
         this.emit({
           type: "cloud-unloaded",
-          commandId: command.id,
           cloudId: command.cloudId,
         });
         this.repack();
@@ -323,8 +334,7 @@ export class StreamingGaussianBackend implements GaussianBackend {
         if (command.sceneRevision < this.sceneRevision) break;
         this.sceneRevision = command.sceneRevision;
         entry.transform.fromArray(command.worldMatrix);
-        this.pendingTransforms.push(command.id);
-        this.scheduleSceneUpdate();
+        this.updateTarget();
         return;
       }
       case "set-cloud-raycastable": {
@@ -332,7 +342,6 @@ export class StreamingGaussianBackend implements GaussianBackend {
         entry.raycastable = command.raycastable;
         this.emit({
           type: "cloud-raycast-changed",
-          commandId: command.id,
           cloudId: entry.id,
           raycastable: entry.raycastable,
           raycast: entry.raycastable
@@ -346,6 +355,10 @@ export class StreamingGaussianBackend implements GaussianBackend {
         this.updateTarget();
         break;
       case "set-frontend-capabilities": {
+        if (command.protocolVersion !== 1)
+          throw new Error(
+            `Unsupported frontend protocol: ${command.protocolVersion}`,
+          );
         const { capabilities } = command;
         for (const limit of [
           capabilities.maxStorageBufferBindingSize,
@@ -361,6 +374,24 @@ export class StreamingGaussianBackend implements GaussianBackend {
           throw new TypeError(
             "Frontend partial update support must be boolean",
           );
+        if (
+          command.cameraWorldMatrix.length !== 16 ||
+          command.projectionMatrix.length !== 16 ||
+          command.cloudTransforms.some(
+            ({ worldMatrix }) => worldMatrix.length !== 16,
+          )
+        )
+          throw new RangeError("Scene matrices need sixteen numbers each");
+        if (command.sceneRevision >= this.sceneRevision) {
+          for (const { cloudId, worldMatrix } of command.cloudTransforms)
+            this.getCloud(cloudId).transform.fromArray(worldMatrix);
+          this.cameraPosition.set(
+            command.cameraWorldMatrix[12]!,
+            command.cameraWorldMatrix[13]!,
+            command.cameraWorldMatrix[14]!,
+          );
+          this.sceneRevision = command.sceneRevision;
+        }
         const previous = this.frontend;
         this.frontend = { ...capabilities };
         try {
@@ -369,6 +400,7 @@ export class StreamingGaussianBackend implements GaussianBackend {
           this.frontend = previous;
           throw error;
         }
+        this.emit({ type: "capabilities-accepted", protocolVersion: 1 });
         break;
       }
       case "set-camera":
@@ -384,42 +416,8 @@ export class StreamingGaussianBackend implements GaussianBackend {
           command.worldMatrix[13]!,
           command.worldMatrix[14]!,
         );
-        this.flushSceneUpdate();
+        this.updateTarget();
         break;
-    }
-    this.emit({ type: "command-completed", commandId: command.id });
-  }
-
-  private scheduleSceneUpdate(): void {
-    if (this.sceneUpdateTimer !== null) clearTimeout(this.sceneUpdateTimer);
-    this.sceneUpdateTimer = setTimeout(() => {
-      this.sceneUpdateTimer = null;
-      if (this.disposed) return;
-      try {
-        this.flushSceneUpdate();
-      } catch {
-        /* flushSceneUpdate reports each pending command's error. */
-      }
-    }, 16);
-  }
-
-  private flushSceneUpdate(): void {
-    if (this.sceneUpdateTimer !== null) clearTimeout(this.sceneUpdateTimer);
-    this.sceneUpdateTimer = null;
-    const commands = this.pendingTransforms.splice(0);
-    try {
-      this.updateTarget();
-      for (const commandId of commands)
-        this.emit({ type: "command-completed", commandId });
-    } catch (error) {
-      for (const commandId of commands)
-        this.emit({
-          type: "error",
-          commandId,
-          code: error instanceof RangeError ? "invalid-range" : "backend-error",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      throw error;
     }
   }
 
@@ -744,7 +742,15 @@ export class StreamingGaussianBackend implements GaussianBackend {
     setTimeout(() => {
       this.updateScheduled = false;
       if (this.disposed || !this.target || !this.packed) return;
-      this.emitNextPatch();
+      try {
+        this.emitNextPatch();
+      } catch (error) {
+        this.drain?.reject(
+          error instanceof Error ? error : new Error(String(error)),
+        );
+        this.drain = null;
+        this.target = null;
+      }
     }, 0);
   }
 
@@ -806,6 +812,8 @@ export class StreamingGaussianBackend implements GaussianBackend {
         cells: target.cells,
       };
       this.target = null;
+      this.drain?.resolve();
+      this.drain = null;
       return;
     }
     for (const [name, attribute] of current.attributes) {
@@ -871,6 +879,8 @@ export class StreamingGaussianBackend implements GaussianBackend {
         cells: target.cells,
       };
       this.target = null;
+      this.drain?.resolve();
+      this.drain = null;
     }
   }
 }
