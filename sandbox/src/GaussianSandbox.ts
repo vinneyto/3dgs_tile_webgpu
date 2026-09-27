@@ -359,13 +359,33 @@ export class GaussianSandbox {
     const config = {
       ...DEFAULT_BACKEND_CONFIG,
       streamingLod: {
-        maxChangedCellsPerUpdate: this.options.streamingLod.maxChangedCellsPerPack,
-        maxUploadBytesPerUpdate: this.options.streamingLod.maxUploadBytesPerPack,
+        maxChangedCellsPerUpdate:
+          this.options.streamingLod.maxChangedCellsPerPack,
+        maxUploadBytesPerUpdate:
+          this.options.streamingLod.maxUploadBytesPerPack,
       },
     };
-    return new GaussianStore(this.options.workerBackend
-      ? new WorkerStreamingGaussianBackend(config)
-      : new StreamingGaussianBackend(config));
+    const store = new GaussianStore(
+      this.options.workerBackend
+        ? new WorkerStreamingGaussianBackend(config)
+        : new StreamingGaussianBackend(config),
+    );
+    // The pass is constructed in show(), after load() resolves. Start its
+    // handshake here so the scheduler can dispatch that load in the meantime.
+    const device = (this.renderer.backend as unknown as { device?: GPUDevice })
+      .device;
+    if (!device) {
+      store.dispose();
+      throw new Error("Sandbox requires an initialized WebGPURenderer");
+    }
+    store.setFrontendCapabilities({
+      maxStorageBufferBindingSize: device.limits.maxStorageBufferBindingSize,
+      maxBufferSize: device.limits.maxBufferSize,
+      maxStorageBuffersPerShaderStage:
+        device.limits.maxStorageBuffersPerShaderStage,
+      supportsPartialBufferUpdates: true,
+    });
+    return store;
   }
 
   private show(

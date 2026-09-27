@@ -22,10 +22,6 @@ async function main(): Promise<void> {
 
   const scene = new Scene();
   const store = new GaussianStore(new WorkerStreamingGaussianBackend({}));
-  const cloud = await store.load(
-    new URL("../sandbox/public/sample.ply", import.meta.url).href,
-  );
-  scene.add(cloud);
   const camera = new PerspectiveCamera(48, innerWidth / innerHeight, 0.05, 100);
   camera.position.set(0, 0.25, 4.5);
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -42,11 +38,16 @@ async function main(): Promise<void> {
   });
   const pipeline = new RenderPipeline(renderer);
   pipeline.outputNode = pass;
+  let cloud: Awaited<ReturnType<GaussianStore["load"]>> | null = null;
   renderer.setAnimationLoop(() => {
     controls.update();
-    cloud.rotation.y += 0.002;
+    if (cloud) cloud.rotation.y += 0.002;
     pipeline.render();
   });
+  cloud = await store.load(
+    new URL("../sandbox/public/sample.ply", import.meta.url).href,
+  );
+  scene.add(cloud);
   addEventListener("resize", () => {
     camera.aspect = innerWidth / innerHeight;
     camera.updateProjectionMatrix();
