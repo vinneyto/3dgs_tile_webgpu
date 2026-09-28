@@ -322,7 +322,7 @@ describe("GaussianPass node slots", () => {
     expect(pipeline.render).toHaveBeenCalledTimes(2);
   });
 
-  it("invalidates auto caching for camera, cloud, visibility, and Store changes", () => {
+  it("invalidates auto caching for camera, cloud, visibility, and Store changes", async () => {
     const { pass, renderer, store, camera, cloud } = createPass({
       redrawStrategy: "auto",
     });
@@ -344,7 +344,7 @@ describe("GaussianPass node slots", () => {
     pass.updateBefore({ renderer } as unknown as NodeFrame);
     cloud.visible = false;
     pass.updateBefore({ renderer } as unknown as NodeFrame);
-    cloud.packingPriority = 1;
+    await cloud.setPackingPriority(1);
     Object.assign(pass as unknown as Record<string, unknown>, {
       pipeline,
       pipelineLayoutVersion: store.layoutVersion,

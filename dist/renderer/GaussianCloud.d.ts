@@ -3,8 +3,8 @@ import type { GaussianRaycastIndex } from "./GaussianRaycastIndex";
 /** Actions the scene object delegates to its owning client store. */
 export interface GaussianCloudOwner {
     remove(cloud: GaussianCloud): void;
-    updatePackingPriority(cloud: GaussianCloud, priority: number): void;
-    invalidateCloudPacking(cloud: GaussianCloud): void;
+    setPackingPriority(cloud: GaussianCloud, priority: number): Promise<void>;
+    invalidateCloudPacking(cloud: GaussianCloud): Promise<void>;
 }
 /** A transformable Three.js scene object backed by a range in a GaussianStore. */
 export declare class GaussianCloud extends Object3D {
@@ -18,15 +18,15 @@ export declare class GaussianCloud extends Object3D {
     private raycastIndex;
     constructor(store: GaussianCloudOwner, objectId: number, gaussianCount: number, name?: string, priority?: number);
     get gaussianCount(): number;
-    /** Lower priorities receive Store budget first. Defaults to 0. */
+    /** Last confirmed priority. Lower priorities receive Store budget first. Defaults to 0. */
     get packingPriority(): number;
-    set packingPriority(priority: number);
+    setPackingPriority(priority: number): Promise<void>;
     /** Ask the backend to re-evaluate this cloud after strategy parameters change. */
-    invalidatePacking(): void;
+    invalidatePacking(): Promise<void>;
     /** Internal Store hook used after a global budget redistribution. */
     updatePacking(gaussianCount: number): void;
-    /** Internal Store hook used while priorities are changed transactionally. */
-    updatePackingPriority(priority: number): void;
+    /** Internal Store hook used after the backend confirms a priority change. */
+    applyPackingPriority(priority: number): void;
     /** Attach a transferable snapshot built by the data backend. Raycasts remain synchronous. */
     setRaycastIndex(index: GaussianRaycastIndex | null): void;
     getRaycastIndex(): GaussianRaycastIndex | null;

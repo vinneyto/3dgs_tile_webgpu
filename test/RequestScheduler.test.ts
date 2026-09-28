@@ -266,3 +266,71 @@ describe("GaussianStore handshake", () => {
     store.dispose();
   });
 });
+
+describe("GaussianStore packing settings", () => {
+  it("exposes confirmed values and keeps them after failed commands", async () => {
+    const backend = new ManualBackend();
+    const store = new GaussianStore(backend);
+    const loading = store.loadBuffer(new ArrayBuffer(0), { priority: 2 });
+    const load = backend.sent[0]!;
+    if (load.type !== "load-cloud-from-buffer") {
+      throw new Error("Expected a cloud load");
+    }
+    backend.emit({
+      command: { id: load.id, type: load.type },
+      durationMs: 1,
+      isFinal: false,
+      payload: {
+        type: "cloud-loaded",
+        cloudId: load.cloudId,
+        objectId: 0,
+        sourceCount: 1,
+        shDegree: 0,
+        bounds: [0, 0, 0, 0, 0, 0],
+      },
+    });
+    backend.answer(load, true);
+    const cloud = await loading;
+    await Promise.resolve();
+
+    const priority = cloud.setPackingPriority(5);
+    expect(cloud.packingPriority).toBe(2);
+    const priorityCommand = backend.sent.at(-1)!;
+    backend.answer(priorityCommand, false);
+    expect(cloud.packingPriority).toBe(2);
+    backend.answer(priorityCommand, true);
+    await priority;
+    expect(cloud.packingPriority).toBe(5);
+
+    const rejectedPriority = cloud.setPackingPriority(7);
+    backend.answer(backend.sent.at(-1)!, true, {
+      code: "invalid-range",
+      message: "priority rejected",
+    });
+    await expect(rejectedPriority).rejects.toThrow("priority rejected");
+    expect(cloud.packingPriority).toBe(5);
+
+    const packing = store.setCloudPacking(cloud, { type: "maximum" });
+    const packingCommand = backend.sent.at(-1)!;
+    await cloud.invalidatePacking();
+    expect(backend.sent.at(-1)).toBe(packingCommand);
+    backend.answer(packingCommand, true);
+    await packing;
+
+    const rejectedPacking = store.setCloudPacking(cloud, { type: "radial" });
+    backend.answer(backend.sent.at(-1)!, true, {
+      code: "invalid-range",
+      message: "strategy rejected",
+    });
+    await expect(rejectedPacking).rejects.toThrow("strategy rejected");
+
+    const retry = cloud.invalidatePacking();
+    expect(backend.sent.at(-1)).toMatchObject({
+      type: "set-cloud-packing",
+      packingStrategy: { type: "maximum" },
+    });
+    backend.answer(backend.sent.at(-1)!, true);
+    await retry;
+    store.dispose();
+  });
+});
