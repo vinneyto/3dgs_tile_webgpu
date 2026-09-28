@@ -29,6 +29,8 @@ const capabilities = {
   supportsPartialBufferUpdates: true,
 };
 const matrix = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+const uuidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 afterEach(() => vi.unstubAllGlobals());
 
 function ply(...positions: number[]): ArrayBuffer {
@@ -228,6 +230,15 @@ describe("streaming backend request protocol", () => {
       "load-cloud-from-buffer",
       "set-frontend-capabilities",
     ]);
+    const loadCommand = port.commands[0];
+    if (loadCommand?.type !== "load-cloud-from-buffer") {
+      throw new Error("Expected a cloud load");
+    }
+    expect(loadCommand.id).toMatch(uuidPattern);
+    expect(loadCommand.cloudId).toMatch(uuidPattern);
+    expect(loadCommand.id).not.toBe(loadCommand.cloudId);
+    expect(port.commands[1]?.id).toMatch(uuidPattern);
+    expect(port.commands[1]?.id).not.toBe(loadCommand.id);
     expect(cloud.name).toBe("first");
     expect(cloud.getRaycastIndex()).not.toBeNull();
     pass.dispose();
@@ -249,10 +260,16 @@ describe("streaming backend request protocol", () => {
     const handshake = port.commands.find(
       (command) => command.type === "set-frontend-capabilities",
     );
+    const loadCommand = port.commands.find(
+      (command) => command.type === "load-cloud-from-buffer",
+    );
     expect(handshake).toMatchObject({
       cameraWorldMatrix: expect.arrayContaining([3]),
       cloudTransforms: [
-        { cloudId: "cloud-1", worldMatrix: expect.arrayContaining([7]) },
+        {
+          cloudId: loadCommand?.cloudId,
+          worldMatrix: expect.arrayContaining([7]),
+        },
       ],
     });
     store.dispose();

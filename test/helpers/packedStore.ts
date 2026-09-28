@@ -29,6 +29,7 @@ export function packedStore(
 } {
   let listener: ((response: BackendResponse) => void) | null = null;
   const sources: GaussianData[] = [];
+  const cloudIds: string[] = [];
   const pending: GaussianData[] = [];
   let version = 0;
   let configured = false;
@@ -130,7 +131,7 @@ export function packedStore(
         },
       ],
       clouds: sources.map((source, objectId) => ({
-        cloudId: `cloud-${objectId + 1}`,
+        cloudId: cloudIds[objectId]!,
         objectId,
         renderedCount: source.count,
       })),
@@ -149,6 +150,7 @@ export function packedStore(
         const objectId = sources.length;
         const source = pending.shift()!;
         sources.push(source);
+        cloudIds.push(command.cloudId);
         pendingReplacement = true;
         emit({
           type: "cloud-loaded",
