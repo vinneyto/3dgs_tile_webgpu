@@ -93,8 +93,6 @@ export class GaussianStore implements GaussianRenderStore {
   private readonly unsubscribeFailure: () => void;
   private data: GaussianData | null = null;
   private revision = 0;
-  private commandNumber = 0;
-  private cloudNumber = 0;
   private lastCameraView = "";
   private readonly lastCloudTransforms = new Map<string, string>();
   private lastError: Error | null = null;
@@ -172,8 +170,8 @@ export class GaussianStore implements GaussianRenderStore {
       typeof document === "undefined"
         ? url
         : new URL(url, document.baseURI).href;
-    const id = this.nextCommandId();
-    const cloudId = this.nextCloudId();
+    const id = crypto.randomUUID();
+    const cloudId = crypto.randomUUID();
     const result = this.awaitLoad(id, options, signal);
     try {
       this.submit(createLoadCloudCommand(id, cloudId, resolvedUrl, options));
@@ -189,8 +187,8 @@ export class GaussianStore implements GaussianRenderStore {
     signal?: AbortSignal,
   ): Promise<GaussianCloud> {
     if (signal?.aborted) throw new DOMException("Load cancelled", "AbortError");
-    const id = this.nextCommandId();
-    const cloudId = this.nextCloudId();
+    const id = crypto.randomUUID();
+    const cloudId = crypto.randomUUID();
     const result = this.awaitLoad(id, options, signal);
     try {
       this.submit(
@@ -210,7 +208,7 @@ export class GaussianStore implements GaussianRenderStore {
     cloud.setRaycastIndex(null);
     cloud.removeFromParent();
     this.notify("clouds");
-    this.submit(createUnloadCloudCommand(this.nextCommandId(), id));
+    this.submit(createUnloadCloudCommand(crypto.randomUUID(), id));
   }
 
   async setPackingPriority(
@@ -222,7 +220,7 @@ export class GaussianStore implements GaussianRenderStore {
     }
     const id = this.requireId(cloud);
     const result = await this.scheduler.schedule(
-      createSetCloudPriorityCommand(this.nextCommandId(), id, priority),
+      createSetCloudPriorityCommand(crypto.randomUUID(), id, priority),
     );
     if (result === "done" && this.cloudMap.get(id)?.cloud === cloud) {
       cloud.applyPackingPriority(priority);
@@ -236,7 +234,7 @@ export class GaussianStore implements GaussianRenderStore {
     const cloudId = this.requireId(cloud);
     const result = await this.scheduler.schedule(
       createSetCloudPackingCommand(
-        this.nextCommandId(),
+        crypto.randomUUID(),
         cloudId,
         packingStrategy,
       ),
@@ -252,7 +250,7 @@ export class GaussianStore implements GaussianRenderStore {
     if (!raycastable) cloud.setRaycastIndex(null);
     this.submit(
       createSetCloudRaycastableCommand(
-        this.nextCommandId(),
+        crypto.randomUUID(),
         cloudId,
         raycastable,
       ),
@@ -268,7 +266,7 @@ export class GaussianStore implements GaussianRenderStore {
   ): void {
     this.submit(
       createWriteAttributeRangeCommand(
-        this.nextCommandId(),
+        crypto.randomUUID(),
         this.requireId(cloud),
         attribute,
         firstGaussian,
@@ -328,7 +326,7 @@ export class GaussianStore implements GaussianRenderStore {
       };
     });
     const command = createSetFrontendCapabilitiesCommand(
-      this.nextCommandId(),
+      crypto.randomUUID(),
       capabilities,
       ++this.revision,
       camera.matrixWorld.elements.slice(),
@@ -406,7 +404,7 @@ export class GaussianStore implements GaussianRenderStore {
       for (const [cloudId, worldMatrix] of changedTransforms) {
         this.submit(
           createSetCloudTransformCommand(
-            this.nextCommandId(),
+            crypto.randomUUID(),
             cloudId,
             sceneRevision,
             worldMatrix,
@@ -417,7 +415,7 @@ export class GaussianStore implements GaussianRenderStore {
       if (cameraChanged) {
         this.submit(
           createSetCameraCommand(
-            this.nextCommandId(),
+            crypto.randomUUID(),
             sceneRevision,
             cameraWorldMatrix,
             projectionMatrix,
@@ -796,12 +794,6 @@ export class GaussianStore implements GaussianRenderStore {
   private notify(reason: "clouds" | "layout" | "content"): void {
     for (const listener of this.listeners)
       listener({ type: "changed", reason });
-  }
-  private nextCloudId(): string {
-    return `cloud-${++this.cloudNumber}`;
-  }
-  private nextCommandId(): string {
-    return `command-${++this.commandNumber}`;
   }
   private requireId(cloud: GaussianCloud): string {
     const id = this.cloudIds.get(cloud);

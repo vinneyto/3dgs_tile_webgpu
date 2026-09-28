@@ -35,8 +35,6 @@ export declare class GaussianStore implements GaussianRenderStore {
     private readonly unsubscribeFailure;
     private data;
     private revision;
-    private commandNumber;
-    private cloudNumber;
     private lastCameraView;
     private readonly lastCloudTransforms;
     private lastError;
@@ -88,8 +86,6 @@ export declare class GaussianStore implements GaussianRenderStore {
     private attributeArray;
     private applyCloudStates;
     private notify;
-    private nextCloudId;
-    private nextCommandId;
     private requireId;
     private awaitLoad;
     private rejectLoad;
