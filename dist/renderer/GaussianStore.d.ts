@@ -27,7 +27,6 @@ export declare class GaussianStore implements GaussianRenderStore {
     private readonly cloudIds;
     private readonly pendingLoads;
     private readonly abortedLoads;
-    private readonly pendingMutations;
     private readonly capabilitiesAcknowledged;
     private readonly listeners;
     private readonly schemas;
@@ -67,11 +66,11 @@ export declare class GaussianStore implements GaussianRenderStore {
     load(url: string, options?: CloudLoadOptions, signal?: AbortSignal): Promise<GaussianCloud>;
     loadBuffer(buffer: ArrayBuffer, options?: CloudLoadOptions, signal?: AbortSignal): Promise<GaussianCloud>;
     remove(cloud: GaussianCloud): void;
-    updatePackingPriority(cloud: GaussianCloud, priority: number): void;
-    setCloudPacking(cloud: GaussianCloud, packingStrategy: PackingStrategy): void;
+    setPackingPriority(cloud: GaussianCloud, priority: number): Promise<void>;
+    setCloudPacking(cloud: GaussianCloud, packingStrategy: PackingStrategy): Promise<void>;
     setCloudRaycastable(cloud: GaussianCloud, raycastable: boolean): void;
     writeAttributeRange(cloud: GaussianCloud, attribute: string, firstGaussian: number, gaussianCount: number, data: ArrayBuffer): void;
-    invalidateCloudPacking(cloud: GaussianCloud): void;
+    invalidateCloudPacking(cloud: GaussianCloud): Promise<void>;
     enablePackedLodLevelAttribute(): GaussianStorePackedAttribute;
     getPackedAttribute(name: string): StorageBufferAttribute | undefined;
     setFrontendCapabilities(capabilities: FrontendCapabilities, camera: Camera): void;

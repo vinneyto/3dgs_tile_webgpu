@@ -59,7 +59,6 @@ interface ClientCloud {
   cloud: GaussianCloud;
   sourceCount: number;
   bounds: readonly [number, number, number, number, number, number];
-  priority: number;
   sourceVersion: number;
   packingStrategy?: PackingStrategy;
 }
@@ -86,7 +85,6 @@ export class GaussianStore implements GaussianRenderStore {
   private readonly cloudIds = new Map<GaussianCloud, string>();
   private readonly pendingLoads = new Map<string, PendingCloud>();
   private readonly abortedLoads = new Set<string>();
-  private readonly pendingMutations = new Map<string, () => void>();
   private readonly capabilitiesAcknowledged = new Map<string, boolean>();
   private readonly listeners = new Set<GaussianStoreListener>();
   private readonly schemas = new Map<string, PackedAttributeBuffer>();
@@ -215,51 +213,37 @@ export class GaussianStore implements GaussianRenderStore {
     this.submit(createUnloadCloudCommand(this.nextCommandId(), id));
   }
 
-  updatePackingPriority(cloud: GaussianCloud, priority: number): void {
-    if (!Number.isSafeInteger(priority))
+  async setPackingPriority(
+    cloud: GaussianCloud,
+    priority: number,
+  ): Promise<void> {
+    if (!Number.isSafeInteger(priority)) {
       throw new RangeError("Priority must be a safe integer");
+    }
     const id = this.requireId(cloud);
-    const item = this.cloudMap.get(id)!;
-    const previous = item.priority;
-    item.priority = priority;
-    cloud.updatePackingPriority(priority);
-    const commandId = this.nextCommandId();
-    this.pendingMutations.set(commandId, () => {
-      if (item.priority === priority) {
-        item.priority = previous;
-        cloud.updatePackingPriority(previous);
-      }
-    });
-    try {
-      this.submit(createSetCloudPriorityCommand(commandId, id, priority));
-    } catch (error) {
-      this.pendingMutations.get(commandId)?.();
-      this.pendingMutations.delete(commandId);
-      throw error;
+    const result = await this.scheduler.schedule(
+      createSetCloudPriorityCommand(this.nextCommandId(), id, priority),
+    );
+    if (result === "done" && this.cloudMap.get(id)?.cloud === cloud) {
+      cloud.applyPackingPriority(priority);
     }
   }
 
-  setCloudPacking(
+  async setCloudPacking(
     cloud: GaussianCloud,
     packingStrategy: PackingStrategy,
-  ): void {
+  ): Promise<void> {
     const cloudId = this.requireId(cloud);
-    const item = this.cloudMap.get(cloudId)!;
-    const previous = item.packingStrategy;
-    item.packingStrategy = packingStrategy;
-    const commandId = this.nextCommandId();
-    this.pendingMutations.set(commandId, () => {
-      if (item.packingStrategy === packingStrategy)
-        item.packingStrategy = previous;
-    });
-    try {
-      this.submit(
-        createSetCloudPackingCommand(commandId, cloudId, packingStrategy),
-      );
-    } catch (error) {
-      this.pendingMutations.get(commandId)?.();
-      this.pendingMutations.delete(commandId);
-      throw error;
+    const result = await this.scheduler.schedule(
+      createSetCloudPackingCommand(
+        this.nextCommandId(),
+        cloudId,
+        packingStrategy,
+      ),
+    );
+    const item = this.cloudMap.get(cloudId);
+    if (result === "done" && item?.cloud === cloud) {
+      item.packingStrategy = packingStrategy;
     }
   }
 
@@ -294,10 +278,12 @@ export class GaussianStore implements GaussianRenderStore {
     );
   }
 
-  invalidateCloudPacking(cloud: GaussianCloud): void {
+  async invalidateCloudPacking(cloud: GaussianCloud): Promise<void> {
     const cloudId = this.requireId(cloud);
     const strategy = this.cloudMap.get(cloudId)!.packingStrategy;
-    if (strategy) this.setCloudPacking(cloud, strategy);
+    if (strategy) {
+      await this.setCloudPacking(cloud, strategy);
+    }
   }
 
   enablePackedLodLevelAttribute(): GaussianStorePackedAttribute {
@@ -488,7 +474,6 @@ export class GaussianStore implements GaussianRenderStore {
     }
     this.pendingLoads.clear();
     this.abortedLoads.clear();
-    this.pendingMutations.clear();
     this.capabilitiesAcknowledged.clear();
     for (const { cloud } of this.cloudMap.values()) {
       cloud.setRaycastIndex(null);
@@ -507,20 +492,14 @@ export class GaussianStore implements GaussianRenderStore {
     void this.scheduler.schedule(command).then(
       (result) => {
         if (result === "superseded") {
-          this.pendingMutations.delete(command.id);
           this.abortedLoads.delete(command.id);
         }
       },
       (error: unknown) => {
         const failure =
           error instanceof Error ? error : new Error(String(error));
-        if (this.pendingLoads.has(command.id))
+        if (this.pendingLoads.has(command.id)) {
           this.rejectLoad(command.id, failure);
-        else if (this.pendingMutations.has(command.id)) {
-          this.pendingMutations.get(command.id)?.();
-          this.pendingMutations.delete(command.id);
-          this.commandError = failure;
-          this.notify("content");
         }
       },
     );
@@ -529,8 +508,6 @@ export class GaussianStore implements GaussianRenderStore {
   private readonly handleFailure = (failure: BackendFailure): void => {
     const error = new Error(failure.message);
     for (const id of [...this.pendingLoads.keys()]) this.rejectLoad(id, error);
-    for (const rollback of this.pendingMutations.values()) rollback();
-    this.pendingMutations.clear();
     this.lastError = error;
     this.awaitingCapabilities = false;
     this.notify("content");
@@ -553,14 +530,11 @@ export class GaussianStore implements GaussianRenderStore {
       if (this.pendingLoads.has(response.command.id))
         this.rejectLoad(response.command.id, error);
       else {
-        this.pendingMutations.get(response.command.id)?.();
-        this.pendingMutations.delete(response.command.id);
         this.commandError = error;
         this.awaitingCapabilities = false;
       }
       this.notify("content");
     } else if (response.isFinal) {
-      this.pendingMutations.delete(response.command.id);
       if (this.commandError) {
         this.commandError = null;
         this.notify("content");
@@ -590,7 +564,6 @@ export class GaussianStore implements GaussianRenderStore {
           cloud,
           sourceCount: event.sourceCount,
           bounds: event.bounds,
-          priority,
           sourceVersion: 1,
           packingStrategy: options.packingStrategy,
         });
