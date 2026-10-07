@@ -73,6 +73,13 @@ class InMemoryWorker {
   readonly commands: BackendCommand[] = [];
   readonly responses: BackendResponse[] = [];
   terminated = false;
+  holdAcknowledgements = false;
+  private uploadDone: (() => void) | null = null;
+  acknowledge(): void {
+    const done = this.uploadDone;
+    this.uploadDone = null;
+    done?.();
+  }
   addEventListener(
     type: string,
     listener: (event: MessageEvent<WorkerOutbound>) => void,
@@ -94,7 +101,13 @@ class InMemoryWorker {
   postMessage(message: WorkerInbound, transfer: ArrayBuffer[] = []): void {
     const received = structuredClone(message, { transfer });
     if (received.type === "initialize") {
-      this.core = new StreamingGaussianBackend(received.config);
+      this.core = new StreamingGaussianBackend(
+        received.config,
+        () =>
+          new Promise<void>((resolve) => {
+            this.uploadDone = resolve;
+          }),
+      );
       this.core.subscribe((response) => {
         this.responses.push(response);
         const wire = structuredClone(
@@ -110,11 +123,82 @@ class InMemoryWorker {
       this.core?.dispatch(received.command);
     } else if (received.type === "abort") {
       this.core?.abort(received.commandId);
-    } else this.core?.dispose();
+    } else if (received.type === "upload-ack") {
+      if (!this.holdAcknowledgements) this.acknowledge();
+    } else if (received.type === "dispose") {
+      this.core?.dispose();
+      this.acknowledge();
+    }
   }
 }
 
 describe("streaming backend request protocol", () => {
+  it("bounds initial uploads and waits for client acknowledgement before copying the next batch", async () => {
+    const port = new InMemoryWorker();
+    const backend = new WorkerStreamingGaussianBackend(
+      { streaming: { maxUploadBytesPerUpdate: 112 } },
+      port as unknown as Worker,
+    );
+    const scheduler = new SerialRequestScheduler(backend);
+    scheduler.start();
+    await scheduler.schedule(
+      createSetFrontendCapabilitiesCommand(
+        "caps",
+        capabilities,
+        1,
+        matrix,
+        matrix,
+        [],
+      ),
+    );
+    port.holdAcknowledgements = true;
+    const pending = scheduler.schedule(
+      createLoadCloudFromBufferCommand("load", "cloud", ply(0, 1, 2, 3, 4), {
+        mipmaps: { type: "none" },
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        port.responses.filter(
+          (r) =>
+            r.command.id === "load" && r.payload?.type === "buffers-allocated",
+        ),
+      ).toHaveLength(1),
+    );
+    expect(
+      port.responses.filter(
+        (r) => r.command.id === "load" && r.payload?.type === "buffers-patched",
+      ),
+    ).toHaveLength(0);
+    port.acknowledge();
+    await vi.waitFor(() =>
+      expect(
+        port.responses.filter(
+          (r) =>
+            r.command.id === "load" && r.payload?.type === "buffers-patched",
+        ),
+      ).toHaveLength(1),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(
+      port.responses.filter(
+        (r) => r.command.id === "load" && r.payload?.type === "buffers-patched",
+      ),
+    ).toHaveLength(1);
+    expect(
+      port.responses.some((r) => r.command.id === "load" && r.isFinal),
+    ).toBe(false);
+    port.holdAcknowledgements = false;
+    port.acknowledge();
+    await expect(pending).resolves.toBe("done");
+    const final = [...port.responses]
+      .reverse()
+      .find((r) => r.command.id === "load" && r.isFinal)!;
+    expect(final.metrics?.uploadedBytes).toBe(5 * 56);
+    expect(final.metrics?.uploadBatches).toBe(4); // descriptor + three data batches
+    scheduler.dispose();
+  });
+
   it("loads without handshake, then renders after receiving capabilities", async () => {
     const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
     const scheduler = new SerialRequestScheduler(backend);
@@ -155,7 +239,7 @@ describe("streaming backend request protocol", () => {
     expect(
       responses.some(
         ({ command, payload }) =>
-          command.id === "handshake" && payload?.type === "buffers-replaced",
+          command.id === "handshake" && payload?.type === "buffers-allocated",
       ),
     ).toBe(true);
     scheduler.dispose();

@@ -6,7 +6,7 @@ export type { BackendConfig } from "./streaming-backend/BackendConfig";
 export type { FrontendCapabilities } from "./streaming-backend/FrontendCapabilities";
 export type { BackendCommand } from "./streaming-backend/commands/BackendCommand";
 export type { Command } from "./streaming-backend/commands/Command";
-export type { BackendResponse, BackendPayload, BackendFailure, } from "./streaming-backend/BackendResponse";
+export type { BackendResponse, BackendMetrics, BackendPayload, BackendFailure, } from "./streaming-backend/BackendResponse";
 export type { RequestScheduler, RequestResult, SchedulerState, } from "./streaming-backend/RequestScheduler";
 export { SerialRequestScheduler } from "./streaming-backend/RequestScheduler";
 export * from "./streaming-backend/commands/createCommands";
@@ -30,3 +30,4 @@ export { GaussianPass, type AntialiasMode, type DepthSortMode, type GaussianPass
 export { gaussianPass } from "./renderer/createGaussianPass";
 export { gaussianIndex, gaussianObjectId, gaussianPositionLocal, gaussianPositionWorld, gaussianScale, gaussianRotation, gaussianOpacity, gaussianColor, gaussianObjectMatrix, gaussianObjectVisible, gaussianViewDirection, gaussianViewDepth, gaussianScreenPosition, gaussianScreenBoundsMin, gaussianScreenBoundsMax, gaussianProjectedSigma, gaussianProjectedArea, rasterGaussianIndex, rasterObjectId, rasterPixelCoordinate, rasterScreenPosition, rasterScreenUV, rasterPixelValue, rasterGaussianCenter, rasterPixelDelta, rasterGaussianCoord, rasterUV, rasterViewDepth, rasterGaussianColor, rasterGaussianOpacity, rasterPower, rasterWeight, } from "./renderer/nodes/GaussianContextNodes";
 export type { GaussianMipmapSelectionStats } from "./renderer/GaussianStoreTypes";
+export type { BuffersAllocatedPayload, PackedAttributeSchema, } from "./streaming-backend/payloads/BuffersAllocatedPayload";

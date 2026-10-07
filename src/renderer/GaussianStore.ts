@@ -104,6 +104,7 @@ export class GaussianStore implements GaussianRenderStore {
   private packedVersion = 0;
   private packedLayoutVersion = 0;
   private pendingLod = false;
+  private lastRoundTripMs = 0;
   private packStats: GaussianStorePackStats | null = null;
   private disposed = false;
   private awaitingCapabilities = false;
@@ -433,8 +434,8 @@ export class GaussianStore implements GaussianRenderStore {
         applied: false,
         pending: this.pendingLod,
         targetStats: {
-          planningMs: 0,
-          roundTripMs: 0,
+          planningMs: this.packStats?.backendMetrics?.selectionMs ?? 0,
+          roundTripMs: this.lastRoundTripMs,
           discardedResults: 0,
           pending: this.pendingLod,
         },
@@ -520,6 +521,14 @@ export class GaussianStore implements GaussianRenderStore {
     }
     if (response.payload)
       this.handlePayload(response.payload, response.command.id);
+    if (response.metrics && this.packStats)
+      this.packStats = {
+        ...this.packStats,
+        backendMetrics: response.metrics,
+        planningMs: response.metrics.selectionMs,
+        slotUpdateMs:
+          response.metrics.slotMappingMs + response.metrics.packingMs,
+      };
     if (response.error) {
       const error = new Error(response.error.message);
       if (response.error.code === "cancelled") error.name = "AbortError";
@@ -536,7 +545,10 @@ export class GaussianStore implements GaussianRenderStore {
         this.notify("content");
       }
     }
-    if (response.isFinal) this.abortedLoads.delete(response.command.id);
+    if (response.isFinal) {
+      this.lastRoundTripMs = response.durationMs;
+      this.abortedLoads.delete(response.command.id);
+    }
   };
 
   private handlePayload(event: BackendPayload, commandId: string): void {
@@ -588,6 +600,27 @@ export class GaussianStore implements GaussianRenderStore {
           );
           this.notify("clouds");
         }
+        break;
+      }
+      case "buffers-allocated": {
+        if (event.layoutVersion <= this.packedLayoutVersion) break;
+        const attributes = event.attributes.map((schema) => {
+          const values =
+            schema.format === "f32"
+              ? new Float32Array(event.capacity * schema.elementsPerGaussian)
+              : new Uint32Array(event.capacity * schema.elementsPerGaussian);
+          if (schema.name === "means")
+            for (let slot = 0; slot < event.capacity; slot++)
+              values[slot * 4 + 3] = -1;
+          return { ...schema, data: values.buffer };
+        });
+        this.replace({
+          ...event,
+          type: "buffers-replaced",
+          count: 0,
+          attributes,
+        });
+        this.pendingLod = true;
         break;
       }
       case "buffers-replaced":
@@ -683,6 +716,7 @@ export class GaussianStore implements GaussianRenderStore {
         if (this.data.means.array[slot * 4 + 3]! >= 0) occupied.push(slot);
     this.packStats = {
       fullRebuild: true,
+      layoutVersion: event.layoutVersion,
       slotCapacity: event.capacity,
       activeGaussians: event.count,
       reusedSlots: 0,
@@ -759,6 +793,7 @@ export class GaussianStore implements GaussianRenderStore {
       (means && means[slot * 4 + 3]! < 0 ? cleared : written).push(slot);
     this.packStats = {
       fullRebuild: false,
+      layoutVersion: event.layoutVersion,
       slotCapacity: this.capacity,
       activeGaussians: active,
       reusedSlots: Math.max(0, active - written.length),

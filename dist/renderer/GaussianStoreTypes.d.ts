@@ -1,5 +1,6 @@
 import type { GaussianCloud } from "./GaussianCloud";
 import type { SlotRange } from "./utils/slotRanges";
+import type { BackendMetrics } from "../streaming-backend/BackendResponse";
 export interface GaussianMipmapSelectionStats {
     readonly planningMs: number;
     readonly roundTripMs: number;
@@ -8,6 +9,8 @@ export interface GaussianMipmapSelectionStats {
 }
 export type GaussianStoreSlotRange = SlotRange;
 export interface GaussianStorePackStats {
+    readonly backendMetrics?: BackendMetrics;
+    readonly layoutVersion?: number;
     readonly fullRebuild: boolean;
     readonly slotCapacity: number;
     readonly activeGaussians: number;

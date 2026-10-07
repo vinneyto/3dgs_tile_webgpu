@@ -17,11 +17,11 @@ A tiled 3D Gaussian Splatting pass for Three.js WebGPU. A Rust/WASM backend pars
 
 Loads can finish before `GaussianPass` exists. The pass subsequently sends its frontend buffer limits, camera, cloud transforms and viewport dimensions. This handshake starts packing. The shared Gaussian capacity is derived from `min(maxBufferSize, maxStorageBufferBindingSize)` divided by the largest per-Gaussian attribute width. Lower numeric cloud priorities receive capacity first. There is no separate Gaussian-count limit or estimate of free GPU memory.
 
-The backend emits complete buffers when the layout changes, otherwise versioned partial patches. A request remains open until its final response; every patch batch includes all attributes for its changed slots. `streaming.maxUploadBytesPerUpdate` controls batch size, rounded up to at least one complete slot. The serial scheduler coalesces pending camera/transform updates. An active network fetch can be aborted. Rust computations are synchronous inside the worker and cannot be interrupted by an abort message while they execute.
+With partial-update support, layout changes emit `buffers-allocated` containing capacity and attribute schemas; the frontend initializes empty buffers (`means.w = -1`) and subsequent bounded `buffers-patched` messages populate them. Without partial-update support, the backend emits `buffers-replaced` containing complete buffers. A request remains open until its final response; every patch batch includes all attributes for its changed slots. `streaming.maxUploadBytesPerUpdate` controls batch size, rounded up to at least one complete slot. Rust keeps an upload cursor and copies only the next batch when requested. The default worker waits for a client `upload-ack` before producing another batch; the proxy acknowledges after an animation frame, with a 32 ms fallback for hidden tabs. Initial data uploads use the same streaming path. GPU buffer allocation and initial empty-buffer initialization still occur once per layout. The serial scheduler coalesces pending camera/transform updates. An active network fetch can be aborted. Rust computations are synchronous inside the worker and cannot be interrupted by an abort message while they execute.
 
 Rust keeps a stable `(cloud object ID, tree generation, node ID) → GPU slot` map, reverse owners and a free-slot stack. Camera changes select a new tree cut, retain slots for surviving nodes, release departed nodes and assign free slots to newcomers. Only newly assigned or source-modified records are packed and compared; unchanged records are not copied. Rebuilding a tree increments its generation so reused node IDs cannot alias old records. Source edits in `none` retain their source-index identities. Changing snapshot resolution alone does not invalidate GPU slots.
 
-Buffers may contain holes: `count` reports occupied slots, while `capacity` and the arrays cover the entire slot range. Unoccupied records have `means.w = -1` and zero opacity. Projection rejects them before object-buffer reads or material opacity overrides; active records keep a nonnegative object ID. Clients must not truncate arrays or dispatch to the occupied count. A cleared slot and its immediate reuse are sent as one final record. Patches group contiguous changed slots with `firstSlot`, `slotCount` and attribute bytes; a metadata-only update has an empty patch list. Layout changes, including capacity or SH/schema changes, require full buffers, but surviving slots remain stable wherever the new capacity allows. Frontends without partial-update support receive complete buffers.
+Buffers may contain holes: `count` reports occupied slots, while `capacity` and the arrays cover the entire slot range. Unoccupied records have `means.w = -1` and zero opacity. Projection rejects them before object-buffer reads or material opacity overrides; active records keep a nonnegative object ID. Clients must not truncate arrays or dispatch to the occupied count. A cleared slot and its immediate reuse are sent as one final record. Patches group contiguous changed slots with `firstSlot`, `slotCount` and attribute bytes; a metadata-only update has an empty patch list. Capacity grows with 25% headroom, bounded by the frontend limits and total source leaves, and stays allocated when the view shrinks. Camera movement within that reserve does not recreate the GPU pipeline. Layout changes (capacity, object layout or SH/schema) allocate new buffers, but surviving slots remain stable wherever the new capacity allows. Frontends without partial-update support receive complete buffers.
 
 ## Install and render
 
@@ -122,3 +122,16 @@ npm run sandbox:build
 The backend-only package entry is `3dgs-tile-webgpu/backend`. Its built WASM is embedded by Vite and can initialize in Node without a GPU or DOM. Tests exercise the committed WASM as well as native Rust.
 
 The sandbox defaults to the new worker backend and requests a snapshot with `maxLeaves: 25000`. `?backend=main` uses the same WASM on the main thread; `?cloud=/scene.sog` loads another cloud (`?ply=` remains a URL alias). Local-file selection accepts all supported formats. Spark's MIT notice is retained in `THIRD_PARTY_NOTICES.md` and `rust/vendor/spark-lib/LICENSE`.
+
+The debug panel reports worker selection, slot mapping, packing, batch-copy time,
+ACK wait, uploaded bytes/batches, and GPU layout version. ACK wait is transport
+pacing, not a GPU timestamp. Fetch/decode/tree construction remain synchronous
+per file in the worker; these changes bound render-buffer streaming, not format
+parsing or initial tree construction.
+
+Run `node scripts/benchmark-backend.mjs` after rebuilding WASM to repeat the
+65,536-splat / 20-camera CPU microbenchmark. It reports timings and layout
+replacements without browser frame pacing. On the development container,
+median camera time changed from 46.7 ms to 21.1 ms and layout replacements from
+five to one. Confirm browser freeze behavior with another Chrome trace; these
+CPU measurements do not measure GPU execution.

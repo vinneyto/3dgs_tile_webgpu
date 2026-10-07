@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 spark-lib = { path = "../vendor/spark-lib", default-features = false, features = ["gsplat", "ply", "spz", "antisplat", "ksplat", "sogs", "rad", "tiny_lod"] }
 anyhow.workspace = true
+ahash.workspace = true
 glam.workspace = true
 smallvec.workspace = true
 ordered-float.workspace = true

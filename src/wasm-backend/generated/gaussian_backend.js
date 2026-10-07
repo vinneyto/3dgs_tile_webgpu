@@ -198,6 +198,16 @@ export class GaussianEngine {
         wasm.__wbg_gaussianengine_free(ptr, 0);
     }
     /**
+     * @returns {any}
+     */
+    nextPayload() {
+        const ret = wasm.gaussianengine_nextPayload(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * @param {any} config
      */
     constructor(config) {
@@ -210,8 +220,7 @@ export class GaussianEngine {
         return this;
     }
     /**
-     * TS handles fetching/transport only; commands and all scene computation
-     * execute here. Returned ArrayBuffers are copies owned by the protocol.
+     * Compatibility collecting API; production streams through begin/nextPayload.
      * @param {any} command
      * @param {Uint8Array} bytes
      * @returns {Array<any>}
@@ -220,6 +229,30 @@ export class GaussianEngine {
         const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.gaussianengine_apply(this.__wbg_ptr, command, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @param {any} command
+     * @param {Uint8Array} bytes
+     * @returns {Array<any>}
+     */
+    begin(command, bytes) {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.gaussianengine_begin(this.__wbg_ptr, command, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * @returns {any}
+     */
+    timings() {
+        const ret = wasm.gaussianengine_timings(this.__wbg_ptr);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -394,6 +427,10 @@ function __wbg_get_imports() {
         const ret = arg0.next();
         return ret;
     }, arguments) };
+    imports.wbg.__wbg_now_f4fa03c20ef029a8 = function() {
+        const ret = performance.now();
+        return ret;
+    };
     imports.wbg.__wbg_push_737cfc8c1432c2c6 = function(arg0, arg1) {
         const ret = arg0.push(arg1);
         return ret;

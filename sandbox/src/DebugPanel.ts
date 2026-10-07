@@ -322,16 +322,25 @@ export class DebugPanel {
             ...targetLines,
           ];
     }
+    const worker = stats.backendMetrics;
+    const workerLines = worker
+      ? [
+          `worker CPU     compute ${formatMs(worker.computeMs)}  select ${formatMs(worker.selectionMs)}  map ${formatMs(worker.slotMappingMs)}  pack ${formatMs(worker.packingMs)}`,
+          `worker stream  copy ${formatMs(worker.streamCopyMs)}  ACK wait ${formatMs(worker.uploadWaitMs)}  ${formatInteger(worker.uploadBatches)} batches / ${formatBytes(worker.uploadedBytes)}`,
+        ]
+      : [];
     return [
       `Mipmap repack     #${this.packCount}  CPU ${formatMs(this.packDurationMs)}  camera distance ${this.packingFocusDistance.toFixed(2)} m`,
       `Mipmap stream     ${this.packingPending ? "pending" : "settled"}`,
       ...targetLines,
+      ...workerLines,
       `pack phases    plan ${formatMs(stats.planningMs)}  slots ${formatMs(stats.slotUpdateMs)}`,
+      `GPU layout     #${stats.layoutVersion ?? "?"}`,
       `slots          active ${formatInteger(stats.activeGaussians)} / ${formatInteger(stats.slotCapacity)}`,
       `slot delta     reused ${formatInteger(stats.reusedSlots)}  written ${formatInteger(stats.writtenSlots)}  cleared ${formatInteger(stats.clearedSlots)}`,
       `GPU upload     approximately ${formatBytes(stats.estimatedUploadBytes)}`,
       ...formatRanges("full upload", stats.writtenSlotRanges),
-      ...formatRanges("opacity only", stats.clearedSlotRanges),
+      ...formatRanges("cleared slots", stats.clearedSlotRanges),
     ];
   }
 

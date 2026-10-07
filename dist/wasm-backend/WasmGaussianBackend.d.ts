@@ -5,6 +5,7 @@ import type { BackendResponse, BackendFailure } from "../streaming-backend/Backe
 /** Transport-neutral TS shell. Parsing, mipmaps, selection, budgets and packing
  * run in Rust. In production instantiate this inside the worker endpoint. */
 export declare class WasmGaussianBackend implements GaussianBackend {
+    private readonly afterUpload?;
     private readonly listeners;
     private readonly failures;
     private readonly ready;
@@ -12,7 +13,7 @@ export declare class WasmGaussianBackend implements GaussianBackend {
     private active;
     private activeId;
     private disposed;
-    constructor(config?: BackendConfig);
+    constructor(config?: BackendConfig, afterUpload?: (() => Promise<void>) | undefined);
     subscribe(listener: (response: BackendResponse) => void): () => void;
     onFailure(listener: (failure: BackendFailure) => void): () => void;
     dispatch(command: BackendCommand): void;

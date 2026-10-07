@@ -53,7 +53,7 @@ describe("stable WASM GPU slots", () => {
       };
       const slots = [0, 1, 2].map(slotOf);
       expect(store.count).toBe(3);
-      expect(store.maxGaussians).toBe(3);
+      expect(store.maxGaussians).toBe(4);
       const move = async (id: string, x: number, halfWidth: number) => {
         const next = camera(x, halfWidth);
         await store.scheduler.schedule(
@@ -95,7 +95,7 @@ describe("stable WASM GPU slots", () => {
       expect(highSlot).toBeGreaterThan(0);
       await move("narrow", highX, 0.1);
       expect(store.count).toBe(1);
-      expect(data.count).toBe(3);
+      expect(data.count).toBe(4);
       expect(slotOf(highX)).toBe(highSlot);
       for (let slot = 0; slot < data.count; slot++)
         if (slot !== highSlot) {
@@ -109,17 +109,18 @@ describe("stable WASM GPU slots", () => {
       });
       // Growing the object layout preserves the occupied high slot and holes.
       await store.loadBuffer(rowCloud(100), { format: "splat" });
+      await move("settle-layout", highX, 0.1);
       expect(store.getPackedData()).not.toBe(data);
       data = store.getPackedData();
       expect(store.count).toBe(1);
       expect(slotOf(highX)).toBe(highSlot);
       expect(store.lastPackStats).toMatchObject({
-        fullRebuild: true,
+        fullRebuild: false,
         writtenSlotRanges: [{ start: highSlot, count: 1 }],
       });
       await move("empty", 20, 0.1);
       expect(store.count).toBe(0);
-      expect(store.maxGaussians).toBe(3);
+      expect(store.maxGaussians).toBe(4);
       await move("refill", 1, 1.05);
       expect(store.count).toBe(3);
       expect([0, 1, 2].map(slotOf).sort()).toEqual([0, 1, 2]);

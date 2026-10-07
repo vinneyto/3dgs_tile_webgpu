@@ -156,6 +156,33 @@ pub enum Data {
     U32(Vec<u32>),
 }
 impl Data {
+    pub fn gather(&self, slots: &[usize], width: usize) -> Self {
+        match self {
+            Self::F32(v) => Self::F32(
+                slots
+                    .iter()
+                    .flat_map(|&s| v[s * width..(s + 1) * width].iter().copied())
+                    .collect(),
+            ),
+            Self::U32(v) => Self::U32(
+                slots
+                    .iter()
+                    .flat_map(|&s| v[s * width..(s + 1) * width].iter().copied())
+                    .collect(),
+            ),
+        }
+    }
+    pub fn row_same(&self, other: &Self, row: usize, slot: usize, width: usize) -> bool {
+        match (self, other) {
+            (Self::F32(a), Self::F32(b)) => {
+                a[row * width..(row + 1) * width] == b[slot * width..(slot + 1) * width]
+            }
+            (Self::U32(a), Self::U32(b)) => {
+                a[row * width..(row + 1) * width] == b[slot * width..(slot + 1) * width]
+            }
+            _ => false,
+        }
+    }
     pub fn slice(&self, start: usize, end: usize) -> Self {
         match self {
             Self::F32(v) => Self::F32(v[start..end].to_vec()),
@@ -244,6 +271,17 @@ pub enum Payload {
         snapshot_version: u32,
         bounds: [f32; 6],
         snapshot: Option<Snapshot>,
+    },
+    BuffersAllocated {
+        scene_revision: u32,
+        layout_version: u32,
+        content_version: u32,
+        capacity: usize,
+        object_capacity: u32,
+        sh_degree: usize,
+        sh_format: String,
+        attributes: Vec<Attribute>,
+        clouds: Vec<CloudState>,
     },
     BuffersReplaced {
         scene_revision: u32,

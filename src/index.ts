@@ -22,6 +22,7 @@ export type { BackendCommand } from "./streaming-backend/commands/BackendCommand
 export type { Command } from "./streaming-backend/commands/Command";
 export type {
   BackendResponse,
+  BackendMetrics,
   BackendPayload,
   BackendFailure,
 } from "./streaming-backend/BackendResponse";
@@ -132,3 +133,8 @@ export {
 } from "./renderer/nodes/GaussianContextNodes";
 
 export type { GaussianMipmapSelectionStats } from "./renderer/GaussianStoreTypes";
+
+export type {
+  BuffersAllocatedPayload,
+  PackedAttributeSchema,
+} from "./streaming-backend/payloads/BuffersAllocatedPayload";

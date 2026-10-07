@@ -16,7 +16,11 @@ export interface WorkerAbort {
 export interface WorkerDispose {
     type: "dispose";
 }
-export type WorkerInbound = WorkerInitialize | WorkerDispatch | WorkerAbort | WorkerDispose;
+export interface WorkerUploadAcknowledgement {
+    type: "upload-ack";
+    contentVersion: number;
+}
+export type WorkerInbound = WorkerInitialize | WorkerDispatch | WorkerAbort | WorkerDispose | WorkerUploadAcknowledgement;
 export interface WorkerResponse {
     type: "response";
     response: BackendResponse;

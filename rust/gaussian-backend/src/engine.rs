@@ -4,7 +4,7 @@ use crate::{
     slot_mapping::{GaussianKey, SlotMapping},
 };
 use anyhow::{bail, ensure, Context, Result};
-use glam::{Mat4, Vec3, Vec3A};
+use glam::{Mat4, Vec3, Vec3A, Vec4};
 use ordered_float::OrderedFloat;
 use spark_lib::{
     decoder::{ChunkReceiver, MultiDecoder, SplatFileType},
@@ -12,7 +12,7 @@ use spark_lib::{
     tiny_lod,
     tsplat::{Tsplat, TsplatArray, TsplatMut},
 };
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
+use std::collections::{BTreeMap, BinaryHeap, HashMap};
 
 const RESERVED: [&str; 5] = [
     "means",
@@ -32,6 +32,7 @@ struct Cloud {
     tree: Option<MipmapArray>,
     tree_bounds: Vec<[f32; 6]>,
     tree_depths: Vec<u32>,
+    tree_features: Vec<(Vec3, f32)>,
     bounds: [f32; 6],
     world: Mat4,
     source_version: u32,
@@ -254,7 +255,7 @@ fn matrix(values: &[f32], affine: bool) -> Result<Mat4> {
     Ok(m)
 }
 
-fn visible(bounds: &[f32; 6], clip: Mat4) -> bool {
+fn visible(bounds: &[f32; 6], planes: &[Vec4; 6]) -> bool {
     let center = Vec3::new(
         (bounds[0] + bounds[3]) * 0.5,
         (bounds[1] + bounds[4]) * 0.5,
@@ -265,19 +266,22 @@ fn visible(bounds: &[f32; 6], clip: Mat4) -> bool {
         (bounds[4] - bounds[1]) * 0.5,
         (bounds[5] - bounds[2]) * 0.5,
     );
+    planes
+        .iter()
+        .all(|p| p.truncate().dot(center) + p.w + p.truncate().abs().dot(extent) >= 0.0)
+}
+
+fn frustum_planes(clip: Mat4) -> [Vec4; 6] {
     let rows = clip.transpose();
     // WebGPU clip depth is 0..w; Three's WebGPU projection follows that range.
-    let planes = [
+    [
         rows.w_axis + rows.x_axis,
         rows.w_axis - rows.x_axis,
         rows.w_axis + rows.y_axis,
         rows.w_axis - rows.y_axis,
         rows.z_axis,
         rows.w_axis - rows.z_axis,
-    ];
-    planes
-        .iter()
-        .all(|p| p.truncate().dot(center) + p.w + p.truncate().abs().dot(extent) >= 0.0)
+    ]
 }
 
 /// A complete cut: refining replaces a parent with ALL its children. Nodes
@@ -292,27 +296,37 @@ fn cut(
     if budget == 0 || tree.len() == 0 || !include(0) {
         return Vec::new();
     }
-    let mut selected = BTreeSet::from([0]);
-    let mut heap = BinaryHeap::from([(OrderedFloat(score(0)), std::cmp::Reverse(0usize))]);
+    let mut terminal = Vec::new();
+    let mut heap = BinaryHeap::new();
+    if tree.inner.children[0].is_empty() {
+        return vec![0];
+    }
+    heap.push((OrderedFloat(score(0)), std::cmp::Reverse(0usize)));
     while let Some((OrderedFloat(size), std::cmp::Reverse(i))) = heap.pop() {
         if size <= pixel_limit {
+            terminal.push(i);
+            terminal.extend(heap.into_iter().map(|(_, std::cmp::Reverse(i))| i));
             break;
         }
-        let children: Vec<_> = tree
-            .get_children(i)
-            .into_iter()
+        let children: smallvec::SmallVec<[usize; 8]> = tree.inner.children[i]
+            .iter()
+            .copied()
             .filter(|&c| include(c))
             .collect();
-        if tree.get_children(i).is_empty() || selected.len() - 1 + children.len() > budget {
+        if terminal.len() + heap.len() + children.len() > budget {
+            terminal.push(i);
             continue;
         }
-        selected.remove(&i);
         for c in children {
-            selected.insert(c);
-            heap.push((OrderedFloat(score(c)), std::cmp::Reverse(c)));
+            if tree.inner.children[c].is_empty() {
+                terminal.push(c);
+            } else {
+                heap.push((OrderedFloat(score(c)), std::cmp::Reverse(c)));
+            }
         }
     }
-    selected.into_iter().collect()
+    terminal.sort_unstable();
+    terminal
 }
 
 impl Cloud {
@@ -331,13 +345,16 @@ impl Cloud {
             |_| true,
             -1.0,
         );
-        let leaves: BTreeSet<_> = frontier.iter().copied().collect();
+        let mut leaves = vec![false; tree.len()];
+        for &i in &frontier {
+            leaves[i] = true;
+        }
         let mut nodes = vec![0];
         let mut children = Vec::new();
         let mut cursor = 0;
         while cursor < nodes.len() {
             let i = nodes[cursor];
-            if leaves.contains(&i) {
+            if leaves[i] {
                 children.extend([0, 0]);
             } else {
                 let child_ids = tree.get_children(i);
@@ -355,7 +372,7 @@ impl Cloud {
             snapshot_version: self.snapshot_version,
             root_index: 0,
             node_count: nodes.len(),
-            leaf_count: leaves.len(),
+            leaf_count: frontier.len(),
             attributes: attributes_for(
                 &tree.inner,
                 &tree.extras,
@@ -396,6 +413,35 @@ struct Packed {
     versions: Vec<u32>,
 }
 
+#[derive(Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EngineTimings {
+    pub selection_ms: f64,
+    pub slot_mapping_ms: f64,
+    pub packing_ms: f64,
+}
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen::prelude::wasm_bindgen(js_namespace = performance, js_name = now)]
+    fn clock_ms() -> f64;
+}
+#[cfg(not(target_arch = "wasm32"))]
+fn clock_ms() -> f64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
+        * 1000.0
+}
+
+struct UploadPlan {
+    slots: Vec<usize>,
+    cursor: usize,
+    batch: usize,
+}
+
 pub struct Engine {
     config: Config,
     clouds: BTreeMap<String, Cloud>,
@@ -408,6 +454,8 @@ pub struct Engine {
     layout_version: u32,
     content_version: u32,
     packed: Option<Packed>,
+    pending_upload: Option<UploadPlan>,
+    pub timings: EngineTimings,
 }
 
 impl Engine {
@@ -432,9 +480,25 @@ impl Engine {
             layout_version: 0,
             content_version: 0,
             packed: None,
+            pending_upload: None,
+            timings: EngineTimings::default(),
         })
     }
+    /// Collecting convenience API for native callers. The worker uses begin /
+    /// next_payload to copy and transfer only one bounded batch at a time.
     pub fn apply(&mut self, command: Command, bytes: &[u8]) -> Result<Vec<Payload>> {
+        let mut output = self.begin(command, bytes)?;
+        while let Some(payload) = self.next_payload() {
+            output.push(payload);
+        }
+        Ok(output)
+    }
+    pub fn begin(&mut self, command: Command, bytes: &[u8]) -> Result<Vec<Payload>> {
+        ensure!(
+            self.pending_upload.is_none(),
+            "Previous upload must be drained"
+        );
+        self.timings = EngineTimings::default();
         let mut output = Vec::new();
         match command {
             Command::Load(c) => {
@@ -464,6 +528,7 @@ impl Engine {
                     extras: extra,
                     mipmaps,
                     tree_depths: tree.as_ref().map(depths).unwrap_or_default(),
+                    tree_features: tree.as_ref().map(features).unwrap_or_default(),
                     tree,
                     tree_bounds,
                     bounds,
@@ -505,9 +570,11 @@ impl Engine {
                     cloud.tree = None;
                     cloud.tree_bounds.clear();
                     cloud.tree_depths.clear();
+                    cloud.tree_features.clear();
                 } else if cloud.tree.is_none() {
                     let (tree, bounds) = build_tree(&cloud.source, &cloud.extras, &c.mipmaps)?;
                     cloud.tree_depths = tree.as_ref().map(depths).unwrap_or_default();
+                    cloud.tree_features = tree.as_ref().map(features).unwrap_or_default();
                     cloud.tree = tree;
                     cloud.tree_bounds = bounds;
                 }
@@ -657,7 +724,7 @@ impl Engine {
                     .collect()
             } else if let Some(tree) = &cloud.tree {
                 let view = self.camera_world.inverse() * cloud.world;
-                let clip = self.projection * view;
+                let planes = frustum_planes(self.projection * view);
                 let scale = view
                     .x_axis
                     .truncate()
@@ -669,16 +736,16 @@ impl Engine {
                     tree,
                     remaining,
                     |i| {
-                        let s = tree.get(i);
-                        let center = view.transform_point3(Vec3::from(s.center()));
-                        let size = s.feature_size() * scale;
+                        let (center, feature) = cloud.tree_features[i];
+                        let center = view.transform_point3(center);
+                        let size = feature * scale;
                         if self.projection.w_axis.w == 0.0 {
                             size * pixels / (-center.z - size * 0.5).max(1e-6)
                         } else {
                             size * pixels
                         }
                     },
-                    |i| visible(&cloud.tree_bounds[i], clip),
+                    |i| visible(&cloud.tree_bounds[i], &planes),
                     1.0,
                 )
             } else {
@@ -705,16 +772,28 @@ impl Engine {
     fn pack(&mut self) -> Result<Vec<Payload>> {
         let cap = self.capabilities.as_ref().unwrap();
         let (degree, extra, budget) = self.validate_layout(cap, None)?;
+        let selection_start = clock_ms();
         let (selected, states) = self.select(budget);
+        self.timings.selection_ms = clock_ms() - selection_start;
+        let mapping_start = clock_ms();
         let count = selected.len();
-        let capacity = count
-            .max(
-                self.packed
-                    .as_ref()
-                    .map(|p| p.capacity.min(budget))
-                    .unwrap_or(0),
-            )
-            .max(1);
+        let old_capacity = self
+            .packed
+            .as_ref()
+            .map(|p| p.capacity.min(budget))
+            .unwrap_or(0);
+        // Reserve 25% on growth, bounded by both the frontend budget and the
+        // number of source leaves. Shrinking the view never shrinks buffers.
+        let available: usize = self.clouds.values().map(|c| c.source.len()).sum();
+        let capacity = if count > old_capacity {
+            count
+                .saturating_add(count.div_ceil(4))
+                .min(available)
+                .min(budget)
+        } else {
+            old_capacity
+        }
+        .max(1);
         let object_capacity = self
             .clouds
             .values()
@@ -760,33 +839,30 @@ impl Engine {
         }
         let dirty: Vec<_> = selected
             .iter()
-            .filter_map(|s| {
-                let slot = packed.slots.to_slot[&s.key];
-                (packed.versions[slot] != s.version).then_some((s, slot))
-            })
+            .zip(&changes.selected_slots)
+            .filter_map(|(s, &slot)| (packed.versions[slot] != s.version).then_some((s, slot)))
             .collect();
+        self.timings.slot_mapping_ms = clock_ms() - mapping_start;
+        let packing_start = clock_ms();
         // Capture only candidate slots. Retained, unchanged Gaussians are never
         // repacked, copied or byte-compared on camera updates.
-        let mut previous = BTreeMap::new();
-        if compatible {
-            for slot in changes
+        let mut candidates: Vec<_> = if compatible {
+            changes
                 .cleared
                 .iter()
                 .copied()
                 .chain(dirty.iter().map(|(_, slot)| *slot))
-            {
-                previous.entry(slot).or_insert_with(|| {
-                    packed
-                        .attributes
-                        .iter()
-                        .map(|a| {
-                            let w = a.elements_per_gaussian;
-                            a.data.slice(slot * w, (slot + 1) * w)
-                        })
-                        .collect::<Vec<_>>()
-                });
-            }
-        }
+                .collect()
+        } else {
+            Vec::new()
+        };
+        candidates.sort_unstable();
+        candidates.dedup();
+        let previous: Vec<_> = packed
+            .attributes
+            .iter()
+            .map(|a| a.data.gather(&candidates, a.elements_per_gaussian))
+            .collect();
         for &slot in &changes.cleared {
             for a in &mut packed.attributes {
                 let w = a.elements_per_gaussian;
@@ -836,20 +912,14 @@ impl Engine {
                 packed.versions[slot] = s.version;
             }
         }
-        let changed: Vec<_> = previous
+        let changed: Vec<_> = candidates
             .into_iter()
-            .filter_map(|(slot, values)| {
-                values
+            .enumerate()
+            .filter_map(|(row, slot)| {
+                previous
                     .iter()
                     .zip(&packed.attributes)
-                    .any(|(old, a)| {
-                        let w = a.elements_per_gaussian;
-                        match (old, &a.data) {
-                            (Data::F32(o), Data::F32(n)) => o[..] != n[slot * w..(slot + 1) * w],
-                            (Data::U32(o), Data::U32(n)) => o[..] != n[slot * w..(slot + 1) * w],
-                            _ => true,
-                        }
-                    })
+                    .any(|(old, a)| !old.row_same(&a.data, row, slot, a.elements_per_gaussian))
                     .then_some(slot)
             })
             .collect();
@@ -858,10 +928,11 @@ impl Engine {
         packed.degree = degree;
         packed.object_capacity = object_capacity;
         packed.clouds = states;
+        self.timings.packing_ms = clock_ms() - packing_start;
         if compatible && changed.is_empty() && !states_changed {
             return Ok(Vec::new());
         }
-        if !compatible || !cap.supports_partial_buffer_updates {
+        if !cap.supports_partial_buffer_updates {
             self.layout_version += 1;
             self.content_version += 1;
             return Ok(vec![Payload::BuffersReplaced {
@@ -889,47 +960,77 @@ impl Engine {
             .and_then(|s| s.max_upload_bytes_per_update)
             .unwrap_or(1024 * 1024);
         let batch = (max_bytes / bytes_per_slot).max(1);
-        // A metadata-only change needs a versioned response, without fake data.
-        let groups: Vec<&[usize]> = if changed.is_empty() {
-            vec![&[]]
+        let slots = if compatible {
+            changed
         } else {
-            changed.chunks(batch).collect()
+            let mut slots = changes.selected_slots;
+            slots.sort_unstable();
+            slots
         };
-        let mut out = Vec::new();
-        for (i, group) in groups.iter().enumerate() {
-            let mut patches = Vec::new();
-            let mut at = 0;
-            while at < group.len() {
-                let first = group[at];
-                let mut end = at + 1;
-                while end < group.len() && group[end] == group[end - 1] + 1 {
-                    end += 1;
-                }
-                let count = end - at;
-                for a in &packed.attributes {
-                    let w = a.elements_per_gaussian;
-                    patches.push(Patch {
-                        name: a.name.clone(),
-                        first_slot: first,
-                        slot_count: count,
-                        data: a.data.slice(first * w, (first + count) * w),
-                    });
-                }
-                at = end;
-            }
-            let base = self.content_version;
-            self.content_version += 1;
-            out.push(Payload::BuffersPatched {
-                scene_revision: self.scene_revision,
-                layout_version: self.layout_version,
-                base_content_version: base,
-                content_version: self.content_version,
-                patches,
-                changed_clouds: packed.clouds.clone(),
-                mipmap_pending: i + 1 < groups.len(),
-            });
+        self.pending_upload = Some(UploadPlan {
+            slots,
+            cursor: 0,
+            batch,
+        });
+        if compatible {
+            return Ok(Vec::new());
         }
-        Ok(out)
+        self.layout_version += 1;
+        self.content_version += 1;
+        Ok(vec![Payload::BuffersAllocated {
+            scene_revision: self.scene_revision,
+            layout_version: self.layout_version,
+            content_version: self.content_version,
+            capacity,
+            object_capacity,
+            sh_degree: degree,
+            sh_format: "rgb8e8".into(),
+            attributes: schema,
+            clouds: packed.clouds.clone(),
+        }])
+    }
+    pub fn next_payload(&mut self) -> Option<Payload> {
+        let plan = self.pending_upload.as_mut()?;
+        let packed = self.packed.as_ref().unwrap();
+        let end = plan.cursor.saturating_add(plan.batch).min(plan.slots.len());
+        let group = &plan.slots[plan.cursor..end];
+        let mut patches = Vec::new();
+        let mut at = 0;
+        while at < group.len() {
+            let first = group[at];
+            let mut end = at + 1;
+            while end < group.len() && group[end] == group[end - 1] + 1 {
+                end += 1;
+            }
+            let count = end - at;
+            for a in &packed.attributes {
+                let w = a.elements_per_gaussian;
+                patches.push(Patch {
+                    name: a.name.clone(),
+                    first_slot: first,
+                    slot_count: count,
+                    data: a.data.slice(first * w, (first + count) * w),
+                });
+            }
+            at = end;
+        }
+        plan.cursor = end;
+        let pending = end < plan.slots.len();
+        let base = self.content_version;
+        self.content_version += 1;
+        let payload = Payload::BuffersPatched {
+            scene_revision: self.scene_revision,
+            layout_version: self.layout_version,
+            base_content_version: base,
+            content_version: self.content_version,
+            patches,
+            changed_clouds: packed.clouds.clone(),
+            mipmap_pending: pending,
+        };
+        if !pending {
+            self.pending_upload = None;
+        }
+        Some(payload)
     }
 }
 
@@ -938,6 +1039,14 @@ fn source_bounds(source: &GsplatArray) -> [f32; 6] {
         .map(|i| splat_bounds(&source.get(i)))
         .reduce(union)
         .unwrap_or([0.0; 6])
+}
+fn features(tree: &MipmapArray) -> Vec<(Vec3, f32)> {
+    (0..tree.len())
+        .map(|i| {
+            let splat = tree.get(i);
+            (Vec3::from(splat.center()), splat.feature_size())
+        })
+        .collect()
 }
 fn depths(tree: &MipmapArray) -> Vec<u32> {
     let mut result = vec![0; tree.len()];
@@ -1162,6 +1271,7 @@ fn write(cloud: &mut Cloud, c: &WriteCommand) -> Result<()> {
     cloud.source = source;
     cloud.extras = extras;
     cloud.tree_depths = tree.as_ref().map(depths).unwrap_or_default();
+    cloud.tree_features = tree.as_ref().map(features).unwrap_or_default();
     cloud.tree = tree;
     cloud.tree_bounds = bounds;
     Ok(())
@@ -1169,4 +1279,86 @@ fn write(cloud: &mut Cloud, c: &WriteCommand) -> Result<()> {
 fn unpack_sh(value: u32) -> [f32; 3] {
     let scale = 2.0f32.powi((value >> 24) as i32 - 127) / 127.0;
     std::array::from_fn(|i| ((value >> (i * 8)) as u8 as i8) as f32 * scale)
+}
+
+#[cfg(test)]
+mod cut_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    // Original cut algorithm as an independent reference for heap/frontier
+    // optimization, including visibility, ties and insufficient budgets.
+    fn reference(
+        tree: &MipmapArray,
+        budget: usize,
+        score: impl Fn(usize) -> f32,
+        include: impl Fn(usize) -> bool,
+        limit: f32,
+    ) -> Vec<usize> {
+        if budget == 0 || tree.len() == 0 || !include(0) {
+            return Vec::new();
+        }
+        let mut selected = BTreeSet::from([0]);
+        let mut heap = BinaryHeap::from([(OrderedFloat(score(0)), std::cmp::Reverse(0))]);
+        while let Some((OrderedFloat(size), std::cmp::Reverse(i))) = heap.pop() {
+            if size <= limit {
+                break;
+            }
+            let children: Vec<_> = tree
+                .get_children(i)
+                .into_iter()
+                .filter(|&c| include(c))
+                .collect();
+            if tree.get_children(i).is_empty() || selected.len() - 1 + children.len() > budget {
+                continue;
+            }
+            selected.remove(&i);
+            for c in children {
+                selected.insert(c);
+                heap.push((OrderedFloat(score(c)), std::cmp::Reverse(c)));
+            }
+        }
+        selected.into_iter().collect()
+    }
+    #[test]
+    fn fast_frontier_matches_original_cut() {
+        let mut source = GsplatArray::new();
+        for i in 0..64 {
+            source.push_splat(
+                spark_lib::gsplat::Gsplat::new(
+                    Vec3A::new((i % 8) as f32, (i / 8) as f32, 0.5),
+                    1.,
+                    Vec3A::splat(0.5),
+                    Vec3A::splat(0.02),
+                    glam::Quat::IDENTITY,
+                ),
+                None,
+                None,
+                None,
+            );
+        }
+        let (tree, bounds) = build_tree(
+            &source,
+            &BTreeMap::new(),
+            &MipmapConfig::Standard { snapshot: None },
+        )
+        .unwrap();
+        let tree = tree.unwrap();
+        for x in [0., 2., 4., 20.] {
+            let planes = frustum_planes(
+                Mat4::from_scale(Vec3::new(0.3, 0.3, 1.))
+                    * Mat4::from_translation(Vec3::new(-x, -3., 0.)),
+            );
+            for budget in [0, 1, 2, 3, 5, 9, 16, 35, 64] {
+                for limit in [-1., 0.1, 1., 10.] {
+                    let score = |i| tree.get(i).feature_size();
+                    let include = |i| visible(&bounds[i], &planes);
+                    assert_eq!(
+                        cut(&tree, budget, score, include, limit),
+                        reference(&tree, budget, score, include, limit)
+                    );
+                }
+            }
+        }
+    }
 }

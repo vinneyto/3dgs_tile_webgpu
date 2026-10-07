@@ -46,6 +46,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private packedVersion;
     private packedLayoutVersion;
     private pendingLod;
+    private lastRoundTripMs;
     private packStats;
     private disposed;
     private awaitingCapabilities;

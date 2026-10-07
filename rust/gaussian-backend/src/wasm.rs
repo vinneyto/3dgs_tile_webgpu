@@ -83,8 +83,10 @@ impl GaussianEngine {
             inner: Engine::new(config).map_err(error)?,
         })
     }
-    /// TS handles fetching/transport only; commands and all scene computation
-    /// execute here. Returned ArrayBuffers are copies owned by the protocol.
+    pub fn timings(&self) -> Result<JsValue, JsValue> {
+        serde_wasm_bindgen::to_value(&self.inner.timings).map_err(error)
+    }
+    /// Compatibility collecting API; production streams through begin/nextPayload.
     pub fn apply(&mut self, command: JsValue, bytes: &[u8]) -> Result<Array, JsValue> {
         let command: Command = serde_wasm_bindgen::from_value(command).map_err(error)?;
         let output = self.inner.apply(command, bytes).map_err(error)?;
@@ -93,5 +95,22 @@ impl GaussianEngine {
             result.push(&payload(&p)?);
         }
         Ok(result)
+    }
+    pub fn begin(&mut self, command: JsValue, bytes: &[u8]) -> Result<Array, JsValue> {
+        let command: Command = serde_wasm_bindgen::from_value(command).map_err(error)?;
+        let output = self.inner.begin(command, bytes).map_err(error)?;
+        let result = Array::new();
+        for p in output {
+            result.push(&payload(&p)?);
+        }
+        Ok(result)
+    }
+    #[wasm_bindgen(js_name = nextPayload)]
+    pub fn next_payload(&mut self) -> Result<JsValue, JsValue> {
+        self.inner
+            .next_payload()
+            .as_ref()
+            .map(payload)
+            .unwrap_or(Ok(JsValue::NULL))
     }
 }

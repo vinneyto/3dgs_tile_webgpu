@@ -7,6 +7,7 @@ import type {
   BackendResponse,
   BackendFailure,
   BackendPayload,
+  BackendMetrics,
 } from "../streaming-backend/BackendResponse";
 import type { CloudLoadOptions } from "../streaming-backend/CloudLoadOptions";
 
@@ -33,7 +34,10 @@ export class WasmGaussianBackend implements GaussianBackend {
   private activeId: string | null = null;
   private disposed = false;
 
-  constructor(config: BackendConfig = {}) {
+  constructor(
+    config: BackendConfig = {},
+    private readonly afterUpload?: () => Promise<void>,
+  ) {
     this.ready = initializeWasm().then(() => {
       const engine = new GaussianEngine(config);
       if (this.disposed) {
@@ -81,6 +85,7 @@ export class WasmGaussianBackend implements GaussianBackend {
     controller: AbortController,
   ): Promise<void> {
     const start = performance.now();
+    let metrics: BackendMetrics | undefined;
     const emit = (
       payload?: BackendPayload,
       error?: BackendResponse["error"],
@@ -90,6 +95,7 @@ export class WasmGaussianBackend implements GaussianBackend {
       const response: BackendResponse = {
         command: { id: command.id, type: command.type },
         durationMs: performance.now() - start,
+        metrics: metrics ? { ...metrics } : undefined,
         isFinal,
         payload,
         error,
@@ -144,7 +150,42 @@ export class WasmGaussianBackend implements GaussianBackend {
         };
       }
       controller.signal.throwIfAborted();
-      const payloads = engine.apply(wire, bytes) as BackendPayload[];
+      const computeStart = performance.now();
+      const payloads = engine.begin(wire, bytes) as BackendPayload[];
+      metrics = {
+        computeMs: performance.now() - computeStart,
+        ...engine.timings(),
+        streamCopyMs: 0,
+        uploadWaitMs: 0,
+        uploadedBytes: 0,
+        uploadBatches: 0,
+      };
+      const deliver = async (payload: BackendPayload): Promise<void> => {
+        const upload =
+          payload.type === "buffers-patched" ||
+          payload.type === "buffers-replaced" ||
+          payload.type === "buffers-allocated";
+        if (metrics && upload) {
+          const buffers =
+            payload.type === "buffers-patched"
+              ? payload.patches
+              : payload.type === "buffers-replaced"
+                ? payload.attributes
+                : [];
+          metrics.uploadedBytes += buffers.reduce(
+            (sum, item) => sum + item.data.byteLength,
+            0,
+          );
+          metrics.uploadBatches += 1;
+        }
+        emit(payload);
+        if (upload) {
+          const waitStart = performance.now();
+          await (this.afterUpload?.() ??
+            new Promise<void>((resolve) => setTimeout(resolve, 0)));
+          if (metrics) metrics.uploadWaitMs += performance.now() - waitStart;
+        }
+      };
       if (
         command.type === "load-cloud" ||
         command.type === "load-cloud-from-buffer"
@@ -156,15 +197,24 @@ export class WasmGaussianBackend implements GaussianBackend {
           if (key.startsWith(`${command.cloudId}:`))
             this.attributeFormats.delete(key);
       }
+      // Once committed, complete every patch even if an abort arrives.
       for (const payload of payloads) {
-        // Scene mutation has completed. Do not discard committed patches if an
-        // abort arrives while yielding between upload batches.
-        emit(payload);
-        if (payload.type === "buffers-patched" && payload.mipmapPending)
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        if (this.disposed) return;
+        await deliver(payload);
       }
+      while (!this.disposed) {
+        const copyStart = performance.now();
+        const payload = engine.nextPayload() as BackendPayload | null;
+        if (metrics) metrics.streamCopyMs += performance.now() - copyStart;
+        if (!payload) break;
+        await deliver(payload);
+      }
+      this.active = null;
+      this.activeId = null;
       emit(undefined, undefined, true);
     } catch (e) {
+      this.active = null;
+      this.activeId = null;
       emit(
         undefined,
         {
@@ -176,8 +226,10 @@ export class WasmGaussianBackend implements GaussianBackend {
         true,
       );
     } finally {
-      this.active = null;
-      this.activeId = null;
+      if (this.active === controller) {
+        this.active = null;
+        this.activeId = null;
+      }
     }
   }
   private readonly attributeFormats = new Map<string, "f32" | "u32">();

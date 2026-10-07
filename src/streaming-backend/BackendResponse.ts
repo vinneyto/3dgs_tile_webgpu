@@ -3,11 +3,24 @@ import type { BackendPayload } from "./payloads/BackendPayload";
 
 export type { BackendPayload } from "./payloads/BackendPayload";
 
+/** Per-command CPU timings. Upload wait is transport backpressure, not GPU time. */
+export interface BackendMetrics {
+  computeMs: number;
+  selectionMs: number;
+  slotMappingMs: number;
+  packingMs: number;
+  streamCopyMs: number;
+  uploadWaitMs: number;
+  uploadedBytes: number;
+  uploadBatches: number;
+}
+
 export interface BackendResponse {
   /** A small reference: never echo buffers from the original command. */
   command: Pick<BackendCommand, "id" | "type">;
   /** Elapsed backend time since this command started, including this response. */
   durationMs: number;
+  metrics?: BackendMetrics;
   isFinal: boolean;
   payload?: BackendPayload;
   error?: { code: string; message: string; cloudId?: string };

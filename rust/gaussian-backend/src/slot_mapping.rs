@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use ahash::AHashMap;
 
 /// Object ids are never reused. Generation distinguishes source indices from
 /// rebuilt mipmap-node indices, even when their numeric values are identical.
@@ -11,22 +11,23 @@ pub(crate) struct GaussianKey {
 
 #[derive(Default)]
 pub(crate) struct SlotMapping {
-    pub to_slot: HashMap<GaussianKey, usize>,
+    pub to_slot: AHashMap<GaussianKey, usize>,
     pub owners: Vec<Option<GaussianKey>>,
     free_slots: Vec<usize>,
+    marks: Vec<u32>,
+    epoch: u32,
 }
 
 pub(crate) struct SlotChanges {
     pub assigned: Vec<usize>,
     pub cleared: Vec<usize>,
+    pub selected_slots: Vec<usize>,
 }
 
 impl SlotMapping {
     /// Retain selected keys in their existing slots. Only owners beyond a
     /// reduced capacity must relocate; growth does not move existing owners.
     pub fn reconcile(&mut self, capacity: usize, selected: &[GaussianKey]) -> SlotChanges {
-        let desired: HashSet<_> = selected.iter().copied().collect();
-        assert_eq!(desired.len(), selected.len());
         assert!(selected.len() <= capacity);
         let old_capacity = self.owners.len();
         if capacity < old_capacity {
@@ -38,11 +39,32 @@ impl SlotMapping {
             self.owners.resize(capacity, None);
             self.free_slots.extend((old_capacity..capacity).rev());
         }
-        let mut cleared: Vec<_> = self
-            .to_slot
+        self.marks.resize(capacity, 0);
+        self.epoch = self.epoch.wrapping_add(1);
+        if self.epoch == 0 {
+            self.marks.fill(0);
+            self.epoch = 1;
+        }
+        let mut selected_slots: Vec<_> = selected
             .iter()
-            .filter(|(key, _)| !desired.contains(key))
-            .map(|(_, &slot)| slot)
+            .map(|key| {
+                self.to_slot
+                    .get(key)
+                    .copied()
+                    .inspect(|&slot| {
+                        assert_ne!(self.marks[slot], self.epoch, "Duplicate selected key");
+                        self.marks[slot] = self.epoch;
+                    })
+                    .unwrap_or(usize::MAX)
+            })
+            .collect();
+        let mut cleared: Vec<_> = self
+            .owners
+            .iter()
+            .enumerate()
+            .filter_map(|(slot, owner)| {
+                (owner.is_some() && self.marks[slot] != self.epoch).then_some(slot)
+            })
             .collect();
         // Deterministic reuse of newly released slots, smallest first.
         cleared.sort_unstable();
@@ -52,8 +74,8 @@ impl SlotMapping {
             self.free_slots.push(slot);
         }
         let mut assigned = Vec::new();
-        for &key in selected {
-            if self.to_slot.contains_key(&key) {
+        for (&key, selected_slot) in selected.iter().zip(&mut selected_slots) {
+            if *selected_slot != usize::MAX {
                 continue;
             }
             let slot = self
@@ -62,9 +84,14 @@ impl SlotMapping {
                 .expect("Selected keys exceed slot capacity");
             self.owners[slot] = Some(key);
             self.to_slot.insert(key, slot);
+            *selected_slot = slot;
             assigned.push(slot);
         }
-        SlotChanges { assigned, cleared }
+        SlotChanges {
+            assigned,
+            cleared,
+            selected_slots,
+        }
     }
 }
 
