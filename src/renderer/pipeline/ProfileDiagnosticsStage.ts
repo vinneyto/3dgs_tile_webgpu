@@ -4,7 +4,7 @@ import type {
   StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
-import { instanceIndex, storage, uint, uvec2, wgslFn } from "three/tsl";
+import { instanceIndex, storage, uvec2, wgslFn } from "three/tsl";
 import {
   PROFILE_DIAGNOSTIC_WORKGROUP_SIZE,
   profileSubpixelCoverageWGSL,
@@ -28,7 +28,7 @@ export class ProfileDiagnosticsStage {
     gaussianCount: number,
     projectedMeanAttribute: StorageBufferAttribute,
     projectedConicAttribute: StorageBufferAttribute,
-    frame: FrameUniforms,
+    private readonly frame: FrameUniforms,
     private readonly maxRasterizedSplatsPerTile: number | null,
   ) {
     this.zeroPixelFlags = this.attributes.createUint(
@@ -38,7 +38,7 @@ export class ProfileDiagnosticsStage {
     const kernel = wgslFn<Record<string, Node>>(profileSubpixelCoverageWGSL);
     this.computeNode = kernel({
       index: instanceIndex,
-      gaussian_count: uint(gaussianCount),
+      gaussian_count: frame.activeCount,
       viewport: uvec2(frame.viewport.xy),
       projected_mean: storage(
         projectedMeanAttribute,
@@ -57,19 +57,27 @@ export class ProfileDiagnosticsStage {
   }
 
   encode(): void {
-    this.renderer.compute(this.computeNode);
+    const count = this.frame.activeCount.value;
+    if (count > 0)
+      this.renderer.compute(this.computeNode, [
+        Math.ceil(count / PROFILE_DIAGNOSTIC_WORKGROUP_SIZE),
+        1,
+        1,
+      ]);
   }
 
   async readStats(
     tileOffsets: StorageBufferAttribute,
   ): Promise<GaussianPassProfileStats> {
+    const activeCount = this.frame.activeCount.value;
     const [offsetBuffer, flagBuffer] = await Promise.all([
       this.renderer.getArrayBufferAsync(tileOffsets),
       this.renderer.getArrayBufferAsync(this.zeroPixelFlags),
     ]);
     const flags = new Uint32Array(flagBuffer);
     let zeroPixelSubpixelSplats = 0;
-    for (const flag of flags) zeroPixelSubpixelSplats += flag;
+    for (const flag of flags.subarray(0, activeCount))
+      zeroPixelSubpixelSplats += flag;
     const offsets = new Uint32Array(offsetBuffer);
     return {
       tileLoads: summarizeTileLoads(offsets),

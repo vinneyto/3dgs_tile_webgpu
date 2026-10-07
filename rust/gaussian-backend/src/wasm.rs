@@ -52,8 +52,33 @@ fn payload(p: &Payload) -> Result<JsValue, JsValue> {
         Payload::MipmapSnapshotReplaced { snapshot: s, .. } => {
             set(&value, "snapshot", &snapshot(s)?)?
         }
-        Payload::BuffersReplaced { attributes: a, .. } => {
-            set(&value, "attributes", &attributes(a)?)?
+        Payload::BuffersReplaced {
+            attributes: a,
+            active_slots,
+            ..
+        } => {
+            set(&value, "attributes", &attributes(a)?)?;
+            set(
+                &value,
+                "activeSlots",
+                &Uint32Array::from(active_slots.as_slice()).buffer().into(),
+            )?
+        }
+        Payload::BuffersActivated {
+            added_slots,
+            removed_slots,
+            ..
+        } => {
+            set(
+                &value,
+                "addedSlots",
+                &Uint32Array::from(added_slots.as_slice()).buffer().into(),
+            )?;
+            set(
+                &value,
+                "removedSlots",
+                &Uint32Array::from(removed_slots.as_slice()).buffer().into(),
+            )?;
         }
         Payload::BuffersPatched { patches, .. } => {
             let array = Array::new();

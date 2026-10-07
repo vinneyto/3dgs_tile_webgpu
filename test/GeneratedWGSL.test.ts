@@ -1,5 +1,5 @@
 import { rasterDepthNodes } from "../sandbox/src/rasterDepthNodes";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DepthTexture,
   PerspectiveCamera,
@@ -24,6 +24,9 @@ import { packedStore } from "./helpers/packedStore";
 import {
   createDefaultGaussianNodeSlots,
   gaussianColor,
+  gaussianIndex,
+  rasterGaussianIndex,
+  rasterObjectId,
   gaussianProjectedArea,
   rasterGaussianColor,
   rasterGaussianOpacity,
@@ -161,6 +164,78 @@ describe("generated Gaussian WGSL", () => {
     expect(pixelSetup).toBeGreaterThan(-1);
     expect(outerLoop).toBeGreaterThan(pixelSetup);
     expect(outputStore).toBeGreaterThan(outerLoop);
+  });
+
+  it("remaps projection, SH, custom attributes and raster access without an extra storage binding", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.gaussianColorNode = gaussianColor.mul(float(gaussianIndex.add(1)));
+    nodes.rasterColorNode = rasterGaussianColor.mul(
+      float(rasterGaussianIndex.add(1)),
+    );
+    nodes.rasterDiscardNode = rasterObjectId.equal(999);
+    const { projectionSource, rasterSource, chunkSource } = buildPipeline(
+      nodes,
+      true,
+      false,
+      "float32",
+      true,
+    );
+    expect(projectionSource).toContain("gaussianSourceSlot");
+    expect(projectionSource).toContain("gaussianSourceSlot");
+    expect(projectionSource).toMatch(
+      /evaluate_gaussian_sh[^;]+gaussianSourceSlot/s,
+    );
+    expect(
+      (projectionSource.match(/var<storage/g) ?? []).length,
+    ).toBeLessThanOrEqual(8);
+    for (const source of [rasterSource, chunkSource]) {
+      expect(source).toContain("decode_active_slot");
+      expect(source).toContain("rasterSourceSlot");
+    }
+  });
+
+  it("uploads an empty cut and updates active indices independently for two projection pipelines", () => {
+    const data = oneGaussian(true);
+    const { store } = packedStore(data);
+    const frame = new FrameUniforms(new PerspectiveCamera(), [0, 0, 0, 0]);
+    const objects = new ObjectFrameState(
+      new PerspectiveCamera(),
+      store,
+      data.count,
+    );
+    const first = new ProjectionStage(
+      data,
+      frame,
+      objects,
+      "compensated",
+      createDefaultGaussianNodeSlots(),
+    );
+    const second = new ProjectionStage(
+      data,
+      frame,
+      objects,
+      "compensated",
+      createDefaultGaussianNodeSlots(),
+    );
+    expect(
+      buildCompute((first as unknown as { computeNode: unknown }).computeNode),
+    ).toContain("decode_active_slot");
+    const compute = vi.fn();
+    const renderer = { compute } as unknown as WebGPURenderer;
+    data.stageActivation(new Uint32Array(), new Uint32Array([0]), true);
+    first.encode(renderer);
+    expect(compute.mock.calls[0]![1]).toEqual([1, 1, 1]);
+    data.stageActivation(new Uint32Array([0]), new Uint32Array(), true);
+    first.encode(renderer);
+    second.encode(renderer);
+    for (const projection of [first, second]) {
+      const bits = new Uint32Array(data.shCoefficients.array.buffer);
+      expect(bits[4]).toBe(0x3f800000);
+      expect(data.shCoefficients.updateRanges.length).toBeGreaterThan(0);
+      projection.dispose();
+    }
+    objects.dispose();
+    store.dispose();
   });
 
   it("builds representative custom projection and raster graphs", () => {
@@ -325,8 +400,9 @@ function buildPipeline(
   subpixelSampleCulling = true,
   rasterStats = false,
   mode: "float32" | "packed16" = "float32",
+  activeSlots = false,
 ) {
-  const data = oneGaussian();
+  const data = oneGaussian(activeSlots);
   const { store } = packedStore(data);
   const packed = store.getPackedData();
   const camera = new PerspectiveCamera();
@@ -403,7 +479,7 @@ function attribute(array: Float32Array | Uint32Array): StorageBufferAttribute {
   return new StorageBufferAttribute(array, 2);
 }
 
-function oneGaussian(): GaussianData {
+function oneGaussian(activeSlots = false): GaussianData {
   const vec4 = (values: readonly number[]) =>
     new StorageBufferAttribute(new Float32Array(values), 4);
   return new GaussianData(
@@ -413,6 +489,6 @@ function oneGaussian(): GaussianData {
       rotations: vec4([0, 0, 0, 1]),
       shCoefficients: vec4([0, 0, 0, 0]),
     },
-    { count: 1 },
+    { count: 1, activeSlots: activeSlots ? new Uint32Array([0]) : undefined },
   );
 }

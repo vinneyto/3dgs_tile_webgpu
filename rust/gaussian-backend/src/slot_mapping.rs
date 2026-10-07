@@ -1,7 +1,6 @@
 use ahash::AHashMap;
 
-/// Object ids are never reused. Generation distinguishes source indices from
-/// rebuilt mipmap-node indices, even when their numeric values are identical.
+/// Object ids are never reused. Generation distinguishes rebuilt tree nodes.
 #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq)]
 pub(crate) struct GaussianKey {
     pub cloud_id: u32,
@@ -13,37 +12,45 @@ pub(crate) struct GaussianKey {
 pub(crate) struct SlotMapping {
     pub to_slot: AHashMap<GaussianKey, usize>,
     pub owners: Vec<Option<GaussianKey>>,
-    free_slots: Vec<usize>,
-    marks: Vec<u32>,
-    epoch: u32,
+    last_used: Vec<u64>,
+    epoch: u64,
 }
 
 pub(crate) struct SlotChanges {
     pub assigned: Vec<usize>,
     pub cleared: Vec<usize>,
     pub selected_slots: Vec<usize>,
+    pub evictions: usize,
 }
 
 impl SlotMapping {
-    /// Retain selected keys in their existing slots. Only owners beyond a
-    /// reduced capacity must relocate; growth does not move existing owners.
-    pub fn reconcile(&mut self, capacity: usize, selected: &[GaussianKey]) -> SlotChanges {
+    /// Requested keys include the pinned coarse cut and the desired draw cut.
+    /// Keep every other valid owner until space is needed; then evict inactive
+    /// least-recently-used owners. The caller commits a resident fallback cut
+    /// before uploading a replacement into a previously active slot.
+    pub fn reconcile(
+        &mut self,
+        capacity: usize,
+        selected: &[GaussianKey],
+        generations: &AHashMap<u32, u32>,
+    ) -> SlotChanges {
         assert!(selected.len() <= capacity);
-        let old_capacity = self.owners.len();
-        if capacity < old_capacity {
-            for key in self.owners.drain(capacity..).flatten() {
-                self.to_slot.remove(&key);
-            }
-            self.free_slots.retain(|&slot| slot < capacity);
-        } else {
-            self.owners.resize(capacity, None);
-            self.free_slots.extend((old_capacity..capacity).rev());
+        self.epoch += 1;
+        for key in self
+            .owners
+            .drain(capacity.min(self.owners.len())..)
+            .flatten()
+        {
+            self.to_slot.remove(&key);
         }
-        self.marks.resize(capacity, 0);
-        self.epoch = self.epoch.wrapping_add(1);
-        if self.epoch == 0 {
-            self.marks.fill(0);
-            self.epoch = 1;
+        self.owners.resize(capacity, None);
+        self.last_used.resize(capacity, 0);
+        let mut cleared = Vec::new();
+        for (slot, owner) in self.owners.iter_mut().enumerate() {
+            if owner.is_some_and(|key| generations.get(&key.cloud_id) != Some(&key.generation)) {
+                self.to_slot.remove(&owner.take().unwrap());
+                cleared.push(slot);
+            }
         }
         let mut selected_slots: Vec<_> = selected
             .iter()
@@ -52,45 +59,71 @@ impl SlotMapping {
                     .get(key)
                     .copied()
                     .inspect(|&slot| {
-                        assert_ne!(self.marks[slot], self.epoch, "Duplicate selected key");
-                        self.marks[slot] = self.epoch;
+                        assert_ne!(self.last_used[slot], self.epoch, "Duplicate requested key");
+                        self.last_used[slot] = self.epoch;
                     })
                     .unwrap_or(usize::MAX)
             })
             .collect();
-        let mut cleared: Vec<_> = self
+        let missing = selected_slots
+            .iter()
+            .filter(|&&slot| slot == usize::MAX)
+            .count();
+        if missing == 0 {
+            return SlotChanges {
+                assigned: Vec::new(),
+                cleared,
+                selected_slots,
+                evictions: 0,
+            };
+        }
+        let mut free: Vec<_> = self
             .owners
             .iter()
             .enumerate()
-            .filter_map(|(slot, owner)| {
-                (owner.is_some() && self.marks[slot] != self.epoch).then_some(slot)
-            })
+            .filter_map(|(slot, owner)| owner.is_none().then_some(slot))
             .collect();
-        // Deterministic reuse of newly released slots, smallest first.
-        cleared.sort_unstable();
-        for &slot in cleared.iter().rev() {
-            let key = self.owners[slot].take().unwrap();
-            self.to_slot.remove(&key);
-            self.free_slots.push(slot);
+        let mut evictions = 0;
+        if missing > free.len() {
+            let mut candidates: Vec<_> = self
+                .owners
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, owner)| {
+                    (owner.is_some() && self.last_used[slot] != self.epoch)
+                        .then_some((self.last_used[slot], slot))
+                })
+                .collect();
+            candidates.sort_unstable();
+            for (_, slot) in candidates.into_iter().take(missing - free.len()) {
+                self.to_slot.remove(&self.owners[slot].take().unwrap());
+                free.push(slot);
+                cleared.push(slot);
+                evictions += 1;
+            }
+        }
+        if evictions == 0 {
+            free.reverse();
+        } else {
+            free.sort_unstable_by(|a, b| b.cmp(a));
         }
         let mut assigned = Vec::new();
-        for (&key, selected_slot) in selected.iter().zip(&mut selected_slots) {
-            if *selected_slot != usize::MAX {
+        for (&key, slot) in selected.iter().zip(&mut selected_slots) {
+            if *slot != usize::MAX {
                 continue;
             }
-            let slot = self
-                .free_slots
-                .pop()
-                .expect("Selected keys exceed slot capacity");
-            self.owners[slot] = Some(key);
-            self.to_slot.insert(key, slot);
-            *selected_slot = slot;
-            assigned.push(slot);
+            *slot = free.pop().expect("Requested keys exceed capacity");
+            self.owners[*slot] = Some(key);
+            self.last_used[*slot] = self.epoch;
+            self.to_slot.insert(key, *slot);
+            assigned.push(*slot);
         }
+        cleared.sort_unstable();
         SlotChanges {
             assigned,
             cleared,
             selected_slots,
+            evictions,
         }
     }
 }
@@ -105,39 +138,39 @@ mod tests {
             node_id,
         }
     }
+    fn valid() -> AHashMap<u32, u32> {
+        [(0, 1)].into_iter().collect()
+    }
     #[test]
-    fn retained_keys_keep_slots_and_freed_slots_are_reused() {
-        let mut mapping = SlotMapping::default();
-        mapping.reconcile(4, &[key(0), key(1), key(2), key(3)]);
-        let change = mapping.reconcile(4, &[key(1), key(2), key(3), key(4)]);
-        assert_eq!(change.assigned, vec![0]);
-        assert_eq!(change.cleared, vec![0]);
-        for node in 1..4 {
-            assert_eq!(mapping.to_slot[&key(node)], node);
-        }
-        assert_eq!(mapping.to_slot[&key(4)], 0);
+    fn caches_unselected_owners_and_evicts_only_under_pressure() {
+        let mut map = SlotMapping::default();
+        map.reconcile(4, &[key(0), key(1)], &valid());
+        let change = map.reconcile(4, &[key(0), key(2)], &valid());
+        assert!(change.cleared.is_empty());
+        assert_eq!(map.to_slot[&key(1)], 1);
+        map.reconcile(4, &[key(0), key(3)], &valid());
+        let change = map.reconcile(4, &[key(0), key(4)], &valid());
+        assert_eq!(change.evictions, 1);
+        assert!(!map.to_slot.contains_key(&key(1)));
+        assert_eq!(map.to_slot[&key(0)], 0);
+        assert_eq!(map.to_slot[&key(4)], 1);
     }
     #[test]
     fn resizing_and_generations_do_not_alias_owners() {
-        let mut mapping = SlotMapping::default();
-        mapping.reconcile(4, &[key(0), key(1), key(2), key(3)]);
-        mapping.reconcile(6, &[key(0), key(1), key(2), key(3), key(4)]);
-        assert_eq!(mapping.to_slot[&key(4)], 4);
-        mapping.reconcile(2, &[key(1), key(4)]);
-        assert_eq!(mapping.to_slot[&key(1)], 1);
-        assert_eq!(mapping.to_slot[&key(4)], 0);
+        let mut map = SlotMapping::default();
+        map.reconcile(4, &[key(0), key(1), key(2), key(3)], &valid());
+        map.reconcile(6, &[key(0), key(1), key(2), key(3), key(4)], &valid());
+        assert_eq!(map.to_slot[&key(4)], 4);
+        map.reconcile(2, &[key(1), key(4)], &valid());
+        assert_eq!(map.to_slot[&key(1)], 1);
+        assert_eq!(map.to_slot[&key(4)], 0);
         let rebuilt = GaussianKey {
             generation: 2,
             ..key(1)
         };
-        mapping.reconcile(2, &[rebuilt, key(4)]);
-        assert!(!mapping.to_slot.contains_key(&key(1)));
-        assert_eq!(mapping.to_slot[&rebuilt], 1);
-        let other_cloud = GaussianKey {
-            cloud_id: 2,
-            ..rebuilt
-        };
-        mapping.reconcile(2, &[rebuilt, other_cloud]);
-        assert_ne!(mapping.to_slot[&rebuilt], mapping.to_slot[&other_cloud]);
+        map.reconcile(2, &[rebuilt], &[(0, 2)].into_iter().collect());
+        assert!(!map.to_slot.contains_key(&key(1)));
+        assert!(!map.to_slot.contains_key(&key(4)));
+        assert_eq!(map.to_slot.len(), 1);
     }
 }

@@ -5,6 +5,7 @@ export declare class FrameUniforms {
     readonly projection: import("three/webgpu").UniformNode<"mat4", Matrix4>;
     readonly view: import("three/webgpu").UniformNode<"mat4", Matrix4>;
     readonly viewport: import("three/webgpu").UniformNode<"vec4", Vector4>;
+    readonly activeCount: import("three/webgpu").UniformNode<"uint", number>;
     readonly tilesX: import("three/webgpu").UniformNode<"uint", number>;
     readonly tilesY: import("three/webgpu").UniformNode<"uint", number>;
     constructor(camera: PerspectiveCamera, background: readonly [number, number, number, number]);

@@ -288,12 +288,27 @@ pub enum Payload {
         layout_version: u32,
         content_version: u32,
         count: usize,
+        #[serde(skip)]
+        active_slots: Vec<u32>,
         capacity: usize,
         object_capacity: u32,
         sh_degree: usize,
         sh_format: String,
         attributes: Vec<Attribute>,
         clouds: Vec<CloudState>,
+    },
+    BuffersActivated {
+        scene_revision: u32,
+        layout_version: u32,
+        base_content_version: u32,
+        content_version: u32,
+        #[serde(skip)]
+        added_slots: Vec<u32>,
+        #[serde(skip)]
+        removed_slots: Vec<u32>,
+        commit: bool,
+        changed_clouds: Vec<CloudState>,
+        mipmap_pending: bool,
     },
     BuffersPatched {
         scene_revision: u32,

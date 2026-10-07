@@ -74,6 +74,7 @@ import {
 import { AttributePool } from "./AttributePool";
 import { ExclusiveScanStage } from "./ExclusiveScanStage";
 import { TILE_SIZE, WORKGROUP_SIZE } from "./constants";
+import { decodeActiveSlot } from "./activeSlots";
 import type { FrameUniforms } from "./FrameUniforms";
 import type { DepthSortMode } from "./types";
 
@@ -327,7 +328,7 @@ export class TileRasterizer {
     const projectedMean = storage(
       this.projectedMeanAttribute,
       "vec4",
-      this.gaussianCount,
+      this.projectedMeanAttribute.count,
     ).toReadOnly();
     const projectedConic = storage(
       this.projectedConicAttribute,
@@ -352,7 +353,6 @@ export class TileRasterizer {
     const sharedMean: any = workgroupArray("vec4", WORKGROUP_SIZE);
     const sharedConic: any = workgroupArray("vec4", WORKGROUP_SIZE);
     const sharedColor: any = workgroupArray("vec4", WORKGROUP_SIZE);
-    const sharedGaussianId: any = workgroupArray("uint", WORKGROUP_SIZE);
     const sharedActive: any = workgroupArray("uint", WORKGROUP_SIZE);
     // Keep reduction outputs separate from flags still read by other lanes.
     const sharedActiveSums: any = workgroupArray("uint", 8);
@@ -478,7 +478,6 @@ export class TileRasterizer {
             sharedColor
               .element(localIndex)
               .assign(projectedColor.element(gaussianId));
-            sharedGaussianId.element(localIndex).assign(gaussianId);
           });
           If(localIndex.equal(0), () => {
             sharedActive
@@ -513,13 +512,17 @@ export class TileRasterizer {
               ({ i: batchIndex }) => {
                 checked?.addAssign(1);
                 const mean = sharedMean.element(batchIndex);
-                const gaussianId = sharedGaussianId.element(batchIndex);
+                const sourceSlot = (
+                  decodeActiveSlot({
+                    value: sharedColor.element(batchIndex).w,
+                  }) as any
+                ).toVar("rasterSourceSlot");
                 const delta = pixelCenter.sub(mean.xy);
                 const earlyOverrides: OverrideMap = new Map(pixelOverrides);
                 earlyOverrides.set(rasterPixelValue, () => pixelValue);
-                earlyOverrides.set(rasterGaussianIndex, () => gaussianId);
+                earlyOverrides.set(rasterGaussianIndex, () => sourceSlot);
                 earlyOverrides.set(rasterObjectId, () =>
-                  uint(means.element(gaussianId).w),
+                  uint(means.element(sourceSlot).w),
                 );
                 earlyOverrides.set(rasterGaussianCenter, () => mean.xy);
                 earlyOverrides.set(rasterPixelDelta, () => delta);

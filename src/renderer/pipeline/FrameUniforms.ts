@@ -5,6 +5,7 @@ export class FrameUniforms {
   readonly projection = uniform(new Matrix4());
   readonly view = uniform(new Matrix4());
   readonly viewport = uniform(new Vector4());
+  readonly activeCount = uniform(0, "uint");
   readonly tilesX = uniform(1, "uint");
   readonly tilesY = uniform(1, "uint");
 

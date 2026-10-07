@@ -81,12 +81,14 @@ for (let i = 0; i < 20; i++) {
     capacity: events.find(
       (e) => e.type === "buffers-replaced" || e.type === "buffers-allocated",
     )?.capacity,
-    count: (events.find((e) => e.clouds)?.clouds ??
-      events.find((e) => e.changedClouds)?.changedClouds)?.[0]?.renderedCount,
+    count: engine.timings().activeGaussians,
     timings: engine.timings(),
     bytes: events.reduce(
       (sum, e) =>
         sum +
+        (e.activeSlots?.byteLength ?? 0) +
+        (e.addedSlots?.byteLength ?? 0) +
+        (e.removedSlots?.byteLength ?? 0) +
         (e.attributes ?? e.patches ?? []).reduce(
           (s, a) => s + (a.data?.byteLength ?? 0),
           0,

@@ -137,8 +137,11 @@ export interface GaussianPassDebugInfo {
 /** Three.js-owned intermediate attributes reusable by other node code or wgslFn kernels. */
 export interface GaussianPassResources {
   /** Gaussian results occupy the first store.count rows; camera-specific object frames use the private tail. */
+  /** Projected arrays use compact active ordinals, not source GPU slots. */
   projectedMean: StorageBufferAttribute;
+  /** xyz: inverse covariance; w: exact ceil radiusX + radiusY * 512. */
   projectedConic: StorageBufferAttribute;
+  /** xyz: RGB; w: bitcast-f32(source slot XOR 0x3f800000). */
   projectedColor: StorageBufferAttribute;
   visibleOffsets: StorageBufferAttribute;
   /** uvec2(depth key, original Gaussian id), sorted front-to-back. */

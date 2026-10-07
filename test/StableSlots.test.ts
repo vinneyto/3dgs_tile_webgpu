@@ -19,7 +19,7 @@ const capabilities = {
 };
 
 describe("stable WASM GPU slots", () => {
-  it("applies camera deltas without moving retained records or losing high occupied slots", async () => {
+  it("keeps inactive details resident and revisits cached cuts with index deltas only", async () => {
     const store = new GaussianStore(new WasmGaussianBackend());
     const responses: BackendResponse[] = [];
     store.scheduler.onResponse((response) => responses.push(response));
@@ -45,15 +45,21 @@ describe("stable WASM GPU slots", () => {
           1024,
         ),
       );
+      const data = store.getPackedData();
+      const capacity = store.maxGaussians;
       const slotOf = (x: number) => {
-        const means = store.getPackedData().means.array;
-        for (let slot = 0; slot < store.maxGaussians; slot++)
-          if (means[slot * 4 + 3]! >= 0 && means[slot * 4] === x) return slot;
-        throw new Error(`Missing occupied Gaussian at x=${x}`);
+        for (let slot = 0; slot < capacity; slot++)
+          if (
+            data.means.array[slot * 4 + 3]! >= 0 &&
+            data.means.array[slot * 4] === x
+          )
+            return slot;
+        throw new Error(`Missing resident Gaussian at x=${x}`);
       };
-      const slots = [0, 1, 2].map(slotOf);
-      expect(store.count).toBe(3);
-      expect(store.maxGaussians).toBe(4);
+      const sharedSlot = slotOf(1);
+      const initialSlots = Array.from(
+        data.activeSlots!.subarray(0, data.activeCount),
+      ).sort();
       const move = async (id: string, x: number, halfWidth: number) => {
         const next = camera(x, halfWidth);
         await store.scheduler.schedule(
@@ -67,77 +73,46 @@ describe("stable WASM GPU slots", () => {
           ),
         );
       };
-      let data = store.getPackedData();
-      data.means.clearUpdateRanges();
       await move("slide", 2, 1.05);
       expect(store.getPackedData()).toBe(data);
-      expect(slotOf(1)).toBe(slots[1]);
-      expect(slotOf(2)).toBe(slots[2]);
-      expect(slotOf(3)).toBe(slots[0]);
-      expect(data.means.updateRanges).toEqual([
-        { start: slots[0]! * 4, count: 4 },
-      ]);
-      expect(store.lastPackStats).toMatchObject({
-        reusedSlots: 2,
-        writtenSlots: 1,
-        clearedSlots: 0,
+      expect(slotOf(1)).toBe(sharedSlot);
+      data.means.clearUpdateRanges();
+      await move("offscreen", 20, 0.1);
+      expect(store.count).toBeGreaterThan(0);
+      expect(data.activeCount).toBe(store.count);
+      expect(data.means.updateRanges).toEqual([]);
+      const resident = Array.from(
+        { length: capacity },
+        (_, slot) => data.means.array[slot * 4 + 3]!,
+      ).filter((object) => object >= 0).length;
+      expect(resident).toBeGreaterThan(data.activeCount);
+      expect(slotOf(1)).toBe(sharedSlot);
+      await move("return", 1, 1.05);
+      expect(store.maxGaussians).toBe(capacity);
+      expect(store.getPackedData()).toBe(data);
+      expect(data.means.updateRanges).toEqual([]);
+      expect(
+        Array.from(data.activeSlots!.subarray(0, data.activeCount)).sort(),
+      ).toEqual(initialSlots);
+      const returned = responses.filter(
+        ({ command }) => command.id === "return",
+      );
+      expect(
+        returned.some(({ payload }) => payload?.type === "buffers-activated"),
+      ).toBe(true);
+      expect(
+        returned.some(({ payload }) => payload?.type === "buffers-patched"),
+      ).toBe(false);
+      expect(returned.at(-1)?.metrics).toMatchObject({
+        cacheMisses: 0,
+        evictedGaussians: 0,
       });
-      await move("unchanged", 2.01, 1.05);
+      await move("unchanged", 1.01, 1.05);
       expect(
         responses.filter(
           ({ command, payload }) => command.id === "unchanged" && payload,
         ),
       ).toHaveLength(0);
-
-      // Keep the highest slot occupied while lowering the active count to one.
-      const highX = slots[1]! > slots[2]! ? 1 : 2;
-      const highSlot = slotOf(highX);
-      expect(highSlot).toBeGreaterThan(0);
-      await move("narrow", highX, 0.1);
-      expect(store.count).toBe(1);
-      expect(data.count).toBe(4);
-      expect(slotOf(highX)).toBe(highSlot);
-      for (let slot = 0; slot < data.count; slot++)
-        if (slot !== highSlot) {
-          expect(data.means.array[slot * 4 + 3]).toBe(-1);
-          expect(data.scalesOpacity.array[slot * 4 + 3]).toBe(0);
-        }
-      expect(store.lastPackStats).toMatchObject({
-        reusedSlots: 1,
-        writtenSlots: 0,
-        clearedSlots: 2,
-      });
-      // Growing the object layout preserves the occupied high slot and holes.
-      await store.loadBuffer(rowCloud(100), { format: "splat" });
-      await move("settle-layout", highX, 0.1);
-      expect(store.getPackedData()).not.toBe(data);
-      data = store.getPackedData();
-      expect(store.count).toBe(1);
-      expect(slotOf(highX)).toBe(highSlot);
-      expect(store.lastPackStats).toMatchObject({
-        fullRebuild: false,
-        writtenSlotRanges: [{ start: highSlot, count: 1 }],
-      });
-      await move("empty", 20, 0.1);
-      expect(store.count).toBe(0);
-      expect(store.maxGaussians).toBe(4);
-      await move("refill", 1, 1.05);
-      expect(store.count).toBe(3);
-      expect([0, 1, 2].map(slotOf).sort()).toEqual([0, 1, 2]);
-
-      // A priority change with the same records updates metadata without uploads.
-      const metadataData = store.getPackedData();
-      const version = store.contentVersion;
-      metadataData.means.clearUpdateRanges();
-      await store.setPackingPriority(store.clouds[0]!, 10);
-      expect(store.contentVersion).toBeGreaterThan(version);
-      expect(metadataData.means.updateRanges).toEqual([]);
-      expect(store.lastPackStats).toMatchObject({
-        reusedSlots: 3,
-        writtenSlots: 0,
-        clearedSlots: 0,
-        estimatedUploadBytes: 0,
-      });
     } finally {
       store.dispose();
     }

@@ -1,3 +1,4 @@
+import type { BuffersActivatedPayload } from "./BuffersActivatedPayload";
 import type { CloudLoadedPayload } from "./CloudLoadedPayload";
 import type { CloudUnloadedPayload } from "./CloudUnloadedPayload";
 import type { MipmapSnapshotReplacedPayload } from "./MipmapSnapshotReplacedPayload";
@@ -11,6 +12,7 @@ export type BackendPayload =
   | CloudLoadedPayload
   | CloudUnloadedPayload
   | MipmapSnapshotReplacedPayload
+  | BuffersActivatedPayload
   | BuffersPatchedPayload
   | BuffersAllocatedPayload
   | BuffersReplacedPayload;

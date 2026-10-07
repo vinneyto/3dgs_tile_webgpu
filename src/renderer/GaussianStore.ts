@@ -608,7 +608,10 @@ export class GaussianStore implements GaussianRenderStore {
           const values =
             schema.format === "f32"
               ? new Float32Array(event.capacity * schema.elementsPerGaussian)
-              : new Uint32Array(event.capacity * schema.elementsPerGaussian);
+              : new Uint32Array(
+                  event.capacity * schema.elementsPerGaussian +
+                    (schema.name === "shCoefficients" ? event.capacity : 0),
+                );
           if (schema.name === "means")
             for (let slot = 0; slot < event.capacity; slot++)
               values[slot * 4 + 3] = -1;
@@ -618,6 +621,7 @@ export class GaussianStore implements GaussianRenderStore {
           ...event,
           type: "buffers-replaced",
           count: 0,
+          activeSlots: new Uint32Array().buffer,
           attributes,
         });
         this.pendingLod = true;
@@ -625,6 +629,9 @@ export class GaussianStore implements GaussianRenderStore {
       }
       case "buffers-replaced":
         this.replace(event);
+        break;
+      case "buffers-activated":
+        this.activate(event);
         break;
       case "buffers-patched":
         this.patch(event);
@@ -665,6 +672,9 @@ export class GaussianStore implements GaussianRenderStore {
             },
             {
               count: event.capacity,
+              activeSlots: event.activeSlots
+                ? new Uint32Array(event.activeSlots)
+                : undefined,
               shDegree: event.shDegree,
               shFormat: "rgb8e8",
               ownsBuffers: true,
@@ -720,7 +730,7 @@ export class GaussianStore implements GaussianRenderStore {
       slotCapacity: event.capacity,
       activeGaussians: event.count,
       reusedSlots: 0,
-      writtenSlots: event.count,
+      writtenSlots: occupied.length,
       clearedSlots: 0,
       estimatedUploadBytes: event.attributes.reduce(
         (sum, item) => sum + item.data.byteLength,
@@ -782,10 +792,7 @@ export class GaussianStore implements GaussianRenderStore {
     for (const range of ranges)
       for (let i = range.start; i < range.start + range.count; i++)
         touched.add(i);
-    const active = event.changedClouds.reduce(
-      (sum, state) => sum + state.renderedCount,
-      0,
-    );
+    const active = this.count;
     const means = this.data?.means.array as Float32Array | undefined;
     const written: number[] = [];
     const cleared: number[] = [];
@@ -808,6 +815,33 @@ export class GaussianStore implements GaussianRenderStore {
       planningMs: 0,
       slotUpdateMs: 0,
     };
+    this.notify("content");
+  }
+
+  private activate(
+    event: Extract<BackendPayload, { type: "buffers-activated" }>,
+  ): void {
+    if (
+      event.layoutVersion !== this.packedLayoutVersion ||
+      event.baseContentVersion !== this.packedVersion
+    )
+      return;
+    this.data?.stageActivation(
+      new Uint32Array(event.addedSlots),
+      new Uint32Array(event.removedSlots),
+      event.commit,
+    );
+    this.packedVersion = event.contentVersion;
+    this.pendingLod = event.mipmapPending;
+    if (event.commit) this.applyCloudStates(event.changedClouds);
+    if (this.packStats)
+      this.packStats = {
+        ...this.packStats,
+        fullRebuild: false,
+        activeGaussians: this.count,
+        estimatedUploadBytes:
+          event.addedSlots.byteLength + event.removedSlots.byteLength,
+      };
     this.notify("content");
   }
 

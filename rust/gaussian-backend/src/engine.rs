@@ -3,6 +3,7 @@ use crate::{
     protocol::*,
     slot_mapping::{GaussianKey, SlotMapping},
 };
+use ahash::AHashMap;
 use anyhow::{bail, ensure, Context, Result};
 use glam::{Mat4, Vec3, Vec3A, Vec4};
 use ordered_float::OrderedFloat;
@@ -38,6 +39,7 @@ struct Cloud {
     source_version: u32,
     snapshot_version: u32,
     generation: u32,
+    coarse_cut: std::cell::RefCell<Option<(usize, u32, Vec<usize>)>>,
 }
 
 fn validate_mipmaps(config: &MipmapConfig) -> Result<()> {
@@ -293,15 +295,39 @@ fn cut(
     include: impl Fn(usize) -> bool,
     pixel_limit: f32,
 ) -> Vec<usize> {
-    if budget == 0 || tree.len() == 0 || !include(0) {
+    cut_from(tree, &[0], budget, score, include, pixel_limit, false)
+}
+
+fn cut_from(
+    tree: &MipmapArray,
+    seeds: &[usize],
+    budget: usize,
+    score: impl Fn(usize) -> f32,
+    include: impl Fn(usize) -> bool,
+    pixel_limit: f32,
+    reserve_seeds: bool,
+) -> Vec<usize> {
+    if budget == 0 || tree.len() == 0 {
         return Vec::new();
     }
     let mut terminal = Vec::new();
     let mut heap = BinaryHeap::new();
-    if tree.inner.children[0].is_empty() {
-        return vec![0];
+    for &i in seeds {
+        if !include(i) {
+            continue;
+        }
+        if tree.inner.children[i].is_empty() {
+            terminal.push(i);
+        } else {
+            heap.push((OrderedFloat(score(i)), std::cmp::Reverse(i)));
+        }
     }
-    heap.push((OrderedFloat(score(0)), std::cmp::Reverse(0usize)));
+    let reserved: ahash::AHashSet<_> = if reserve_seeds {
+        seeds.iter().copied().collect()
+    } else {
+        Default::default()
+    };
+    let mut allocated = terminal.len() + heap.len();
     while let Some((OrderedFloat(size), std::cmp::Reverse(i))) = heap.pop() {
         if size <= pixel_limit {
             terminal.push(i);
@@ -313,10 +339,12 @@ fn cut(
             .copied()
             .filter(|&c| include(c))
             .collect();
-        if terminal.len() + heap.len() + children.len() > budget {
+        let next_allocated = allocated + children.len() - usize::from(!reserved.contains(&i));
+        if next_allocated > budget {
             terminal.push(i);
             continue;
         }
+        allocated = next_allocated;
         for c in children {
             if tree.inner.children[c].is_empty() {
                 terminal.push(c);
@@ -330,6 +358,17 @@ fn cut(
 }
 
 impl Cloud {
+    fn selected(&self, node_id: usize) -> SelectedGaussian {
+        SelectedGaussian {
+            key: GaussianKey {
+                cloud_id: self.object_id,
+                generation: self.generation,
+                node_id,
+            },
+            version: self.source_version,
+            level: self.tree_depths.get(node_id).copied().unwrap_or(0),
+        }
+    }
     fn snapshot(&self) -> Option<Snapshot> {
         let MipmapConfig::Standard {
             snapshot: Some(config),
@@ -411,6 +450,8 @@ struct Packed {
     clouds: Vec<CloudState>,
     slots: SlotMapping,
     versions: Vec<u32>,
+    active: Vec<GaussianKey>,
+    active_slots: Vec<usize>,
 }
 
 #[derive(Default, serde::Serialize)]
@@ -419,6 +460,12 @@ pub struct EngineTimings {
     pub selection_ms: f64,
     pub slot_mapping_ms: f64,
     pub packing_ms: f64,
+    pub resident_gaussians: usize,
+    pub active_gaussians: usize,
+    pub pinned_gaussians: usize,
+    pub cache_hits: usize,
+    pub cache_misses: usize,
+    pub evicted_gaussians: usize,
 }
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
@@ -436,10 +483,22 @@ fn clock_ms() -> f64 {
         * 1000.0
 }
 
+struct ActivationPlan {
+    added: Vec<u32>,
+    removed: Vec<u32>,
+    clouds: Vec<CloudState>,
+    pending: bool,
+    cursor: usize,
+}
 struct UploadPlan {
     slots: Vec<usize>,
     cursor: usize,
     batch: usize,
+    activation_batch: usize,
+    coarse_end: usize,
+    coarse_activation: Option<ActivationPlan>,
+    before: Option<ActivationPlan>,
+    after: Option<ActivationPlan>,
 }
 
 pub struct Engine {
@@ -536,6 +595,7 @@ impl Engine {
                     source_version: 1,
                     snapshot_version: 1,
                     generation: 1,
+                    coarse_cut: Default::default(),
                 };
                 output.push(Payload::CloudLoaded {
                     cloud_id: c.cloud_id.clone(),
@@ -701,28 +761,76 @@ impl Engine {
         let max_width = extra
             .values()
             .map(|a| a.width * 4)
-            .chain([16, (degree + 1).pow(2) * 4])
+            .chain([16, ((degree + 1).pow(2) + 1) * 4])
             .max()
             .unwrap();
-        let budget = limit / max_width;
+        let object_capacity = self
+            .clouds
+            .values()
+            .map(|c| c.object_id + 1)
+            .max()
+            .unwrap_or(0)
+            .max(if incoming.is_some() {
+                self.next_object + 1
+            } else {
+                0
+            });
+        let object_bytes = object_capacity as usize * 10 * 16;
+        let budget = (limit / max_width).min(limit.saturating_sub(object_bytes) / 16);
         ensure!(budget > 0, "Frontend buffer limits are too small");
         Ok((degree, extra, budget))
     }
-    fn select(&self, budget: usize) -> (Vec<SelectedGaussian>, Vec<CloudState>) {
+    fn select(
+        &self,
+        budget: usize,
+    ) -> (
+        Vec<SelectedGaussian>,
+        Vec<SelectedGaussian>,
+        Vec<CloudState>,
+    ) {
         let mut ordered: Vec<_> = self.clouds.iter().collect();
         ordered.sort_by_key(|(_, c)| (c.priority, c.object_id));
-        let mut remaining = budget;
-        let mut selections = Vec::new();
+        let tree_count = ordered
+            .iter()
+            .filter(|(_, c)| c.tree.is_some())
+            .count()
+            .min(budget);
+        // A complete, camera-independent spatial cut, with a small share of the
+        // SAME frontend capacity. No fixed tree depth or second memory budget.
+        let coarse_budget = (budget / 32).max(tree_count).min(budget);
+        let mut coarse_remaining = coarse_budget;
+        let mut trees_remaining = tree_count;
+        let mut seeds = AHashMap::new();
+        let mut pinned = Vec::new();
+        for (_, cloud) in &ordered {
+            if let Some(tree) = &cloud.tree {
+                let quota = coarse_remaining.checked_div(trees_remaining).unwrap_or(0);
+                let mut cached = cloud.coarse_cut.borrow_mut();
+                if cached.as_ref().is_none_or(|(old_quota, generation, _)| {
+                    *old_quota != quota || *generation != cloud.generation
+                }) {
+                    *cached = Some((
+                        quota,
+                        cloud.generation,
+                        cut(tree, quota, |i| cloud.tree_features[i].1, |_| true, -1.0),
+                    ));
+                }
+                let frontier = cached.as_ref().unwrap().2.clone();
+                coarse_remaining -= frontier.len();
+                trees_remaining = trees_remaining.saturating_sub(1);
+                pinned.extend(frontier.iter().map(|&node| cloud.selected(node)));
+                seeds.insert(cloud.object_id, frontier);
+            }
+        }
+        let mut remaining = budget - pinned.len();
+        let mut selected = Vec::new();
         let mut states = Vec::new();
         for (id, cloud) in ordered {
-            let indices = if matches!(cloud.mipmaps, MipmapConfig::None) {
-                (0..cloud.source.len())
-                    .filter(|&i| {
-                        !cloud.source.has_children() || cloud.source.children[i].is_empty()
-                    })
-                    .take(remaining)
-                    .collect()
-            } else if let Some(tree) = &cloud.tree {
+            let indices = if let Some(tree) = &cloud.tree {
+                let base = &seeds[&cloud.object_id];
+                // Pinned nodes may also be active. Reserve their storage even
+                // when a refined branch replaces them in the draw cut.
+                let allowance = remaining + base.len();
                 let view = self.camera_world.inverse() * cloud.world;
                 let planes = frustum_planes(self.projection * view);
                 let scale = view
@@ -732,68 +840,70 @@ impl Engine {
                     .max(view.y_axis.truncate().length())
                     .max(view.z_axis.truncate().length());
                 let pixels = self.projection.y_axis.y.abs() * self.viewport[1] as f32 * 0.5;
-                cut(
+                let indices = cut_from(
                     tree,
-                    remaining,
+                    base,
+                    allowance,
                     |i| {
+                        // Offscreen branches remain represented by the pinned cut.
+                        if !visible(&cloud.tree_bounds[i], &planes) {
+                            return 0.0;
+                        }
                         let (center, feature) = cloud.tree_features[i];
                         let center = view.transform_point3(center);
                         let size = feature * scale;
                         if self.projection.w_axis.w == 0.0 {
-                            size * pixels / (-center.z - size * 0.5).max(1e-6)
+                            let distance = center.length().max(size * 0.5).max(1e-6);
+                            let forward = (-center.z / distance).clamp(-1.0, 1.0);
+                            let importance = 0.2 + 0.8 * forward.max(0.0).powi(2);
+                            size * pixels / distance * importance
                         } else {
                             size * pixels
                         }
                     },
-                    |i| visible(&cloud.tree_bounds[i], &planes),
+                    |_| true,
                     1.0,
-                )
+                    true,
+                );
+                let extra = indices
+                    .iter()
+                    .filter(|i| base.binary_search(i).is_err())
+                    .count();
+                remaining -= extra;
+                indices
             } else {
-                Vec::new()
+                let indices: Vec<_> = (0..cloud.source.len())
+                    .filter(|&i| {
+                        !cloud.source.has_children() || cloud.source.children[i].is_empty()
+                    })
+                    .take(remaining)
+                    .collect();
+                remaining -= indices.len();
+                indices
             };
-            remaining -= indices.len();
             states.push(CloudState {
                 cloud_id: id.clone(),
                 object_id: cloud.object_id,
                 rendered_count: indices.len(),
             });
-            selections.extend(indices.into_iter().map(|node_id| SelectedGaussian {
-                key: GaussianKey {
-                    cloud_id: cloud.object_id,
-                    generation: cloud.generation,
-                    node_id,
-                },
-                version: cloud.source_version,
-                level: cloud.tree_depths.get(node_id).copied().unwrap_or(0),
-            }));
+            selected.extend(indices.into_iter().map(|i| cloud.selected(i)));
         }
-        (selections, states)
+        (selected, pinned, states)
     }
     fn pack(&mut self) -> Result<Vec<Payload>> {
         let cap = self.capabilities.as_ref().unwrap();
         let (degree, extra, budget) = self.validate_layout(cap, None)?;
         let selection_start = clock_ms();
-        let (selected, states) = self.select(budget);
+        let available: usize = self
+            .clouds
+            .values()
+            .map(|c| c.tree.as_ref().map_or(c.source.len(), |t| t.len()))
+            .sum();
+        let capacity = budget.min(available).max(1);
+        let (selected, pinned, states) = self.select(capacity);
         self.timings.selection_ms = clock_ms() - selection_start;
         let mapping_start = clock_ms();
         let count = selected.len();
-        let old_capacity = self
-            .packed
-            .as_ref()
-            .map(|p| p.capacity.min(budget))
-            .unwrap_or(0);
-        // Reserve 25% on growth, bounded by both the frontend budget and the
-        // number of source leaves. Shrinking the view never shrinks buffers.
-        let available: usize = self.clouds.values().map(|c| c.source.len()).sum();
-        let capacity = if count > old_capacity {
-            count
-                .saturating_add(count.div_ceil(4))
-                .min(available)
-                .min(budget)
-        } else {
-            old_capacity
-        }
-        .max(1);
         let object_capacity = self
             .clouds
             .values()
@@ -825,9 +935,39 @@ impl Engine {
             clouds: Vec::new(),
             slots: SlotMapping::default(),
             versions: Vec::new(),
+            active: Vec::new(),
+            active_slots: Vec::new(),
         });
-        let keys: Vec<_> = selected.iter().map(|s| s.key).collect();
-        let changes = packed.slots.reconcile(capacity, &keys);
+        let pinned_keys: ahash::AHashSet<_> = pinned.iter().map(|s| s.key).collect();
+        let requested: Vec<_> = pinned
+            .iter()
+            .chain(selected.iter().filter(|s| !pinned_keys.contains(&s.key)))
+            .collect();
+        let keys: Vec<_> = requested.iter().map(|s| s.key).collect();
+        let old_active = packed.active.clone();
+        let old_active_slots = packed.active_slots.clone();
+        let old_pinned: Vec<_> = pinned
+            .iter()
+            .filter_map(|s| packed.slots.to_slot.get(&s.key).map(|&slot| (s.key, slot)))
+            .collect();
+        self.timings.cache_hits = selected
+            .iter()
+            .filter(|s| {
+                packed
+                    .slots
+                    .to_slot
+                    .get(&s.key)
+                    .is_some_and(|&slot| packed.versions[slot] == s.version)
+            })
+            .count();
+        self.timings.cache_misses = selected.len() - self.timings.cache_hits;
+        let generations = self
+            .clouds
+            .values()
+            .map(|c| (c.object_id, c.generation))
+            .collect();
+        let changes = packed.slots.reconcile(capacity, &keys, &generations);
+        self.timings.evicted_gaussians = changes.evictions;
         packed.versions.resize(capacity, 0);
         for &slot in &changes.assigned {
             packed.versions[slot] = 0;
@@ -837,11 +977,34 @@ impl Engine {
             packed.attributes = empty_attributes(degree, &extra, capacity);
             packed.versions.fill(0);
         }
-        let dirty: Vec<_> = selected
-            .iter()
-            .zip(&changes.selected_slots)
-            .filter_map(|(s, &slot)| (packed.versions[slot] != s.version).then_some((s, slot)))
-            .collect();
+        // A layout replacement repopulates every valid resident owner, not
+        // only the draw cut. Cached rows remain real resident data afterwards.
+        let resident_selection: Vec<_> = if !compatible {
+            let clouds: AHashMap<_, _> = self.clouds.values().map(|c| (c.object_id, c)).collect();
+            packed
+                .slots
+                .owners
+                .iter()
+                .enumerate()
+                .filter_map(|(slot, owner)| {
+                    owner.map(|key| (clouds[&key.cloud_id].selected(key.node_id), slot))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let dirty: Vec<(&SelectedGaussian, usize)> = if compatible {
+            requested
+                .iter()
+                .zip(&changes.selected_slots)
+                .filter_map(|(s, &slot)| (packed.versions[slot] != s.version).then_some((*s, slot)))
+                .collect()
+        } else {
+            resident_selection
+                .iter()
+                .map(|(s, slot)| (s, *slot))
+                .collect()
+        };
         self.timings.slot_mapping_ms = clock_ms() - mapping_start;
         let packing_start = clock_ms();
         // Capture only candidate slots. Retained, unchanged Gaussians are never
@@ -923,13 +1086,129 @@ impl Engine {
                     .then_some(slot)
             })
             .collect();
+        let target_active: Vec<_> = selected.iter().map(|s| s.key).collect();
+        let target_slots: Vec<_> = target_active
+            .iter()
+            .map(|key| packed.slots.to_slot[key])
+            .collect();
+        let active_changed = old_active != target_active;
+        let needs_fallback = compatible
+            && old_active
+                .iter()
+                .zip(&old_active_slots)
+                .any(|(key, &slot)| packed.slots.owners.get(slot).copied().flatten() != Some(*key));
+        let fallback_slots: Vec<_> = if needs_fallback {
+            old_pinned
+                .iter()
+                .filter(|(key, slot)| {
+                    packed.slots.owners.get(*slot).copied().flatten() == Some(*key)
+                })
+                .map(|(_, slot)| *slot)
+                .chain(
+                    old_active
+                        .iter()
+                        .zip(&old_active_slots)
+                        .filter(|(key, slot)| {
+                            self.clouds
+                                .values()
+                                .any(|c| c.object_id == key.cloud_id && c.tree.is_none())
+                                && packed.slots.owners.get(**slot).copied().flatten() == Some(**key)
+                        })
+                        .map(|(_, &slot)| slot),
+                )
+                .collect()
+        } else {
+            old_active_slots.clone()
+        };
+        let make_activation = |from: &[usize], to: &[usize], clouds, pending| {
+            // Byte masks avoid rebuilding two large hash tables on every cut.
+            // Include the old layout's tail when capacity has been reduced.
+            let mask_capacity = capacity.max(packed.capacity);
+            let mut from_mask = vec![false; mask_capacity];
+            let mut to_mask = vec![false; mask_capacity];
+            for &slot in from {
+                from_mask[slot] = true;
+            }
+            for &slot in to {
+                to_mask[slot] = true;
+            }
+            let added = to
+                .iter()
+                .filter(|&&slot| !from_mask[slot])
+                .map(|&slot| slot as u32)
+                .collect();
+            let removed = from
+                .iter()
+                .filter(|&&slot| !to_mask[slot])
+                .map(|&slot| slot as u32)
+                .collect();
+            ActivationPlan {
+                added,
+                removed,
+                clouds,
+                pending,
+                cursor: 0,
+            }
+        };
+        let pinned_slots: Vec<_> = pinned
+            .iter()
+            .map(|s| packed.slots.to_slot[&s.key])
+            .collect();
+        let coarse_activation = (!compatible && !pinned_slots.is_empty()).then(|| {
+            let mut counts = AHashMap::<u32, usize>::new();
+            for s in &pinned {
+                *counts.entry(s.key.cloud_id).or_default() += 1;
+            }
+            let clouds = states
+                .iter()
+                .map(|state| CloudState {
+                    rendered_count: counts.get(&state.object_id).copied().unwrap_or(0),
+                    ..state.clone()
+                })
+                .collect();
+            make_activation(&[], &pinned_slots, clouds, true)
+        });
+        let before = needs_fallback.then(|| {
+            let mut counts = AHashMap::<u32, usize>::new();
+            for &slot in &fallback_slots {
+                *counts
+                    .entry(packed.slots.owners[slot].unwrap().cloud_id)
+                    .or_default() += 1;
+            }
+            let clouds = states
+                .iter()
+                .map(|state| CloudState {
+                    rendered_count: counts.get(&state.object_id).copied().unwrap_or(0),
+                    ..state.clone()
+                })
+                .collect();
+            make_activation(&old_active_slots, &fallback_slots, clouds, true)
+        });
+        let after =
+            (!compatible || active_changed || needs_fallback || states_changed).then(|| {
+                make_activation(
+                    if compatible {
+                        &fallback_slots
+                    } else {
+                        &pinned_slots
+                    },
+                    &target_slots,
+                    states.clone(),
+                    false,
+                )
+            });
+        packed.active = target_active;
+        packed.active_slots = target_slots;
+        self.timings.resident_gaussians = packed.slots.to_slot.len();
+        self.timings.active_gaussians = count;
+        self.timings.pinned_gaussians = pinned.len();
         packed.count = count;
         packed.capacity = capacity;
         packed.degree = degree;
         packed.object_capacity = object_capacity;
         packed.clouds = states;
         self.timings.packing_ms = clock_ms() - packing_start;
-        if compatible && changed.is_empty() && !states_changed {
+        if compatible && changed.is_empty() && !states_changed && !active_changed {
             return Ok(Vec::new());
         }
         if !cap.supports_partial_buffer_updates {
@@ -940,6 +1219,11 @@ impl Engine {
                 layout_version: self.layout_version,
                 content_version: self.content_version,
                 count,
+                active_slots: packed
+                    .active_slots
+                    .iter()
+                    .map(|&slot| slot as u32)
+                    .collect(),
                 capacity,
                 object_capacity,
                 sh_degree: degree,
@@ -963,14 +1247,29 @@ impl Engine {
         let slots = if compatible {
             changed
         } else {
-            let mut slots = changes.selected_slots;
-            slots.sort_unstable();
-            slots
+            let pinned_set: ahash::AHashSet<_> = pinned_slots.iter().copied().collect();
+            let mut coarse = pinned_slots.clone();
+            coarse.sort_unstable();
+            let mut details: Vec<_> = packed
+                .slots
+                .to_slot
+                .values()
+                .copied()
+                .filter(|slot| !pinned_set.contains(slot))
+                .collect();
+            details.sort_unstable();
+            coarse.extend(details);
+            coarse
         };
         self.pending_upload = Some(UploadPlan {
             slots,
             cursor: 0,
             batch,
+            activation_batch: (max_bytes / 4).max(1),
+            coarse_end: if compatible { 0 } else { pinned_slots.len() },
+            coarse_activation,
+            before,
+            after,
         });
         if compatible {
             return Ok(Vec::new());
@@ -986,13 +1285,70 @@ impl Engine {
             sh_degree: degree,
             sh_format: "rgb8e8".into(),
             attributes: schema,
-            clouds: packed.clouds.clone(),
+            clouds: packed
+                .clouds
+                .iter()
+                .map(|s| CloudState {
+                    rendered_count: 0,
+                    ..s.clone()
+                })
+                .collect(),
         }])
     }
     pub fn next_payload(&mut self) -> Option<Payload> {
         let plan = self.pending_upload.as_mut()?;
         let packed = self.packed.as_ref().unwrap();
-        let end = plan.cursor.saturating_add(plan.batch).min(plan.slots.len());
+        let activation = if plan.before.is_some() {
+            plan.before.as_mut()
+        } else if plan.coarse_activation.is_some() && plan.cursor >= plan.coarse_end {
+            plan.coarse_activation.as_mut()
+        } else if plan.cursor >= plan.slots.len() {
+            plan.after.as_mut()
+        } else {
+            None
+        };
+        if let Some(a) = activation {
+            let end = (a.cursor + plan.activation_batch).min(a.removed.len() + a.added.len());
+            let removed =
+                a.removed[a.cursor.min(a.removed.len())..end.min(a.removed.len())].to_vec();
+            let added = a.added
+                [a.cursor.saturating_sub(a.removed.len())..end.saturating_sub(a.removed.len())]
+                .to_vec();
+            a.cursor = end;
+            let commit = end == a.removed.len() + a.added.len();
+            let base = self.content_version;
+            self.content_version += 1;
+            let payload = Payload::BuffersActivated {
+                scene_revision: self.scene_revision,
+                layout_version: self.layout_version,
+                base_content_version: base,
+                content_version: self.content_version,
+                added_slots: added,
+                removed_slots: removed,
+                commit,
+                changed_clouds: a.clouds.clone(),
+                mipmap_pending: a.pending || !commit,
+            };
+            if commit {
+                if plan.before.is_some() {
+                    plan.before = None;
+                } else if plan.coarse_activation.is_some() {
+                    plan.coarse_activation = None;
+                } else {
+                    plan.after = None;
+                }
+                if plan.cursor == plan.slots.len() && plan.after.is_none() {
+                    self.pending_upload = None;
+                }
+            }
+            return Some(payload);
+        }
+        let limit = if plan.coarse_activation.is_some() {
+            plan.coarse_end
+        } else {
+            plan.slots.len()
+        };
+        let end = plan.cursor.saturating_add(plan.batch).min(limit);
         let group = &plan.slots[plan.cursor..end];
         let mut patches = Vec::new();
         let mut at = 0;
@@ -1015,7 +1371,7 @@ impl Engine {
             at = end;
         }
         plan.cursor = end;
-        let pending = end < plan.slots.len();
+        let pending = end < plan.slots.len() || plan.after.is_some();
         let base = self.content_version;
         self.content_version += 1;
         let payload = Payload::BuffersPatched {
@@ -1024,7 +1380,7 @@ impl Engine {
             base_content_version: base,
             content_version: self.content_version,
             patches,
-            changed_clouds: packed.clouds.clone(),
+            changed_clouds: Vec::new(),
             mipmap_pending: pending,
         };
         if !pending {
@@ -1344,6 +1700,56 @@ mod cut_tests {
         )
         .unwrap();
         let tree = tree.unwrap();
+        // Seeded cuts charge pinned parents even after refinement. Every source
+        // leaf has exactly one active ancestor, including offscreen branches.
+        for coarse_budget in [1, 3, 8, 16] {
+            let seeds = cut(
+                &tree,
+                coarse_budget,
+                |i| tree.get(i).feature_size(),
+                |_| true,
+                -1.,
+            );
+            for budget in [seeds.len(), seeds.len() + 1, 25, 64, tree.len()] {
+                if budget < seeds.len() {
+                    continue;
+                }
+                for view_side in [0, 1, 2] {
+                    let active = cut_from(
+                        &tree,
+                        &seeds,
+                        budget,
+                        |i| {
+                            if i % 3 == view_side {
+                                0.
+                            } else {
+                                tree.get(i).feature_size()
+                            }
+                        },
+                        |_| true,
+                        0.001,
+                        true,
+                    );
+                    let resident: BTreeSet<_> = seeds.iter().chain(&active).copied().collect();
+                    assert!(resident.len() <= budget);
+                    let mut covered = vec![0; tree.len()];
+                    let mut stack = active;
+                    while let Some(i) = stack.pop() {
+                        let children = tree.get_children(i);
+                        if children.is_empty() {
+                            covered[i] += 1;
+                        } else {
+                            stack.extend(children);
+                        }
+                    }
+                    for (i, coverage) in covered.into_iter().enumerate() {
+                        if tree.get_children(i).is_empty() {
+                            assert_eq!(coverage, 1);
+                        }
+                    }
+                }
+            }
+        }
         for x in [0., 2., 4., 20.] {
             let planes = frustum_planes(
                 Mat4::from_scale(Vec3::new(0.3, 0.3, 1.))

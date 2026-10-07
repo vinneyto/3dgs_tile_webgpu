@@ -13,6 +13,12 @@ export interface BackendMetrics {
   uploadWaitMs: number;
   uploadedBytes: number;
   uploadBatches: number;
+  residentGaussians: number;
+  activeGaussians: number;
+  pinnedGaussians: number;
+  cacheHits: number;
+  cacheMisses: number;
+  evictedGaussians: number;
 }
 
 export interface BackendResponse {

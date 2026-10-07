@@ -57,6 +57,11 @@ import {
   type GaussianProjectionNodeSlots,
 } from "../nodes/GaussianContextNodes";
 import { AttributePool } from "./AttributePool";
+import {
+  ACTIVE_SLOT_TAG,
+  decodeActiveSlot,
+  encodeActiveSlot,
+} from "./activeSlots";
 import { TILE_SIZE, WORKGROUP_SIZE } from "./constants";
 import type { FrameUniforms } from "./FrameUniforms";
 import { OBJECT_FRAME_VEC4S, type ObjectFrameState } from "./ObjectFrameState";
@@ -95,6 +100,10 @@ export class ProjectionStage {
 
   private readonly attributes = new AttributePool();
   private computeNode: ComputeNode | null = null;
+  private activeVersion = -1;
+  private firstActiveChange = Infinity;
+  private lastActiveChange = -1;
+  private readonly unsubscribeActiveSlots: () => void;
 
   constructor(
     private readonly data: GaussianData,
@@ -117,6 +126,14 @@ export class ProjectionStage {
       "3dgs.tile-counts",
       data.count,
     );
+    this.unsubscribeActiveSlots = data.subscribeActiveSlots((range) => {
+      if (range.count === 0) return;
+      this.firstActiveChange = Math.min(this.firstActiveChange, range.start);
+      this.lastActiveChange = Math.max(
+        this.lastActiveChange,
+        range.start + range.count,
+      );
+    });
     this.rebuild(nodes);
   }
 
@@ -168,13 +185,54 @@ export class ProjectionStage {
     if (this.computeNode === null) {
       throw new Error("ProjectionStage has no compute node");
     }
-    renderer.compute(this.computeNode);
+    this.updateActiveSlots();
+    // Bind attributes even with an empty draw cut: ACK-paced initial batches
+    // must reach GPU memory before the final activation transaction commits.
+    renderer.compute(this.computeNode, [
+      Math.max(1, Math.ceil(this.data.activeCount / WORKGROUP_SIZE)),
+      1,
+      1,
+    ]);
   }
 
   dispose(): void {
+    this.unsubscribeActiveSlots();
     this.computeNode?.dispose();
     this.computeNode = null;
     this.attributes.dispose();
+  }
+
+  private updateActiveSlots(): void {
+    const { data } = this;
+    if (!data.activeSlots || this.activeVersion === data.activeVersion) return;
+    const base =
+      data.count *
+      data.shCoefficientCount *
+      (data.shFormat === "rgb8e8" ? 1 : 4);
+    const start =
+      this.activeVersion < 0
+        ? 0
+        : Math.min(this.firstActiveChange, data.activeCount);
+    const end =
+      this.activeVersion < 0
+        ? data.activeCount
+        : Math.min(this.lastActiveChange, data.activeCount);
+    const bits = new Uint32Array(data.shCoefficients.array.buffer);
+    if (data.shFormat === "rgb8e8")
+      bits.set(
+        data.activeSlots.subarray(start, Math.max(start, end)),
+        base + start,
+      );
+    else
+      for (let ordinal = start; ordinal < end; ordinal++)
+        bits[base + ordinal] = data.activeSlots[ordinal]! ^ ACTIVE_SLOT_TAG;
+    if (end > start) {
+      data.shCoefficients.addUpdateRange(base + start, end - start);
+      data.shCoefficients.needsUpdate = true;
+    }
+    this.firstActiveChange = Infinity;
+    this.lastActiveChange = -1;
+    this.activeVersion = data.activeVersion;
   }
 
   private createComputeNode(nodes: GaussianProjectionNodeSlots): ComputeNode {
@@ -191,12 +249,12 @@ export class ProjectionStage {
         ? storage(
             data.shCoefficients,
             "uint",
-            data.count * data.shCoefficientCount,
+            data.shCoefficients.count,
           ).toReadOnly()
         : storage(
             data.shCoefficients,
             "vec4",
-            data.count * data.shCoefficientCount,
+            data.shCoefficients.count,
           ).toReadOnly();
     const projectedMean = storage(
       this.projectedMean,
@@ -215,13 +273,29 @@ export class ProjectionStage {
 
     const kernel = Fn(() => {
       const gid = uint(instanceIndex);
-      If(gid.greaterThanEqual(uint(data.count)), () => {
+      If(gid.greaterThanEqual(frame.activeCount), () => {
         Return();
       });
       tileCounts.element(gid).assign(uint(0));
       projectedMean.element(gid).assign(vec4(0));
 
-      const meanObject = means.element(gid);
+      const sourceSlot = data.activeSlots
+        ? (data.shFormat === "rgb8e8"
+            ? shCoefficients.element(
+                uint(data.count * data.shCoefficientCount).add(gid),
+              )
+            : (decodeActiveSlot({
+                value: (
+                  shCoefficients.element(
+                    uint(data.count * data.shCoefficientCount).add(
+                      gid.div(uint(4)),
+                    ),
+                  ) as any
+                ).element(gid.mod(uint(4))),
+              }) as any)
+          ).toVar("gaussianSourceSlot")
+        : gid;
+      const meanObject = means.element(sourceSlot);
       // Sparse backend slots use a negative object id for unoccupied records.
       // Reject them before object-buffer access or user material overrides.
       If(meanObject.w.lessThan(0), () => {
@@ -229,10 +303,10 @@ export class ProjectionStage {
       });
       const sourceLocal = meanObject.xyz;
       const objectId = uint(meanObject.w);
-      const sourceScaleOpacity = scalesOpacity.element(gid);
+      const sourceScaleOpacity = scalesOpacity.element(sourceSlot);
       const sourceScale = sourceScaleOpacity.xyz;
       const sourceOpacity = sourceScaleOpacity.w;
-      const sourceRotation = rotations.element(gid);
+      const sourceRotation = rotations.element(sourceSlot);
       const objectBase = uint(data.count).add(
         objectId.mul(uint(OBJECT_FRAME_VEC4S)),
       );
@@ -256,7 +330,7 @@ export class ProjectionStage {
         Return();
       });
       const sourceOverrides: OverrideMap = new Map<any, () => any>([
-        [gaussianIndex, () => gid],
+        [gaussianIndex, () => sourceSlot],
         [gaussianObjectId, () => objectId],
         [gaussianPositionLocal, () => sourceLocal],
         [gaussianScale, () => sourceScale],
@@ -382,7 +456,7 @@ export class ProjectionStage {
       );
 
       const standardColor = evaluateSh({
-        gid,
+        gid: sourceSlot,
         sh_degree: uint(data.shDegree),
         direction: viewDirection,
         sh_coefficients: shCoefficients,
@@ -413,8 +487,14 @@ export class ProjectionStage {
         derivedOverrides,
       ).clamp(0, 1);
       projectedMean.element(gid).assign(vec4(center, depth, opacity));
-      projectedConic.element(gid).assign(vec4(conic, radiusX));
-      projectedColor.element(gid).assign(vec4(color, radiusY));
+      // Both ceil radii fit in nine bits: covariance is capped at 1e4
+      // and opacity <= 1. Keep their exact values when color.w stores the id.
+      projectedConic
+        .element(gid)
+        .assign(vec4(conic, radiusX.add(radiusY.mul(512))));
+      projectedColor
+        .element(gid)
+        .assign(vec4(color, encodeActiveSlot({ slot: sourceSlot }) as any));
       tileCounts.element(gid).assign(count);
     });
 

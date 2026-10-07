@@ -73,6 +73,7 @@ export class TiledGaussianPipeline {
   ) {
     this.frame = new FrameUniforms(camera, background);
     this.objects = new ObjectFrameState(camera, store, data.count);
+    this.frame.activeCount.value = data.activeCount;
     this.projection = new ProjectionStage(
       data,
       this.frame,
@@ -97,6 +98,7 @@ export class TiledGaussianPipeline {
       data.count,
       "visible",
       "projectedVisibility",
+      () => this.data.activeCount,
     );
     this.visible = new VisibleGaussianStage(
       renderer,
@@ -105,6 +107,8 @@ export class TiledGaussianPipeline {
       this.visibleScan.output,
       this.projection.projectedMean,
       this.frame.viewport,
+      this.frame.activeCount,
+      () => this.data.activeCount,
     );
     this.depthSorter = new RadixSorter(
       renderer,
@@ -126,6 +130,8 @@ export class TiledGaussianPipeline {
       this.orderedTiles.tileCounts,
       data.count,
       "intersections",
+      "uint",
+      () => this.data.activeCount,
     );
     this.intersections = new IntersectionStage(
       renderer,
@@ -157,6 +163,7 @@ export class TiledGaussianPipeline {
     depthTexture: StorageTexture | null,
   ): void {
     this.frame.update(width, height, this.tilesX, this.tilesY);
+    this.frame.activeCount.value = this.data.activeCount;
     this.objects.update();
     if (width !== this.width || height !== this.height) {
       this.rebuildTileStages(width, height, colorTexture, depthTexture);

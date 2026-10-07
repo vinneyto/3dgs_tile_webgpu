@@ -73,7 +73,8 @@ fn emit_intersections(
   let gaussian_id = (*sorted_gaussians)[rank].y;
   let mean = (*projected_mean)[gaussian_id];
   let conic = (*projected_conic)[gaussian_id];
-  let radius = vec2<f32>(conic.w, (*projected_color)[gaussian_id].w);
+  let packed_radius = u32(conic.w);
+  let radius = vec2<f32>(f32(packed_radius % 512u), f32(packed_radius / 512u));
   let center = mean.xy;
   let power_threshold = log(mean.w * 255.0);
   let max_tile_x = i32(tiles.x) - 1;

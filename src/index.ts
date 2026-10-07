@@ -138,3 +138,5 @@ export type {
   BuffersAllocatedPayload,
   PackedAttributeSchema,
 } from "./streaming-backend/payloads/BuffersAllocatedPayload";
+
+export type { BuffersActivatedPayload } from "./streaming-backend/payloads/BuffersActivatedPayload";

@@ -84,6 +84,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private handlePayload;
     private replace;
     private patch;
+    private activate;
     private attributeArray;
     private applyCloudStates;
     private notify;

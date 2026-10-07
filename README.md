@@ -15,13 +15,19 @@ A tiled 3D Gaussian Splatting pass for Three.js WebGPU. A Rust/WASM backend pars
 
 `GaussianStore` uses `WorkerWasmGaussianBackend` by default. `WasmGaussianBackend` runs the same Rust module on the calling thread for tests or other transports. The old `StreamingGaussianBackend` and `WorkerStreamingGaussianBackend` names remain aliases for these implementations; the old packing strategies are no longer part of the public protocol.
 
-Loads can finish before `GaussianPass` exists. The pass subsequently sends its frontend buffer limits, camera, cloud transforms and viewport dimensions. This handshake starts packing. The shared Gaussian capacity is derived from `min(maxBufferSize, maxStorageBufferBindingSize)` divided by the largest per-Gaussian attribute width. Lower numeric cloud priorities receive capacity first. There is no separate Gaussian-count limit or estimate of free GPU memory.
+Loads can finish before `GaussianPass` exists. The pass subsequently sends its frontend buffer limits, camera, cloud transforms and viewport dimensions. This handshake starts packing. All clouds share one capacity derived from `min(maxBufferSize, maxStorageBufferBindingSize)`: the backend checks the largest attribute buffer, the SH buffer's appended active-index list, and the projection buffer's object-transform table. There is no separate Gaussian-count policy or estimate of free GPU memory.
 
-With partial-update support, layout changes emit `buffers-allocated` containing capacity and attribute schemas; the frontend initializes empty buffers (`means.w = -1`) and subsequent bounded `buffers-patched` messages populate them. Without partial-update support, the backend emits `buffers-replaced` containing complete buffers. A request remains open until its final response; every patch batch includes all attributes for its changed slots. `streaming.maxUploadBytesPerUpdate` controls batch size, rounded up to at least one complete slot. Rust keeps an upload cursor and copies only the next batch when requested. The default worker waits for a client `upload-ack` before producing another batch; the proxy acknowledges after an animation frame, with a 32 ms fallback for hidden tabs. Initial data uploads use the same streaming path. GPU buffer allocation and initial empty-buffer initialization still occur once per layout. The serial scheduler coalesces pending camera/transform updates. An active network fetch can be aborted. Rust computations are synchronous inside the worker and cannot be interrupted by an abort message while they execute.
+`standard` reserves a camera-independent complete coarse cut of every cloud. The coarse cuts use approximately 1/32 of the shared capacity, with at least one representative per tree when capacity permits. They are selected by spatial feature size, so unbalanced trees do not need a fixed common depth. These records remain pinned while details replace them in the draw cut. Remaining capacity refines visible branches by projected feature size, radial camera distance and angular importance; lower numeric cloud priorities receive detail capacity first. Offscreen branches keep coarse representatives. `none` skips trees and uses remaining capacity for source Gaussians in source order.
 
-Rust keeps a stable `(cloud object ID, tree generation, node ID) → GPU slot` map, reverse owners and a free-slot stack. Camera changes select a new tree cut, retain slots for surviving nodes, release departed nodes and assign free slots to newcomers. Only newly assigned or source-modified records are packed and compared; unchanged records are not copied. Rebuilding a tree increments its generation so reused node IDs cannot alias old records. Source edits in `none` retain their source-index identities. Changing snapshot resolution alone does not invalidate GPU slots.
+Rust maintains a stable `(cloud object ID, tree generation, node ID) → GPU slot` map and reverse owners. Leaving the frustum changes the active draw cut, without releasing the resident record. New details use free slots first, then evict unrequested LRU records under pressure. Pinned records and the requested cut cannot be evicted. Capacity reserves the available frontend allowance, bounded by the number of source/tree records, and does not change with camera movement. Rebuilding a tree increments its generation; source edits in `none` retain source-index identities. Snapshot resolution changes preserve GPU slots.
 
-Buffers may contain holes: `count` reports occupied slots, while `capacity` and the arrays cover the entire slot range. Unoccupied records have `means.w = -1` and zero opacity. Projection rejects them before object-buffer reads or material opacity overrides; active records keep a nonnegative object ID. Clients must not truncate arrays or dispatch to the occupied count. A cleared slot and its immediate reuse are sent as one final record. Patches group contiguous changed slots with `firstSlot`, `slotCount` and attribute bytes; a metadata-only update has an empty patch list. Capacity grows with 25% headroom, bounded by the frontend limits and total source leaves, and stays allocated when the view shrinks. Camera movement within that reserve does not recreate the GPU pipeline. Layout changes (capacity, object layout or SH/schema) allocate new buffers, but surviving slots remain stable wherever the new capacity allows. Frontends without partial-update support receive complete buffers.
+Resident and active are separate: packed attribute arrays span `capacity`; `count` and cloud `renderedCount` report the active draw cut. `buffers-replaced.activeSlots` contains a compact `u32` slot list. The client never interprets mipmap relationships. Projection reads only this list, writes compact projected records, and dispatches for the active count; visibility/scan dispatches follow that count. Material `gaussianIndex` and `rasterGaussianIndex` still address source GPU slots. The index list shares the existing SH storage binding. Empty records retain `means.w = -1` and zero opacity as an additional guard.
+
+With partial-update support, layout changes emit `buffers-allocated` containing capacity and attribute schemas. The frontend initializes empty buffers; bounded `buffers-patched` messages populate complete changed records. Pinned coarse records upload and activate first, followed by details. A layout replacement repopulates inactive cached records too. Without partial-update support, `buffers-replaced` includes all resident records and the complete active list.
+
+`buffers-activated` sends bounded `u32` `removedSlots`/`addedSlots` buffers, ordered with removals first, plus content/layout versions, cloud counts, `commit` and `mipmapPending`. The client prepares a back list incrementally and swaps it only on `commit`. Parents switch to children after their attributes finish uploading. Under pressure, a resident coarse cut commits before any currently active slot is overwritten; the detailed cut commits afterwards. No transition draws an ancestor together with its descendants. `none` clouds have no tree-based fallback or picking.
+
+`streaming.maxUploadBytesPerUpdate` bounds attribute and activation batches, rounded up to at least one complete slot for attribute patches. Rust copies only the next batch when requested. The worker waits for a client `upload-ack` before producing another batch; the proxy acknowledges after an animation frame, with a 32 ms fallback for hidden tabs. The request remains open through the final activation. An empty draw cut still binds the projection inputs, allowing initial attribute batches to upload before activation. GPU allocation/empty-buffer initialization still occur once per layout, and the compact index mirror updates at commit. The serial scheduler coalesces pending camera/transform updates. Network fetches can be aborted; synchronous Rust decoding/tree construction cannot be interrupted while executing.
 
 ## Install and render
 
@@ -86,7 +92,7 @@ export interface NoMipmapConfig {
 export type MipmapConfig = StandardMipmapConfig | NoMipmapConfig;
 ```
 
-`standard` uses Spark's Tiny tree builder. Parent Gaussians merge their children's centers, covariance, opacity, color and SH. View selection starts at the root and replaces a parent with its visible children when capacity allows and projected size exceeds one pixel. Thus a limited capacity yields coarser representatives instead of a prefix of source splats. `none` skips tree construction and sends source Gaussians in source order up to the remaining shared capacity.
+`standard` uses Spark's Tiny tree builder. Parent Gaussians merge their children's centers, covariance, opacity, color and SH. Refinement replaces a parent with **all** its children when the pinned-plus-active union fits the shared capacity and weighted projected feature size exceeds one pixel. Thus a limited capacity yields complete coarser representatives instead of a prefix of source splats. The separately exported picking snapshot is independent of GPU residency and the draw cut.
 
 `snapshot` is optional and affects only data exported to the client. It exports a camera-independent, complete cut of the whole tree with at most `maxLeaves` frontier Gaussians, plus their ancestors, conservative subtree bounds and contiguous child ranges. `nodeCount` can exceed `maxLeaves`. Without this option the tree stays in the backend. `none`, empty clouds and clouds with no visible-opacity Gaussians have no snapshot.
 
@@ -123,15 +129,14 @@ The backend-only package entry is `3dgs-tile-webgpu/backend`. Its built WASM is 
 
 The sandbox defaults to the new worker backend and requests a snapshot with `maxLeaves: 25000`. `?backend=main` uses the same WASM on the main thread; `?cloud=/scene.sog` loads another cloud (`?ply=` remains a URL alias). Local-file selection accepts all supported formats. Spark's MIT notice is retained in `THIRD_PARTY_NOTICES.md` and `rust/vendor/spark-lib/LICENSE`.
 
-The debug panel reports worker selection, slot mapping, packing, batch-copy time,
-ACK wait, uploaded bytes/batches, and GPU layout version. ACK wait is transport
-pacing, not a GPU timestamp. Fetch/decode/tree construction remain synchronous
-per file in the worker; these changes bound render-buffer streaming, not format
-parsing or initial tree construction.
+The debug panel reports resident, active and pinned records, cache hits/misses,
+LRU evictions, selection/mapping/packing/batch-copy timings, ACK wait, transferred
+bytes/batches and GPU layout version. ACK wait measures transport pacing, rather
+than GPU execution. Fetch/decode/tree construction remain per-file worker operations.
 
 Run `node scripts/benchmark-backend.mjs` after rebuilding WASM to repeat the
-65,536-splat / 20-camera CPU microbenchmark. It reports timings and layout
-replacements without browser frame pacing. On the development container,
-median camera time changed from 46.7 ms to 21.1 ms and layout replacements from
-five to one. Confirm browser freeze behavior with another Chrome trace; these
-CPU measurements do not measure GPU execution.
+65,536-splat / 20-camera CPU microbenchmark. It includes WASM-to-JS copies and
+reports cache counters, attribute bytes, activation bytes and layout replacements;
+it excludes browser frame pacing and GPU execution. The residency implementation
+measured approximately 26 ms median camera time and one layout replacement on
+the development container. Use a browser trace to assess actual frame times.

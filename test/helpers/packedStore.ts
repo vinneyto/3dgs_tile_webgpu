@@ -94,6 +94,9 @@ export function packedStore(
       layoutVersion: ++version,
       contentVersion: version,
       count,
+      activeSlots: sources.some((source) => source.activeSlots)
+        ? new Uint32Array(Array.from({ length: count }, (_, i) => i)).buffer
+        : undefined,
       capacity,
       objectCapacity: sources.length,
       shDegree: degree,

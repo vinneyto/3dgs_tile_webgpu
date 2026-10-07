@@ -194,8 +194,8 @@ describe("streaming backend request protocol", () => {
     const final = [...port.responses]
       .reverse()
       .find((r) => r.command.id === "load" && r.isFinal)!;
-    expect(final.metrics?.uploadedBytes).toBe(5 * 56);
-    expect(final.metrics?.uploadBatches).toBe(4); // descriptor + three data batches
+    expect(final.metrics?.uploadedBytes).toBe(5 * 56 + 5 * 4);
+    expect(final.metrics?.uploadBatches).toBe(5); // descriptor + three data batches + activation
     scheduler.dispose();
   });
 

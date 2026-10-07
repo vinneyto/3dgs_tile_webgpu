@@ -173,7 +173,7 @@ fn sog_v1_v2_png_webp_explicit_and_autodetected() {
 fn none_uses_remaining_capacity_and_never_exports_a_tree() {
     let bytes = AntiSplatEncoder::new(source(0)).encode().unwrap();
     let mut e = Engine::new(Config::default()).unwrap();
-    handshake(&mut e, 32, 8).unwrap();
+    handshake(&mut e, 352, 8).unwrap();
     let first = load(
         &mut e,
         "first",
@@ -198,7 +198,7 @@ fn none_uses_remaining_capacity_and_never_exports_a_tree() {
     let mut replica = Replica::default();
     replica.receive(&second);
     assert_eq!((replica.active, replica.capacity), (2, 2));
-    let Payload::BuffersPatched { changed_clouds, .. } = second.last().unwrap() else {
+    let Payload::BuffersActivated { changed_clouds, .. } = second.last().unwrap() else {
         panic!()
     };
     assert_eq!(
@@ -247,7 +247,7 @@ fn snapshots_cover_the_whole_cloud_and_rebuild_after_writes() {
 fn rejected_load_and_handshake_do_not_mutate_scene() {
     let bytes = AntiSplatEncoder::new(source(0)).encode().unwrap();
     let mut e = Engine::new(Config::default()).unwrap();
-    handshake(&mut e, 16, 5).unwrap();
+    handshake(&mut e, 176, 5).unwrap();
     let invalid = json!({"attributes":[{"name":"custom","format":"f32","elementsPerGaussian":1,"source":{"kind":"fill","value":"zeros"}}]});
     assert!(load(&mut e, "same", &bytes, invalid).is_err());
     let out = load(&mut e, "same", &bytes, json!({"mipmaps":{"type":"none"}})).unwrap();
@@ -265,7 +265,7 @@ fn rejected_load_and_handshake_do_not_mutate_scene() {
 fn standard_renders_merged_parent_under_tight_capacity() {
     let bytes = AntiSplatEncoder::new(source(0)).encode().unwrap();
     let mut e = Engine::new(Config::default()).unwrap();
-    handshake(&mut e, 16, 8).unwrap();
+    handshake(&mut e, 176, 8).unwrap();
     let out = load(
         &mut e,
         "cloud",
@@ -283,13 +283,8 @@ fn standard_renders_merged_parent_under_tight_capacity() {
         &[],
     )
     .unwrap();
-    let Payload::BuffersPatched { patches, .. } = out.last().unwrap() else {
-        panic!()
-    };
-    let Data::F32(v) = &patches.iter().find(|p| p.name == "means").unwrap().data else {
-        panic!()
-    };
-    assert_eq!(v[0], -2.0);
+    replica.receive(&out);
+    assert_eq!(f32_attr(&replica.attributes, "means")[0], -2.0);
 }
 
 /// Mirror the frontend's full-capacity, sparse storage buffers. Active count
@@ -301,6 +296,9 @@ struct Replica {
     active: usize,
     layout: u32,
     content: u32,
+    active_slots: std::collections::BTreeSet<usize>,
+    pending_added: Vec<u32>,
+    pending_removed: Vec<u32>,
 }
 impl Replica {
     fn receive(&mut self, payloads: &[Payload]) {
@@ -332,6 +330,10 @@ impl Replica {
                         })
                         .collect();
                     self.capacity = *capacity;
+                    self.active = 0;
+                    self.active_slots.clear();
+                    self.pending_added.clear();
+                    self.pending_removed.clear();
                     self.layout = *layout_version;
                     self.content = *content_version;
                 }
@@ -339,6 +341,7 @@ impl Replica {
                     attributes,
                     capacity,
                     count,
+                    active_slots,
                     layout_version,
                     content_version,
                     ..
@@ -346,6 +349,7 @@ impl Replica {
                     self.attributes = attributes.clone();
                     self.capacity = *capacity;
                     self.active = *count;
+                    self.active_slots = active_slots.iter().map(|&s| s as usize).collect();
                     self.layout = *layout_version;
                     self.content = *content_version;
                 }
@@ -376,10 +380,44 @@ impl Replica {
                             _ => panic!(),
                         }
                     }
-                    self.active = changed_clouds.iter().map(|c| c.rendered_count).sum();
+                    if !changed_clouds.is_empty() {
+                        self.active = changed_clouds.iter().map(|c| c.rendered_count).sum();
+                    }
+                    self.content = *content_version;
+                }
+                Payload::BuffersActivated {
+                    added_slots,
+                    removed_slots,
+                    commit,
+                    changed_clouds,
+                    layout_version,
+                    base_content_version,
+                    content_version,
+                    ..
+                } => {
+                    assert_eq!(*layout_version, self.layout);
+                    assert_eq!(*base_content_version, self.content);
+                    self.pending_added.extend(added_slots);
+                    self.pending_removed.extend(removed_slots);
+                    if *commit {
+                        for slot in self.pending_removed.drain(..) {
+                            self.active_slots.remove(&(slot as usize));
+                        }
+                        for slot in self.pending_added.drain(..) {
+                            assert!((slot as usize) < self.capacity);
+                            self.active_slots.insert(slot as usize);
+                        }
+                        self.active = changed_clouds.iter().map(|c| c.rendered_count).sum();
+                        assert_eq!(self.active_slots.len(), self.active);
+                    }
                     self.content = *content_version;
                 }
                 _ => (),
+            }
+            if !self.attributes.is_empty() {
+                for &slot in &self.active_slots {
+                    assert!(f32_attr(&self.attributes, "means")[slot * 4 + 3] >= 0.);
+                }
             }
         }
     }
@@ -434,66 +472,72 @@ fn patch_slots(out: &[Payload]) -> std::collections::BTreeSet<usize> {
         .collect()
 }
 #[test]
-fn camera_slide_reuses_one_slot_and_keeps_shared_gaussians_in_place() {
-    let mut e = Engine::new(Config::default()).unwrap();
-    handshake(&mut e, 1600, 8).unwrap();
-    camera(&mut e, 1., 1.05);
-    let out = load(
-        &mut e,
-        "row",
-        &row_cloud(),
-        json!({"mipmaps":{"type":"standard"}}),
-    )
-    .unwrap();
-    let mut r = Replica::default();
-    r.receive(&out);
-    assert_eq!((r.active, r.capacity), (3, 4));
-    let (a, b, c) = (r.slot(0.), r.slot(1.), r.slot(2.));
-    let out = camera(&mut e, 2., 1.05);
-    assert!(!out
-        .iter()
-        .any(|p| matches!(p, Payload::BuffersReplaced { .. })));
-    assert_eq!(patch_slots(&out), std::collections::BTreeSet::from([a]));
-    r.receive(&out);
-    assert_eq!(r.slot(1.), b);
-    assert_eq!(r.slot(2.), c);
-    assert_eq!(r.slot(3.), a);
-    assert_eq!(r.occupied(), 3);
-    assert!(
-        camera(&mut e, 2.01, 1.05).is_empty(),
-        "Same selected nodes need no patches"
-    );
-}
-#[test]
-fn holes_are_cleared_and_surviving_high_slots_remain_visible() {
+fn camera_changes_keep_resident_details_and_revisit_without_attribute_uploads() {
     let mut e = Engine::new(Config::default()).unwrap();
     handshake(&mut e, 1600, 8).unwrap();
     camera(&mut e, 1., 1.05);
     let mut r = Replica::default();
     r.receive(&load(&mut e, "row", &row_cloud(), json!({})).unwrap());
-    let last = r.slot(2.);
-    let old_layout = r.layout;
-    let out = camera(&mut e, 2., 0.1);
-    r.receive(&out);
-    assert_eq!((r.active, r.capacity, r.occupied()), (1, 4, 1));
-    assert_eq!(r.slot(2.), last);
-    assert_eq!(r.layout, old_layout);
-    let scales = f32_attr(&r.attributes, "scalesOpacity");
-    for slot in 0..3 {
-        if slot != last {
-            assert_eq!(scales[slot * 4 + 3], 0.);
-            assert_eq!(f32_attr(&r.attributes, "means")[slot * 4 + 3], -1.);
-        }
-    }
-    assert_eq!(patch_slots(&out).len(), 2);
+    let capacity = r.capacity;
+    let initial_slots = r.active_slots.clone();
+    let layout = r.layout;
+    let resident = r.occupied();
+    let a = r.slot(1.);
+    r.receive(&camera(&mut e, 2., 1.05));
+    assert_eq!(r.slot(1.), a);
+    assert_eq!(r.capacity, capacity);
+    assert_eq!(r.layout, layout);
+    assert!(r.occupied() >= resident);
     let out = camera(&mut e, 20., 0.1);
     r.receive(&out);
-    assert_eq!((r.active, r.occupied()), (0, 0));
-    assert_eq!(patch_slots(&out).len(), 1);
+    assert!(r.active > 0, "Offscreen scene retains a coarse draw cut");
+    assert!(r.occupied() > r.active, "Inactive details remain resident");
+    assert!(patch_slots(&out).is_empty());
     let out = camera(&mut e, 1., 1.05);
+    assert!(
+        patch_slots(&out).is_empty(),
+        "Revisiting a cached cut uploads indices only"
+    );
     r.receive(&out);
-    assert_eq!((r.active, r.occupied(), r.capacity), (3, 3, 4));
+    assert_eq!(r.active_slots, initial_slots);
+    assert_eq!(r.slot(1.), a);
+    assert_eq!(e.timings.cache_misses, 0);
 }
+
+#[test]
+fn pressure_commits_resident_fallback_before_overwriting_active_slots() {
+    let mut e = Engine::new(
+        serde_json::from_value(json!({"streaming":{"maxUploadBytesPerUpdate":56}})).unwrap(),
+    )
+    .unwrap();
+    handshake(&mut e, 224, 8).unwrap();
+    camera(&mut e, 0., 0.1);
+    let mut r = Replica::default();
+    r.receive(&load(&mut e, "row", &row_cloud(), json!({})).unwrap());
+    let capacity = r.capacity;
+    let mut evictions = 0;
+    for x in [1., 2., 3., 4., 0., 2., 4.] {
+        let out = camera(&mut e, x, 0.1);
+        evictions += e.timings.evicted_gaussians;
+        for payload in out {
+            if let Payload::BuffersPatched { patches, .. } = &payload {
+                for p in patches {
+                    for slot in p.first_slot..p.first_slot + p.slot_count {
+                        assert!(
+                            !r.active_slots.contains(&slot),
+                            "Deactivate/coarsen before slot replacement"
+                        );
+                    }
+                }
+            }
+            r.receive(&[payload]);
+            assert!(r.active > 0);
+            assert!(r.occupied() <= capacity);
+        }
+    }
+    assert!(evictions > 0, "Fixture must exercise cache pressure");
+}
+
 #[test]
 fn none_source_writes_patch_only_modified_record_and_priority_keeps_other_cloud_slots() {
     let mut e = Engine::new(Config::default()).unwrap();
@@ -548,7 +592,8 @@ fn none_source_writes_patch_only_modified_record_and_priority_keeps_other_cloud_
         .unwrap(),
     );
     assert_eq!(r.slot(10.), old_slot);
-    assert_eq!((r.active, r.occupied()), (5, 5));
+    assert_eq!(r.active, 5);
+    assert!(r.occupied() >= r.active);
 }
 #[test]
 fn tree_rebuild_and_mode_switch_refresh_identity_and_all_attributes() {
@@ -559,7 +604,8 @@ fn tree_rebuild_and_mode_switch_refresh_identity_and_all_attributes() {
     r.receive(&load(&mut e,"row",&row_cloud(),json!({"attributes":[{"name":"tag","format":"u32","elementsPerGaussian":1,"source":{"kind":"buffer","data":[10,20,30,40,50]}}]})).unwrap());
     let out=apply(&mut e,json!({"type":"write-attribute-range","cloudId":"row","attribute":"means","firstGaussian":0,"gaussianCount":1,"data":[9.,0.,0.5,0.]}),&[]).unwrap();
     r.receive(&out);
-    assert_eq!((r.active, r.occupied()), (5, 5));
+    assert_eq!(r.active, 5);
+    assert!(r.occupied() >= r.active);
     let nine = r.slot(9.);
     let Data::U32(tags) = &r.attributes.iter().find(|a| a.name == "tag").unwrap().data else {
         panic!()
@@ -573,10 +619,12 @@ fn tree_rebuild_and_mode_switch_refresh_identity_and_all_attributes() {
         )
         .unwrap(),
     );
-    assert_eq!((r.active, r.occupied()), (5, 5));
+    assert_eq!(r.active, 5);
+    assert!(r.occupied() >= r.active);
     assert!(r.slot(9.) < r.capacity);
     r.receive(&apply(&mut e,json!({"type":"set-cloud-mipmaps","cloudId":"row","mipmaps":{"type":"standard","snapshot":{"maxLeaves":2}}}),&[]).unwrap());
-    assert_eq!((r.active, r.occupied()), (5, 5));
+    assert_eq!(r.active, 5);
+    assert!(r.occupied() >= r.active);
     let out=apply(&mut e,json!({"type":"set-cloud-mipmaps","cloudId":"row","mipmaps":{"type":"standard","snapshot":{"maxLeaves":4}}}),&[]).unwrap();
     assert!(patch_slots(&out).is_empty());
     assert!(!out
@@ -591,8 +639,9 @@ fn capacity_shrink_relocates_only_required_owners_and_nonpartial_frontend_gets_f
     let mut r = Replica::default();
     r.receive(&load(&mut e, "row", &row_cloud(), json!({})).unwrap());
     r.receive(&camera(&mut e, 2., 10.));
-    assert_eq!((r.active, r.capacity), (5, 5));
-    r.receive(&handshake(&mut e, 16, 8).unwrap());
+    assert_eq!(r.active, 5);
+    assert!(r.capacity >= r.active);
+    r.receive(&handshake(&mut e, 176, 8).unwrap());
     assert_eq!((r.capacity, r.active), (1, 1));
     assert!(r.occupied() <= 1);
     let m = glam::Mat4::IDENTITY.to_cols_array();
@@ -603,11 +652,12 @@ fn capacity_shrink_relocates_only_required_owners_and_nonpartial_frontend_gets_f
         .iter()
         .any(|p| matches!(p, Payload::BuffersReplaced { .. })));
     r.receive(&out);
-    assert_eq!(r.occupied(), r.active);
+    assert!(r.occupied() >= r.active);
+    assert_eq!(r.active_slots.len(), r.active);
 }
 
 #[test]
-fn initial_layout_streams_bounded_batches_and_capacity_reserve_absorbs_camera_growth() {
+fn initial_layout_streams_bounded_records_then_commits_activation() {
     let mut e = Engine::new(
         serde_json::from_value(json!({"streaming":{"maxUploadBytesPerUpdate":112}})).unwrap(),
     )
@@ -621,43 +671,111 @@ fn initial_layout_streams_bounded_batches_and_capacity_reserve_absorbs_camera_gr
     let initial = e.begin(command, &row_cloud()).unwrap();
     assert!(initial
         .iter()
-        .any(|p| matches!(p, Payload::BuffersAllocated { capacity: 4, .. })));
+        .any(|p| matches!(p, Payload::BuffersAllocated { .. })));
     assert!(!initial
         .iter()
         .any(|p| matches!(p, Payload::BuffersPatched { .. })));
     let mut replica = Replica::default();
     replica.receive(&initial);
-    assert_eq!(replica.occupied(), 0);
+    assert_eq!(replica.active, 0);
     let mut batches = 0;
     while let Some(payload) = e.next_payload() {
-        let Payload::BuffersPatched {
-            patches,
-            mipmap_pending,
-            ..
-        } = &payload
-        else {
-            panic!()
+        let bytes = match &payload {
+            Payload::BuffersPatched {
+                patches,
+                mipmap_pending,
+                ..
+            } => {
+                assert!(*mipmap_pending);
+                for patch in patches {
+                    for slot in patch.first_slot..patch.first_slot + patch.slot_count {
+                        assert!(
+                            !replica.active_slots.contains(&slot),
+                            "Active coarse cut is never overwritten by detail streaming"
+                        );
+                    }
+                }
+                patches
+                    .iter()
+                    .map(|p| match &p.data {
+                        Data::F32(v) => v.len() * 4,
+                        Data::U32(v) => v.len() * 4,
+                    })
+                    .sum()
+            }
+            Payload::BuffersActivated {
+                added_slots,
+                removed_slots,
+                ..
+            } => (added_slots.len() + removed_slots.len()) * 4,
+            _ => panic!(),
         };
-        let bytes: usize = patches
-            .iter()
-            .map(|p| match &p.data {
-                Data::F32(v) => v.len() * 4,
-                Data::U32(v) => v.len() * 4,
-            })
-            .sum();
         assert!(bytes <= 112);
-        if batches == 0 {
-            assert!(*mipmap_pending);
-        }
         replica.receive(&[payload]);
         batches += 1;
     }
-    assert_eq!(batches, 2);
-    assert_eq!(replica.occupied(), 3);
+    assert!(batches >= 3);
+    assert!(replica.active > 0);
     let layout = replica.layout;
+    let capacity = replica.capacity;
     replica.receive(&camera(&mut e, 1.5, 1.55));
-    assert_eq!(
-        (replica.active, replica.capacity, replica.layout),
-        (4, 4, layout)
+    assert_eq!((replica.capacity, replica.layout), (capacity, layout));
+}
+
+#[test]
+fn coarse_coverage_is_reserved_across_clouds_and_respects_combined_buffer_limit() {
+    let mut e = Engine::new(Config::default()).unwrap();
+    // Two object tables (320 bytes) plus two projected vec4 records (32 bytes).
+    handshake(&mut e, 352, 8).unwrap();
+    let bytes = AntiSplatEncoder::new(source(0)).encode().unwrap();
+    let mut replica = Replica::default();
+    replica.receive(&load(&mut e, "near", &bytes, json!({"priority":-10})).unwrap());
+    replica.receive(&load(&mut e, "far", &bytes, json!({"priority":10})).unwrap());
+    assert_eq!((replica.capacity, replica.active), (2, 2));
+    assert_eq!(e.timings.pinned_gaussians, 2);
+    let objects: std::collections::BTreeSet<_> = replica
+        .active_slots
+        .iter()
+        .map(|&slot| f32_attr(&replica.attributes, "means")[slot * 4 + 3] as u32)
+        .collect();
+    assert_eq!(objects, [0, 1].into_iter().collect());
+    replica.receive(&camera(&mut e, 100., 0.1));
+    assert_eq!(replica.active, 2);
+}
+
+#[test]
+fn layout_replacement_repopulates_inactive_cache_and_activates_coarse_before_details() {
+    let mut e = Engine::new(
+        serde_json::from_value(json!({"streaming":{"maxUploadBytesPerUpdate":56}})).unwrap(),
+    )
+    .unwrap();
+    handshake(&mut e, 1600, 8).unwrap();
+    camera(&mut e, 2., 10.);
+    let mut r = Replica::default();
+    r.receive(&load(&mut e, "row", &row_cloud(), json!({})).unwrap());
+    r.receive(&camera(&mut e, 100., 0.1));
+    assert!(r.occupied() > r.active);
+    let resident = r.occupied();
+    let old_slots: std::collections::BTreeSet<_> = (0..r.capacity)
+        .filter(|&slot| f32_attr(&r.attributes, "means")[slot * 4 + 3] == 0.)
+        .collect();
+    let out = load(&mut e, "other", &row_cloud(), json!({})).unwrap();
+    let first_activation = out
+        .iter()
+        .position(|p| matches!(p, Payload::BuffersActivated { commit: true, .. }))
+        .unwrap();
+    let last_patch = out
+        .iter()
+        .rposition(|p| matches!(p, Payload::BuffersPatched { .. }))
+        .unwrap();
+    assert!(first_activation < last_patch);
+    r.receive(&out);
+    assert!(r.occupied() >= resident);
+    let out = camera(&mut e, 2., 10.);
+    assert!(
+        patch_slots(&out).is_disjoint(&old_slots),
+        "Inactive cache survived the new object layout"
     );
+    r.receive(&out);
+    assert_eq!(r.active, 10);
 }

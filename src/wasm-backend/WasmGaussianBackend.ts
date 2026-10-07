@@ -162,6 +162,7 @@ export class WasmGaussianBackend implements GaussianBackend {
       };
       const deliver = async (payload: BackendPayload): Promise<void> => {
         const upload =
+          payload.type === "buffers-activated" ||
           payload.type === "buffers-patched" ||
           payload.type === "buffers-replaced" ||
           payload.type === "buffers-allocated";
@@ -176,6 +177,11 @@ export class WasmGaussianBackend implements GaussianBackend {
             (sum, item) => sum + item.data.byteLength,
             0,
           );
+          if (payload.type === "buffers-activated")
+            metrics.uploadedBytes +=
+              payload.addedSlots.byteLength + payload.removedSlots.byteLength;
+          else if (payload.type === "buffers-replaced")
+            metrics.uploadedBytes += payload.activeSlots?.byteLength ?? 0;
           metrics.uploadBatches += 1;
         }
         emit(payload);
