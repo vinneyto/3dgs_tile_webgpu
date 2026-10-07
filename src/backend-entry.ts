@@ -24,10 +24,13 @@ export type {
   FillAttributeSource,
 } from "./streaming-backend/AttributeInit";
 export type {
-  PackingStrategy,
-  MaximumPackingStrategy,
-  RadialPackingStrategy,
-  TieredRadialPackingStrategy,
-  DistanceAwareRadialPackingStrategy,
-} from "./streaming-backend/PackingStrategy";
+  MipmapConfig,
+  StandardMipmapConfig,
+  NoMipmapConfig,
+  MipmapSnapshotConfig,
+} from "./streaming-backend/MipmapConfig";
+export type { MipmapSnapshot } from "./streaming-backend/MipmapSnapshot";
+export type { MipmapAggregation } from "./streaming-backend/AttributeInit";
+export type { GaussianFileFormat } from "./streaming-backend/CloudLoadOptions";
+export { WasmGaussianBackend } from "./wasm-backend/WasmGaussianBackend";
 export { StreamingGaussianBackend } from "./streaming-backend-impl/StreamingGaussianBackend";

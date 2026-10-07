@@ -31,7 +31,7 @@ describe("GaussianLodColorHelper", () => {
     const original = pass.rasterColorNode;
     const helper = new GaussianLodColorHelper(pass);
 
-    expect(store.attributes.get("lodLevel")).toBe(helper.lodLevelAttribute);
+    expect(store.attributes.get("mipmapLevel")).toBe(helper.lodLevelAttribute);
     expect(pass.rasterColorNode).not.toBe(original);
 
     helper.enabled = false;

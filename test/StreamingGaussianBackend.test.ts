@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { PerspectiveCamera, type WebGPURenderer } from "three/webgpu";
 import {
   GaussianStore,
@@ -21,6 +21,9 @@ import {
   createSetFrontendCapabilitiesCommand,
   createWriteAttributeRangeCommand,
 } from "../src/streaming-backend/commands/createCommands";
+
+import { initializeTestWasm } from "./helpers/wasm";
+beforeAll(initializeTestWasm);
 
 const capabilities = {
   maxStorageBufferBindingSize: 128 * 1024 * 1024,
@@ -160,8 +163,7 @@ describe("streaming backend request protocol", () => {
 
   it("keeps the request open until the last streamed buffer patch", async () => {
     const backend = new StreamingGaussianBackend({
-      maxGaussians: "auto",
-      streamingLod: { maxUploadBytesPerUpdate: 48 },
+      streaming: { maxUploadBytesPerUpdate: 48 },
     });
     const scheduler = new SerialRequestScheduler(backend);
     const responses: BackendResponse[] = [];
@@ -199,7 +201,9 @@ describe("streaming backend request protocol", () => {
     await update;
     const stream = responses.filter(({ command }) => command.id === "write");
     expect(
-      stream.some(({ payload }) => payload?.type === "raycast-replaced"),
+      stream.some(
+        ({ payload }) => payload?.type === "mipmap-snapshot-replaced",
+      ),
     ).toBe(true);
     expect(
       stream.some(({ payload }) => payload?.type === "buffers-patched"),
@@ -214,7 +218,10 @@ describe("streaming backend request protocol", () => {
     const store = new GaussianStore(
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
-    const cloud = await store.loadBuffer(ply(0), { name: "first" });
+    const cloud = await store.loadBuffer(ply(0), {
+      name: "first",
+      mipmaps: { type: "standard", snapshot: { maxLeaves: 100 } },
+    });
     expect(port.commands.map(({ type }) => type)).toEqual([
       "load-cloud-from-buffer",
     ]);
@@ -438,11 +445,11 @@ describe("streaming backend request protocol", () => {
     const valid = scheduler.schedule(
       createSetCameraCommand("valid", 2, matrix, matrix),
     );
-    await expect(invalid).rejects.toThrow("sixteen numbers");
+    await expect(invalid).rejects.toThrow(/sixteen/);
     await expect(valid).resolves.toBe("done");
     expect(
       responses.find(({ command }) => command.id === "invalid")?.error?.code,
-    ).toBe("invalid-range");
+    ).toBe("backend-command-error");
     scheduler.dispose();
   });
 });

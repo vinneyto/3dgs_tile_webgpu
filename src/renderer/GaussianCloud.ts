@@ -2,6 +2,8 @@ import {
   Matrix4,
   Object3D,
   Ray,
+  Matrix3,
+  Vector3,
   type Intersection,
   type Raycaster,
 } from "three/webgpu";
@@ -19,8 +21,9 @@ export interface GaussianCloudOwner {
 export class GaussianCloud extends Object3D {
   readonly isGaussianCloud = true;
   readonly objectId: number;
-  /** Accumulated alpha required for a pointer hit. Must be in (0, 1). */
-  raycastAlphaThreshold = 0.5;
+  /** Ignore coarse snapshot Gaussians below this opacity. */
+  minRaycastOpacity = 0.2;
+  raycastable = true;
 
   private readonly ownerStore: GaussianCloudOwner;
   private packedGaussianCount: number;
@@ -70,7 +73,7 @@ export class GaussianCloud extends Object3D {
     this.priority = priority;
   }
 
-  /** Attach a transferable snapshot built by the data backend. Raycasts remain synchronous. */
+  /** Attach a coarse snapshot exported by the data backend. Raycasts remain synchronous. */
   setRaycastIndex(index: GaussianRaycastIndex | null): void {
     this.raycastIndex = index;
   }
@@ -79,12 +82,21 @@ export class GaussianCloud extends Object3D {
     return this.raycastIndex;
   }
 
-  /** Synchronous raycast against the complete source octree snapshot. */
+  /** Synchronous raycast against the coarse mipmap snapshot. */
   raycast(raycaster: Raycaster, intersections: Intersection[]): void {
-    if (this.raycastIndex === null) return;
+    if (!this.raycastable || this.raycastIndex === null) return;
     const inverseWorld = new Matrix4().copy(this.matrixWorld).invert();
     const localRay = new Ray().copy(raycaster.ray).applyMatrix4(inverseWorld);
-    const hit = this.raycastIndex.raycast(localRay, this.raycastAlphaThreshold);
+    const localScale = new Vector3()
+      .copy(raycaster.ray.direction)
+      .applyMatrix3(new Matrix3().setFromMatrix4(inverseWorld))
+      .length();
+    const hit = this.raycastIndex.raycast(
+      localRay,
+      this.minRaycastOpacity,
+      raycaster.near * localScale,
+      raycaster.far * localScale,
+    );
     if (hit !== null) {
       const point = hit.point.clone().applyMatrix4(this.matrixWorld);
       const distance = raycaster.ray.origin.distanceTo(point);

@@ -1,13 +1,13 @@
 import type { AttributeInit } from "./AttributeInit";
-import type { PackingStrategy } from "./PackingStrategy";
-
+import type { MipmapConfig } from "./MipmapConfig";
+export type GaussianFileFormat =
+  "auto" | "ply" | "splat" | "ksplat" | "spz" | "sog" | "rad";
 export interface CloudLoadOptions {
   name?: string;
   priority?: number;
-  packingStrategy?: PackingStrategy;
+  mipmaps?: MipmapConfig;
   attributes?: readonly AttributeInit[];
-  /** Defaults to true. The client receives a full source octree when enabled. */
-  raycastable?: boolean;
-  octree?: { leafCapacity?: number; maxDepth?: number };
-  lod?: { levels?: readonly { retention: number }[] };
+  format?: GaussianFileFormat;
+  /** Helps detect formats in buffers or URLs without an extension. */
+  fileName?: string;
 }

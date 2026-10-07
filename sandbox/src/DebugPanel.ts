@@ -7,7 +7,7 @@ import type {
   GaussianStorePackStats,
   GaussianStoreSlotRange,
   GaussianTileCapStats,
-  StreamingLodTargetStats,
+  GaussianMipmapSelectionStats,
 } from "../../src/index";
 import type { KernelTimingInspector } from "./KernelTimingInspector";
 
@@ -38,7 +38,7 @@ export class DebugPanel {
   private packCount = 0;
   private packingFocusDistance = 0;
   private packingPending = false;
-  private targetStats: StreamingLodTargetStats | null = null;
+  private targetStats: GaussianMipmapSelectionStats | null = null;
   private kernelScrollActiveUntil = -Infinity;
   private unsubscribePassDebug: (() => void) | null = null;
   private readonly handleKernelScroll = () => {
@@ -118,7 +118,7 @@ export class DebugPanel {
   private recordLodState(
     focusDistance: number,
     pending: boolean,
-    targetStats: StreamingLodTargetStats,
+    targetStats: GaussianMipmapSelectionStats,
   ): void {
     this.packingFocusDistance = focusDistance;
     this.packingPending = pending;
@@ -311,20 +311,20 @@ export class DebugPanel {
       target === null
         ? []
         : [
-            `LOD worker     plan ${formatMs(target.planningMs)}  round trip ${formatMs(target.roundTripMs)}`,
+            `Mipmap worker     plan ${formatMs(target.planningMs)}  round trip ${formatMs(target.roundTripMs)}`,
             `worker queue   ${target.pending ? "busy" : "idle"}  discarded ${formatInteger(target.discardedResults)}`,
           ];
     if (stats === null) {
       return target === null
-        ? ["LOD repack     waiting for camera movement"]
+        ? ["Mipmap repack     waiting for camera movement"]
         : [
-            `LOD stream     ${this.packingPending ? "pending" : "settled"}  camera distance ${this.packingFocusDistance.toFixed(2)} m`,
+            `Mipmap stream     ${this.packingPending ? "pending" : "settled"}  camera distance ${this.packingFocusDistance.toFixed(2)} m`,
             ...targetLines,
           ];
     }
     return [
-      `LOD repack     #${this.packCount}  CPU ${formatMs(this.packDurationMs)}  camera distance ${this.packingFocusDistance.toFixed(2)} m`,
-      `LOD stream     ${this.packingPending ? "pending" : "settled"}`,
+      `Mipmap repack     #${this.packCount}  CPU ${formatMs(this.packDurationMs)}  camera distance ${this.packingFocusDistance.toFixed(2)} m`,
+      `Mipmap stream     ${this.packingPending ? "pending" : "settled"}`,
       ...targetLines,
       `pack phases    plan ${formatMs(stats.planningMs)}  slots ${formatMs(stats.slotUpdateMs)}`,
       `slots          active ${formatInteger(stats.activeGaussians)} / ${formatInteger(stats.slotCapacity)}`,

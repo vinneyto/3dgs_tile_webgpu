@@ -5,15 +5,32 @@ import type {
   BackendFailure,
 } from "../streaming-backend/BackendResponse";
 
+export interface WorkerInitialize {
+  type: "initialize";
+  config: BackendConfig;
+}
+export interface WorkerDispatch {
+  type: "dispatch";
+  command: BackendCommand;
+}
+export interface WorkerAbort {
+  type: "abort";
+  commandId: string;
+}
+export interface WorkerDispose {
+  type: "dispose";
+}
 export type WorkerInbound =
-  | { type: "initialize"; config: BackendConfig }
-  | { type: "dispatch"; command: BackendCommand }
-  | { type: "abort"; commandId: string }
-  | { type: "dispose" };
-
-export type WorkerOutbound =
-  | { type: "response"; response: BackendResponse }
-  | { type: "failure"; failure: BackendFailure };
+  WorkerInitialize | WorkerDispatch | WorkerAbort | WorkerDispose;
+export interface WorkerResponse {
+  type: "response";
+  response: BackendResponse;
+}
+export interface WorkerFailure {
+  type: "failure";
+  failure: BackendFailure;
+}
+export type WorkerOutbound = WorkerResponse | WorkerFailure;
 
 /** Transfer only protocol-owned buffers, never an engine's internal storage. */
 export function transferBuffers(value: unknown): ArrayBuffer[] {

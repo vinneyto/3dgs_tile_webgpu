@@ -191,7 +191,7 @@ body[data-dragging="true"]::after {
   border-radius: 18px;
   color: #dce7ff;
   background: rgb(22 31 49 / 78%);
-  content: "Drop PLY to load";
+  content: "Drop cloud to load";
   font-size: 20px;
   pointer-events: none;
 }

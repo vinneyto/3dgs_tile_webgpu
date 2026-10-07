@@ -1,10 +1,9 @@
-import type { PackingStrategy } from "./PackingStrategy";
-/** Backend policy independent of the rendering device. */
+import type { MipmapConfig } from "./MipmapConfig";
+export interface BackendStreamingConfig {
+    maxUploadBytesPerUpdate?: number;
+}
+/** Device-independent configuration. Buffer capacity comes from capabilities. */
 export interface BackendConfig {
-    maxGaussians?: number | "auto";
-    defaultPackingStrategy?: PackingStrategy;
-    streamingLod?: {
-        maxUploadBytesPerUpdate?: number;
-        maxChangedCellsPerUpdate?: number;
-    };
+    defaultMipmaps?: MipmapConfig;
+    streaming?: BackendStreamingConfig;
 }

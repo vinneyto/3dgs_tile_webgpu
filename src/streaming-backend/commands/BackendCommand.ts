@@ -2,9 +2,8 @@ import type { LoadCloudCommand } from "./LoadCloudCommand";
 import type { LoadCloudFromBufferCommand } from "./LoadCloudFromBufferCommand";
 import type { UnloadCloudCommand } from "./UnloadCloudCommand";
 import type { SetCloudPriorityCommand } from "./SetCloudPriorityCommand";
-import type { SetCloudPackingCommand } from "./SetCloudPackingCommand";
+import type { SetCloudMipmapsCommand } from "./SetCloudMipmapsCommand";
 import type { SetCloudTransformCommand } from "./SetCloudTransformCommand";
-import type { SetCloudRaycastableCommand } from "./SetCloudRaycastableCommand";
 import type { WriteAttributeRangeCommand } from "./WriteAttributeRangeCommand";
 import type { SetCameraCommand } from "./SetCameraCommand";
 import type { SetFrontendCapabilitiesCommand } from "./SetFrontendCapabilitiesCommand";
@@ -14,9 +13,8 @@ export type BackendCommand =
   | LoadCloudFromBufferCommand
   | UnloadCloudCommand
   | SetCloudPriorityCommand
-  | SetCloudPackingCommand
+  | SetCloudMipmapsCommand
   | SetCloudTransformCommand
-  | SetCloudRaycastableCommand
   | WriteAttributeRangeCommand
   | SetCameraCommand
   | SetFrontendCapabilitiesCommand;

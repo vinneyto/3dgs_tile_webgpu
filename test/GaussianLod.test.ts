@@ -3,17 +3,12 @@ import {
   Object3D,
   PerspectiveCamera,
   Ray,
-  Raycaster,
   StorageBufferAttribute,
   Vector3,
 } from "three/webgpu";
 
-import { GaussianCloud } from "../src/renderer/GaussianCloud";
 import { GaussianData } from "../src/renderer/GaussianData";
 import { GaussianLod } from "../src/streaming-backend-impl/GaussianLod";
-import type { GaussianStore } from "../src/renderer/GaussianStore";
-import { GaussianRaycastIndex } from "../src/renderer/GaussianRaycastIndex";
-import { createRaycastSnapshot } from "../src/streaming-backend-impl/createRaycastSnapshot";
 import {
   DistanceAwareRadialLodPackingStrategy,
   MaximumLodPackingStrategy,
@@ -142,52 +137,6 @@ describe("GaussianLod", () => {
         packing,
       ),
     ).toThrow(/leaf nodes/);
-  });
-
-  it("raycasts the client snapshot of the full octree", () => {
-    const octree = GaussianOctree.build(
-      gaussianData(
-        [
-          [-1, 0, 0],
-          [1, 0, 0],
-        ],
-        [1, 1],
-      ),
-      { leafCapacity: 1 },
-    );
-    const cloud = new GaussianCloud({} as GaussianStore, 0, 2, "test");
-    cloud.setRaycastIndex(
-      new GaussianRaycastIndex(createRaycastSnapshot(octree)),
-    );
-    cloud.updateMatrixWorld(true);
-    const intersections: Parameters<GaussianCloud["raycast"]>[1] = [];
-
-    cloud.raycast(
-      new Raycaster(new Vector3(0, 0, 2), new Vector3(0, 0, -1)),
-      intersections,
-    );
-
-    expect(intersections).toHaveLength(1);
-    expect(intersections[0]!.index).toBe(1);
-  });
-
-  it("does not pick a ray whose accumulated alpha stays below the threshold", () => {
-    const octree = GaussianOctree.build(
-      gaussianData([[0, 0, 0]], [0.1], [0.1]),
-    );
-    const cloud = new GaussianCloud({} as GaussianStore, 0, 1, "test");
-    cloud.setRaycastIndex(
-      new GaussianRaycastIndex(createRaycastSnapshot(octree)),
-    );
-    cloud.updateMatrixWorld(true);
-    const intersections: Parameters<GaussianCloud["raycast"]>[1] = [];
-
-    cloud.raycast(
-      new Raycaster(new Vector3(0, 0, 2), new Vector3(0, 0, -1)),
-      intersections,
-    );
-
-    expect(intersections).toHaveLength(0);
   });
 
   it("packs maximum detail and respects a radial object budget", () => {

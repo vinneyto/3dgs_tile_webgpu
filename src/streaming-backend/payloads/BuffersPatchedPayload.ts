@@ -8,5 +8,5 @@ export interface BuffersPatchedPayload {
   contentVersion: number;
   patches: readonly PackedAttributePatch[];
   changedClouds: readonly CloudRenderState[];
-  lodPending: boolean;
+  mipmapPending: boolean;
 }

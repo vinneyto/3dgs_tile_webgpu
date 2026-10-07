@@ -6,4 +6,6 @@ export interface SetCameraCommand extends Command<"set-camera"> {
   worldMatrix: readonly number[];
   /** Column-major 4x4 projection transform, with exactly sixteen elements. */
   projectionMatrix: readonly number[];
+  viewportWidth: number;
+  viewportHeight: number;
 }

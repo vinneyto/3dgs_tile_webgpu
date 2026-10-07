@@ -1,6 +1,12 @@
 import type { GaussianCloud } from "./GaussianCloud";
 import type { SlotRange } from "./utils/slotRanges";
-import type { StreamingLodTargetStats } from "../streaming-backend-impl/lod-packing";
+
+export interface GaussianMipmapSelectionStats {
+  readonly planningMs: number;
+  readonly roundTripMs: number;
+  readonly discardedResults: number;
+  readonly pending: boolean;
+}
 
 export type GaussianStoreSlotRange = SlotRange;
 export interface GaussianStorePackStats {
@@ -21,7 +27,7 @@ export interface GaussianStoreCloudLodUpdate {
   readonly focusDistance: number;
   readonly applied: boolean;
   readonly pending: boolean;
-  readonly targetStats: StreamingLodTargetStats;
+  readonly targetStats: GaussianMipmapSelectionStats;
 }
 export interface GaussianStoreLodUpdate {
   readonly appliedBatches: number;

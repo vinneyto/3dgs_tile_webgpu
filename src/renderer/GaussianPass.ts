@@ -453,6 +453,8 @@ export class GaussianPass extends PassNode {
     this.gaussianStore.setFrontendCapabilities(
       frontendCapabilities(device),
       this.camera,
+      width,
+      height,
     );
     if (this.pipelineDevice !== null && this.pipelineDevice !== device) {
       this.pipeline?.dispose();

@@ -1,4 +1,4 @@
-import { StreamingGaussianBackend } from "../streaming-backend-impl/StreamingGaussianBackend";
+import { WasmGaussianBackend } from "../wasm-backend/WasmGaussianBackend";
 import type { WorkerInbound, WorkerOutbound } from "./WorkerMessages";
 import { transferBuffers } from "./WorkerMessages";
 
@@ -6,12 +6,12 @@ const scope = globalThis as unknown as {
   onmessage: ((message: MessageEvent<WorkerInbound>) => void) | null;
   postMessage(message: WorkerOutbound, transfer?: Transferable[]): void;
 };
-let backend: StreamingGaussianBackend | null = null;
+let backend: WasmGaussianBackend | null = null;
 scope.onmessage = ({ data }) => {
   try {
     if (data.type === "initialize") {
       if (backend) throw new Error("Streaming backend already initialized");
-      backend = new StreamingGaussianBackend(data.config);
+      backend = new WasmGaussianBackend(data.config);
       backend.subscribe((response) => {
         scope.postMessage(
           { type: "response", response },

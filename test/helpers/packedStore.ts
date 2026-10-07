@@ -124,7 +124,7 @@ export function packedStore(
           data: sh.buffer,
         },
         {
-          name: "lodLevel",
+          name: "mipmapLevel",
           format: "u32",
           elementsPerGaussian: 1,
           data: new Uint32Array(capacity).buffer,
@@ -144,7 +144,7 @@ export function packedStore(
       current = command;
       if (command.type === "set-frontend-capabilities") {
         configured = true;
-        emit({ type: "capabilities-accepted", protocolVersion: 1 });
+        emit({ type: "capabilities-accepted", protocolVersion: 2 });
         publishReplacement();
       } else if (command.type === "load-cloud-from-buffer") {
         const objectId = sources.length;
@@ -154,6 +154,7 @@ export function packedStore(
         pendingReplacement = true;
         emit({
           type: "cloud-loaded",
+          sourceVersion: 1,
           cloudId: command.cloudId,
           objectId,
           sourceCount: source.count,
