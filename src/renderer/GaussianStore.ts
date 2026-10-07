@@ -13,7 +13,7 @@ import type {
   GaussianStorePackStats,
 } from "./GaussianStoreTypes";
 import { GaussianRaycastIndex } from "./GaussianRaycastIndex";
-import { markSlotRangesUpdated } from "./utils/slotRanges";
+import { markSlotRangesUpdated, mergeSlotRanges } from "./utils/slotRanges";
 import {
   GaussianStoreAttributes,
   enableGaussianStoreAttribute,
@@ -677,6 +677,10 @@ export class GaussianStore implements GaussianRenderStore {
     this.packedLayoutVersion = event.layoutVersion;
     this.packedVersion = event.contentVersion;
     this.pendingLod = false;
+    const occupied: number[] = [];
+    if (this.data)
+      for (let slot = 0; slot < event.capacity; slot++)
+        if (this.data.means.array[slot * 4 + 3]! >= 0) occupied.push(slot);
     this.packStats = {
       fullRebuild: true,
       slotCapacity: event.capacity,
@@ -688,7 +692,7 @@ export class GaussianStore implements GaussianRenderStore {
         (sum, item) => sum + item.data.byteLength,
         0,
       ),
-      writtenSlotRanges: event.count ? [{ start: 0, count: event.count }] : [],
+      writtenSlotRanges: mergeSlotRanges(occupied, 0, 0),
       clearedSlotRanges: [],
       planningMs: 0,
       slotUpdateMs: 0,
@@ -748,19 +752,24 @@ export class GaussianStore implements GaussianRenderStore {
       (sum, state) => sum + state.renderedCount,
       0,
     );
+    const means = this.data?.means.array as Float32Array | undefined;
+    const written: number[] = [];
+    const cleared: number[] = [];
+    for (const slot of touched)
+      (means && means[slot * 4 + 3]! < 0 ? cleared : written).push(slot);
     this.packStats = {
       fullRebuild: false,
       slotCapacity: this.capacity,
       activeGaussians: active,
-      reusedSlots: Math.max(0, active - touched.size),
-      writtenSlots: touched.size,
-      clearedSlots: 0,
+      reusedSlots: Math.max(0, active - written.length),
+      writtenSlots: written.length,
+      clearedSlots: cleared.length,
       estimatedUploadBytes: event.patches.reduce(
         (sum, item) => sum + item.data.byteLength,
         0,
       ),
-      writtenSlotRanges: ranges,
-      clearedSlotRanges: [],
+      writtenSlotRanges: mergeSlotRanges(written, 0, 0),
+      clearedSlotRanges: mergeSlotRanges(cleared, 0, 0),
       planningMs: 0,
       slotUpdateMs: 0,
     };

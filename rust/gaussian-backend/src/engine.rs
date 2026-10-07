@@ -1,6 +1,7 @@
 use crate::{
     model::{render_scale_opacity, splat_bounds, union, ExtraAttribute, MipmapArray},
     protocol::*,
+    slot_mapping::{GaussianKey, SlotMapping},
 };
 use anyhow::{bail, ensure, Context, Result};
 use glam::{Mat4, Vec3, Vec3A};
@@ -11,7 +12,7 @@ use spark_lib::{
     tiny_lod,
     tsplat::{Tsplat, TsplatArray, TsplatMut},
 };
-use std::collections::{BTreeMap, BTreeSet, BinaryHeap};
+use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap};
 
 const RESERVED: [&str; 5] = [
     "means",
@@ -35,6 +36,7 @@ struct Cloud {
     world: Mat4,
     source_version: u32,
     snapshot_version: u32,
+    generation: u32,
 }
 
 fn validate_mipmaps(config: &MipmapConfig) -> Result<()> {
@@ -377,7 +379,12 @@ impl Cloud {
     }
 }
 
-#[derive(Clone)]
+struct SelectedGaussian {
+    key: GaussianKey,
+    version: u32,
+    level: u32,
+}
+
 struct Packed {
     capacity: usize,
     count: usize,
@@ -385,6 +392,8 @@ struct Packed {
     object_capacity: u32,
     attributes: Vec<Attribute>,
     clouds: Vec<CloudState>,
+    slots: SlotMapping,
+    versions: Vec<u32>,
 }
 
 pub struct Engine {
@@ -461,6 +470,7 @@ impl Engine {
                     world: Mat4::IDENTITY,
                     source_version: 1,
                     snapshot_version: 1,
+                    generation: 1,
                 };
                 output.push(Payload::CloudLoaded {
                     cloud_id: c.cloud_id.clone(),
@@ -489,6 +499,8 @@ impl Engine {
             Command::Mipmaps(c) => {
                 let cloud = self.clouds.get_mut(&c.cloud_id).context("Unknown cloud")?;
                 validate_mipmaps(&c.mipmaps)?;
+                let mode_changed = matches!(cloud.mipmaps, MipmapConfig::None)
+                    != matches!(c.mipmaps, MipmapConfig::None);
                 if matches!(c.mipmaps, MipmapConfig::None) {
                     cloud.tree = None;
                     cloud.tree_bounds.clear();
@@ -498,6 +510,9 @@ impl Engine {
                     cloud.tree_depths = tree.as_ref().map(depths).unwrap_or_default();
                     cloud.tree = tree;
                     cloud.tree_bounds = bounds;
+                }
+                if mode_changed {
+                    cloud.generation += 1;
                 }
                 cloud.mipmaps = c.mipmaps;
                 cloud.snapshot_version += 1;
@@ -558,6 +573,9 @@ impl Engine {
             Command::Write(c) => {
                 let cloud = self.clouds.get_mut(&c.cloud_id).context("Unknown cloud")?;
                 write(cloud, &c)?;
+                if !matches!(cloud.mipmaps, MipmapConfig::None) {
+                    cloud.generation += 1;
+                }
                 cloud.source_version += 1;
                 cloud.snapshot_version += 1;
                 output.push(cloud.snapshot_payload(&c.cloud_id));
@@ -623,9 +641,7 @@ impl Engine {
         ensure!(budget > 0, "Frontend buffer limits are too small");
         Ok((degree, extra, budget))
     }
-    fn compute(&self) -> Result<Packed> {
-        let cap = self.capabilities.as_ref().unwrap();
-        let (degree, extra, budget) = self.validate_layout(cap, None)?;
+    fn select(&self, budget: usize) -> (Vec<SelectedGaussian>, Vec<CloudState>) {
         let mut ordered: Vec<_> = self.clouds.iter().collect();
         ordered.sort_by_key(|(_, c)| (c.priority, c.object_id));
         let mut remaining = budget;
@@ -674,9 +690,23 @@ impl Engine {
                 object_id: cloud.object_id,
                 rendered_count: indices.len(),
             });
-            selections.push((cloud, indices));
+            selections.extend(indices.into_iter().map(|node_id| SelectedGaussian {
+                key: GaussianKey {
+                    cloud_id: cloud.object_id,
+                    generation: cloud.generation,
+                    node_id,
+                },
+                version: cloud.source_version,
+                level: cloud.tree_depths.get(node_id).copied().unwrap_or(0),
+            }));
         }
-        let count = budget - remaining;
+        (selections, states)
+    }
+    fn pack(&mut self) -> Result<Vec<Payload>> {
+        let cap = self.capabilities.as_ref().unwrap();
+        let (degree, extra, budget) = self.validate_layout(cap, None)?;
+        let (selected, states) = self.select(budget);
+        let count = selected.len();
         let capacity = count
             .max(
                 self.packed
@@ -685,170 +715,220 @@ impl Engine {
                     .unwrap_or(0),
             )
             .max(1);
-        let mut attributes = empty_attributes(degree, &extra, capacity);
-        let mut slot = 0;
-        for (cloud, indices) in selections {
-            let (source, extra) = if let Some(tree) = &cloud.tree {
-                (&tree.inner, &tree.extras)
-            } else {
-                (&cloud.source, &cloud.extras)
-            };
-            let levels = &cloud.tree_depths;
-            let selection: Vec<_> = indices
-                .iter()
-                .map(|&i| (i, levels.get(i).copied().unwrap_or(0)))
-                .collect();
-            let packed = attributes_for(
-                source,
-                extra,
-                &selection,
-                cloud.object_id,
-                degree,
-                indices.len(),
-            );
-            for target in &mut attributes {
-                if let Some(a) = packed.iter().find(|a| a.name == target.name) {
-                    let first = slot * target.elements_per_gaussian;
-                    match (&mut target.data, &a.data) {
-                        (Data::F32(t), Data::F32(s)) => {
-                            t[first..first + s.len()].copy_from_slice(s)
-                        }
-                        (Data::U32(t), Data::U32(s)) => {
-                            t[first..first + s.len()].copy_from_slice(s)
-                        }
-                        _ => unreachable!(),
-                    }
-                }
-            }
-            slot += indices.len();
-        }
-        Ok(Packed {
-            capacity,
-            count,
-            degree,
-            object_capacity: self
-                .clouds
-                .values()
-                .map(|c| c.object_id + 1)
-                .max()
-                .unwrap_or(0),
-            attributes,
-            clouds: states,
-        })
-    }
-    fn pack(&mut self) -> Result<Vec<Payload>> {
-        let next = self.compute()?;
-        let old = self.packed.as_ref();
-        let compatible = old
+        let object_capacity = self
+            .clouds
+            .values()
+            .map(|c| c.object_id + 1)
+            .max()
+            .unwrap_or(0);
+        let schema = empty_attributes(degree, &extra, 0);
+        let compatible = self
+            .packed
+            .as_ref()
             .map(|old| {
-                old.capacity == next.capacity
-                    && old.degree == next.degree
-                    && old.object_capacity == next.object_capacity
-                    && old.attributes.len() == next.attributes.len()
-                    && old.attributes.iter().zip(&next.attributes).all(|(a, b)| {
+                old.capacity == capacity
+                    && old.degree == degree
+                    && old.object_capacity == object_capacity
+                    && old.attributes.len() == schema.len()
+                    && old.attributes.iter().zip(&schema).all(|(a, b)| {
                         a.name == b.name
                             && a.format == b.format
                             && a.elements_per_gaussian == b.elements_per_gaussian
                     })
             })
             .unwrap_or(false);
-        if compatible
-            && old
-                .unwrap()
-                .attributes
-                .iter()
-                .zip(&next.attributes)
-                .all(|(a, b)| a.data.same(&b.data))
-            && old.unwrap().clouds == next.clouds
-        {
-            return Ok(Vec::new());
+        let packed = self.packed.get_or_insert_with(|| Packed {
+            capacity,
+            count: 0,
+            degree,
+            object_capacity,
+            attributes: Vec::new(),
+            clouds: Vec::new(),
+            slots: SlotMapping::default(),
+            versions: Vec::new(),
+        });
+        let keys: Vec<_> = selected.iter().map(|s| s.key).collect();
+        let changes = packed.slots.reconcile(capacity, &keys);
+        packed.versions.resize(capacity, 0);
+        for &slot in &changes.assigned {
+            packed.versions[slot] = 0;
         }
-        let mut out = Vec::new();
-        if !compatible
-            || !self
-                .capabilities
-                .as_ref()
-                .unwrap()
-                .supports_partial_buffer_updates
-        {
-            self.layout_version += 1;
-            self.content_version += 1;
-            out.push(Payload::BuffersReplaced {
-                scene_revision: self.scene_revision,
-                layout_version: self.layout_version,
-                content_version: self.content_version,
-                count: next.count,
-                capacity: next.capacity,
-                object_capacity: next.object_capacity,
-                sh_degree: next.degree,
-                sh_format: "rgb8e8".into(),
-                attributes: next.attributes.clone(),
-                clouds: next.clouds.clone(),
-            });
-        } else {
-            let old = old.unwrap();
-            // Each slot patch includes every attribute. No frame observes a
-            // new center paired with an old rotation/SH/custom attribute.
-            let bytes_per_slot: usize = next
-                .attributes
+        let states_changed = packed.clouds != states;
+        if !compatible {
+            packed.attributes = empty_attributes(degree, &extra, capacity);
+            packed.versions.fill(0);
+        }
+        let dirty: Vec<_> = selected
+            .iter()
+            .filter_map(|s| {
+                let slot = packed.slots.to_slot[&s.key];
+                (packed.versions[slot] != s.version).then_some((s, slot))
+            })
+            .collect();
+        // Capture only candidate slots. Retained, unchanged Gaussians are never
+        // repacked, copied or byte-compared on camera updates.
+        let mut previous = BTreeMap::new();
+        if compatible {
+            for slot in changes
+                .cleared
                 .iter()
-                .map(|a| a.elements_per_gaussian * 4)
-                .sum();
-            let max_bytes = self
-                .config
-                .streaming
-                .as_ref()
-                .and_then(|s| s.max_upload_bytes_per_update)
-                .unwrap_or(1024 * 1024);
-            let batch = (max_bytes / bytes_per_slot).max(1);
-            let mut changed = Vec::new();
-            for slot in 0..next.capacity {
-                if old.attributes.iter().zip(&next.attributes).any(|(a, b)| {
-                    let w = a.elements_per_gaussian;
-                    !a.data.range_same(&b.data, slot * w, (slot + 1) * w)
-                }) {
-                    changed.push(slot);
-                }
-            }
-            if changed.is_empty() {
-                changed.push(0);
-            }
-            let groups: Vec<_> = changed.chunks(batch).collect();
-            for (i, group) in groups.iter().enumerate() {
-                let mut patches = Vec::new();
-                let mut at = 0;
-                while at < group.len() {
-                    let first = group[at];
-                    let mut end = at + 1;
-                    while end < group.len() && group[end] == group[end - 1] + 1 {
-                        end += 1;
-                    }
-                    let count = end - at;
-                    for a in &next.attributes {
-                        let w = a.elements_per_gaussian;
-                        patches.push(Patch {
-                            name: a.name.clone(),
-                            first_slot: first,
-                            slot_count: count,
-                            data: a.data.slice(first * w, (first + count) * w),
-                        });
-                    }
-                    at = end;
-                }
-                let base = self.content_version;
-                self.content_version += 1;
-                out.push(Payload::BuffersPatched {
-                    scene_revision: self.scene_revision,
-                    layout_version: self.layout_version,
-                    base_content_version: base,
-                    content_version: self.content_version,
-                    patches,
-                    changed_clouds: next.clouds.clone(),
-                    mipmap_pending: i + 1 < groups.len(),
+                .copied()
+                .chain(dirty.iter().map(|(_, slot)| *slot))
+            {
+                previous.entry(slot).or_insert_with(|| {
+                    packed
+                        .attributes
+                        .iter()
+                        .map(|a| {
+                            let w = a.elements_per_gaussian;
+                            a.data.slice(slot * w, (slot + 1) * w)
+                        })
+                        .collect::<Vec<_>>()
                 });
             }
         }
-        self.packed = Some(next);
+        for &slot in &changes.cleared {
+            for a in &mut packed.attributes {
+                let w = a.elements_per_gaussian;
+                match &mut a.data {
+                    Data::F32(v) => {
+                        v[slot * w..(slot + 1) * w].fill(0.0);
+                        if a.name == "means" {
+                            v[slot * w + 3] = -1.0;
+                        }
+                    }
+                    Data::U32(v) => v[slot * w..(slot + 1) * w].fill(0),
+                }
+            }
+        }
+        let clouds: HashMap<_, _> = self.clouds.values().map(|c| (c.object_id, c)).collect();
+        let mut by_cloud: BTreeMap<u32, Vec<_>> = BTreeMap::new();
+        for &(s, slot) in &dirty {
+            by_cloud.entry(s.key.cloud_id).or_default().push((s, slot));
+        }
+        for (id, entries) in by_cloud {
+            let cloud = clouds[&id];
+            let (source, extras) = cloud
+                .tree
+                .as_ref()
+                .map(|tree| (&tree.inner, &tree.extras))
+                .unwrap_or((&cloud.source, &cloud.extras));
+            let selection: Vec<_> = entries
+                .iter()
+                .map(|(s, _)| (s.key.node_id, s.level))
+                .collect();
+            let data = attributes_for(source, extras, &selection, id, degree, entries.len());
+            for target in &mut packed.attributes {
+                if let Some(a) = data.iter().find(|a| a.name == target.name) {
+                    let w = target.elements_per_gaussian;
+                    for (row, (_, slot)) in entries.iter().enumerate() {
+                        match (&mut target.data, &a.data) {
+                            (Data::F32(t), Data::F32(v)) => t[slot * w..(slot + 1) * w]
+                                .copy_from_slice(&v[row * w..(row + 1) * w]),
+                            (Data::U32(t), Data::U32(v)) => t[slot * w..(slot + 1) * w]
+                                .copy_from_slice(&v[row * w..(row + 1) * w]),
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+            for &(s, slot) in &entries {
+                packed.versions[slot] = s.version;
+            }
+        }
+        let changed: Vec<_> = previous
+            .into_iter()
+            .filter_map(|(slot, values)| {
+                values
+                    .iter()
+                    .zip(&packed.attributes)
+                    .any(|(old, a)| {
+                        let w = a.elements_per_gaussian;
+                        match (old, &a.data) {
+                            (Data::F32(o), Data::F32(n)) => o[..] != n[slot * w..(slot + 1) * w],
+                            (Data::U32(o), Data::U32(n)) => o[..] != n[slot * w..(slot + 1) * w],
+                            _ => true,
+                        }
+                    })
+                    .then_some(slot)
+            })
+            .collect();
+        packed.count = count;
+        packed.capacity = capacity;
+        packed.degree = degree;
+        packed.object_capacity = object_capacity;
+        packed.clouds = states;
+        if compatible && changed.is_empty() && !states_changed {
+            return Ok(Vec::new());
+        }
+        if !compatible || !cap.supports_partial_buffer_updates {
+            self.layout_version += 1;
+            self.content_version += 1;
+            return Ok(vec![Payload::BuffersReplaced {
+                scene_revision: self.scene_revision,
+                layout_version: self.layout_version,
+                content_version: self.content_version,
+                count,
+                capacity,
+                object_capacity,
+                sh_degree: degree,
+                sh_format: "rgb8e8".into(),
+                attributes: packed.attributes.clone(),
+                clouds: packed.clouds.clone(),
+            }]);
+        }
+        let bytes_per_slot: usize = packed
+            .attributes
+            .iter()
+            .map(|a| a.elements_per_gaussian * 4)
+            .sum();
+        let max_bytes = self
+            .config
+            .streaming
+            .as_ref()
+            .and_then(|s| s.max_upload_bytes_per_update)
+            .unwrap_or(1024 * 1024);
+        let batch = (max_bytes / bytes_per_slot).max(1);
+        // A metadata-only change needs a versioned response, without fake data.
+        let groups: Vec<&[usize]> = if changed.is_empty() {
+            vec![&[]]
+        } else {
+            changed.chunks(batch).collect()
+        };
+        let mut out = Vec::new();
+        for (i, group) in groups.iter().enumerate() {
+            let mut patches = Vec::new();
+            let mut at = 0;
+            while at < group.len() {
+                let first = group[at];
+                let mut end = at + 1;
+                while end < group.len() && group[end] == group[end - 1] + 1 {
+                    end += 1;
+                }
+                let count = end - at;
+                for a in &packed.attributes {
+                    let w = a.elements_per_gaussian;
+                    patches.push(Patch {
+                        name: a.name.clone(),
+                        first_slot: first,
+                        slot_count: count,
+                        data: a.data.slice(first * w, (first + count) * w),
+                    });
+                }
+                at = end;
+            }
+            let base = self.content_version;
+            self.content_version += 1;
+            out.push(Payload::BuffersPatched {
+                scene_revision: self.scene_revision,
+                layout_version: self.layout_version,
+                base_content_version: base,
+                content_version: self.content_version,
+                patches,
+                changed_clouds: packed.clouds.clone(),
+                mipmap_pending: i + 1 < groups.len(),
+            });
+        }
         Ok(out)
     }
 }
@@ -888,7 +968,15 @@ fn empty_attributes(
             format: format.into(),
             elements_per_gaussian: width,
             data: if format == "f32" {
-                Data::F32(vec![0.0; count * width])
+                Data::F32({
+                    let mut values = vec![0.0; count * width];
+                    if name == "means" {
+                        for record in values.chunks_mut(4) {
+                            record[3] = -1.0;
+                        }
+                    }
+                    values
+                })
             } else {
                 Data::U32(vec![0; count * width])
             },

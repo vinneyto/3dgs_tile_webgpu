@@ -10,6 +10,7 @@ import {
 } from "three/webgpu";
 import {
   context,
+  float,
   perspectiveDepthToViewZ,
   texture,
   uniform,
@@ -38,6 +39,16 @@ import { ProfileDiagnosticsStage } from "../src/renderer/pipeline/ProfileDiagnos
 import { TileRasterizer } from "../src/renderer/pipeline/TileRasterizer";
 
 describe("generated Gaussian WGSL", () => {
+  it("rejects sparse holes before object reads even with an opacity override", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.gaussianOpacityNode = float(1);
+    const source = buildPipeline(nodes).projectionSource;
+    const guard = source.match(/if \( \( [^\n]+\.w < 0\.0 \) \) \{\s+return;/);
+    expect(guard).not.toBeNull();
+    const objectId = source.indexOf("u32(", guard!.index);
+    expect(objectId).toBeGreaterThan(guard!.index!);
+  });
+
   it("builds projection and raster TSL shells into compute shaders", () => {
     const data = oneGaussian();
     const { store } = packedStore(data);

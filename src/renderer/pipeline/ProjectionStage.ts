@@ -222,6 +222,11 @@ export class ProjectionStage {
       projectedMean.element(gid).assign(vec4(0));
 
       const meanObject = means.element(gid);
+      // Sparse backend slots use a negative object id for unoccupied records.
+      // Reject them before object-buffer access or user material overrides.
+      If(meanObject.w.lessThan(0), () => {
+        Return();
+      });
       const sourceLocal = meanObject.xyz;
       const objectId = uint(meanObject.w);
       const sourceScaleOpacity = scalesOpacity.element(gid);

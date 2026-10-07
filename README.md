@@ -19,6 +19,10 @@ Loads can finish before `GaussianPass` exists. The pass subsequently sends its f
 
 The backend emits complete buffers when the layout changes, otherwise versioned partial patches. A request remains open until its final response; every patch batch includes all attributes for its changed slots. `streaming.maxUploadBytesPerUpdate` controls batch size, rounded up to at least one complete slot. The serial scheduler coalesces pending camera/transform updates. An active network fetch can be aborted. Rust computations are synchronous inside the worker and cannot be interrupted by an abort message while they execute.
 
+Rust keeps a stable `(cloud object ID, tree generation, node ID) → GPU slot` map, reverse owners and a free-slot stack. Camera changes select a new tree cut, retain slots for surviving nodes, release departed nodes and assign free slots to newcomers. Only newly assigned or source-modified records are packed and compared; unchanged records are not copied. Rebuilding a tree increments its generation so reused node IDs cannot alias old records. Source edits in `none` retain their source-index identities. Changing snapshot resolution alone does not invalidate GPU slots.
+
+Buffers may contain holes: `count` reports occupied slots, while `capacity` and the arrays cover the entire slot range. Unoccupied records have `means.w = -1` and zero opacity. Projection rejects them before object-buffer reads or material opacity overrides; active records keep a nonnegative object ID. Clients must not truncate arrays or dispatch to the occupied count. A cleared slot and its immediate reuse are sent as one final record. Patches group contiguous changed slots with `firstSlot`, `slotCount` and attribute bytes; a metadata-only update has an empty patch list. Layout changes, including capacity or SH/schema changes, require full buffers, but surviving slots remain stable wherever the new capacity allows. Frontends without partial-update support receive complete buffers.
+
 ## Install and render
 
 ```bash

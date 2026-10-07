@@ -6,6 +6,7 @@ export interface BuffersPatchedPayload {
   layoutVersion: number;
   baseContentVersion: number;
   contentVersion: number;
+  /** Complete records for changed slots; empty for metadata-only updates. */
   patches: readonly PackedAttributePatch[];
   changedClouds: readonly CloudRenderState[];
   mipmapPending: boolean;

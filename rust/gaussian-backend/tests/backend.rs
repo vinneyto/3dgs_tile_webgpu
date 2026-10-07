@@ -300,3 +300,288 @@ fn standard_renders_merged_parent_under_tight_capacity() {
     };
     assert_eq!(v[0], -2.0);
 }
+
+/// Mirror the frontend's full-capacity, sparse storage buffers. Active count
+/// must never be interpreted as the length of an occupied prefix.
+#[derive(Default)]
+struct Replica {
+    attributes: Vec<Attribute>,
+    capacity: usize,
+    active: usize,
+    layout: u32,
+    content: u32,
+}
+impl Replica {
+    fn receive(&mut self, payloads: &[Payload]) {
+        for payload in payloads {
+            match payload {
+                Payload::BuffersReplaced {
+                    attributes,
+                    capacity,
+                    count,
+                    layout_version,
+                    content_version,
+                    ..
+                } => {
+                    self.attributes = attributes.clone();
+                    self.capacity = *capacity;
+                    self.active = *count;
+                    self.layout = *layout_version;
+                    self.content = *content_version;
+                }
+                Payload::BuffersPatched {
+                    patches,
+                    layout_version,
+                    base_content_version,
+                    content_version,
+                    changed_clouds,
+                    ..
+                } => {
+                    assert_eq!(*layout_version, self.layout);
+                    assert_eq!(*base_content_version, self.content);
+                    for p in patches {
+                        let a = self
+                            .attributes
+                            .iter_mut()
+                            .find(|a| a.name == p.name)
+                            .unwrap();
+                        let first = p.first_slot * a.elements_per_gaussian;
+                        match (&mut a.data, &p.data) {
+                            (Data::F32(t), Data::F32(v)) => {
+                                t[first..first + v.len()].copy_from_slice(v)
+                            }
+                            (Data::U32(t), Data::U32(v)) => {
+                                t[first..first + v.len()].copy_from_slice(v)
+                            }
+                            _ => panic!(),
+                        }
+                    }
+                    self.active = changed_clouds.iter().map(|c| c.rendered_count).sum();
+                    self.content = *content_version;
+                }
+                _ => (),
+            }
+        }
+    }
+    fn slot(&self, x: f32) -> usize {
+        let means = f32_attr(&self.attributes, "means");
+        let scales = f32_attr(&self.attributes, "scalesOpacity");
+        (0..self.capacity)
+            .find(|&i| scales[i * 4 + 3] > 0.0 && (means[i * 4] - x).abs() < 0.01)
+            .unwrap()
+    }
+    fn occupied(&self) -> usize {
+        f32_attr(&self.attributes, "scalesOpacity")
+            .chunks(4)
+            .filter(|v| v[3] > 0.0)
+            .count()
+    }
+}
+fn row_cloud() -> Vec<u8> {
+    let mut a = GsplatArray::new_capacity(5, 0);
+    for x in 0..5 {
+        a.push_splat(
+            Gsplat::new(
+                Vec3A::new(x as f32, 0., 0.5),
+                1.,
+                Vec3A::splat(0.5),
+                Vec3A::splat(0.02),
+                Quat::IDENTITY,
+            ),
+            None,
+            None,
+            None,
+        );
+    }
+    AntiSplatEncoder::new(a).encode().unwrap()
+}
+fn camera(e: &mut Engine, x: f32, half_width: f32) -> Vec<Payload> {
+    let mut world = glam::Mat4::IDENTITY;
+    world.w_axis.x = x;
+    let mut projection = glam::Mat4::IDENTITY;
+    projection.x_axis.x = 1.0 / half_width;
+    apply(e,json!({"type":"set-camera","sceneRevision":2,"worldMatrix":world.to_cols_array(),"projectionMatrix":projection.to_cols_array(),"viewportWidth":1024,"viewportHeight":1024}),&[]).unwrap()
+}
+fn patch_slots(out: &[Payload]) -> std::collections::BTreeSet<usize> {
+    out.iter()
+        .flat_map(|p| match p {
+            Payload::BuffersPatched { patches, .. } => patches
+                .iter()
+                .flat_map(|p| p.first_slot..p.first_slot + p.slot_count)
+                .collect(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+#[test]
+fn camera_slide_reuses_one_slot_and_keeps_shared_gaussians_in_place() {
+    let mut e = Engine::new(Config::default()).unwrap();
+    handshake(&mut e, 1600, 8).unwrap();
+    camera(&mut e, 1., 1.05);
+    let out = load(
+        &mut e,
+        "row",
+        &row_cloud(),
+        json!({"mipmaps":{"type":"standard"}}),
+    )
+    .unwrap();
+    let mut r = Replica::default();
+    r.receive(&out);
+    assert_eq!((r.active, r.capacity), (3, 3));
+    let (a, b, c) = (r.slot(0.), r.slot(1.), r.slot(2.));
+    let out = camera(&mut e, 2., 1.05);
+    assert!(!out
+        .iter()
+        .any(|p| matches!(p, Payload::BuffersReplaced { .. })));
+    assert_eq!(patch_slots(&out), std::collections::BTreeSet::from([a]));
+    r.receive(&out);
+    assert_eq!(r.slot(1.), b);
+    assert_eq!(r.slot(2.), c);
+    assert_eq!(r.slot(3.), a);
+    assert_eq!(r.occupied(), 3);
+    assert!(
+        camera(&mut e, 2.01, 1.05).is_empty(),
+        "Same selected nodes need no patches"
+    );
+}
+#[test]
+fn holes_are_cleared_and_surviving_high_slots_remain_visible() {
+    let mut e = Engine::new(Config::default()).unwrap();
+    handshake(&mut e, 1600, 8).unwrap();
+    camera(&mut e, 1., 1.05);
+    let mut r = Replica::default();
+    r.receive(&load(&mut e, "row", &row_cloud(), json!({})).unwrap());
+    let last = r.slot(2.);
+    let old_layout = r.layout;
+    let out = camera(&mut e, 2., 0.1);
+    r.receive(&out);
+    assert_eq!((r.active, r.capacity, r.occupied()), (1, 3, 1));
+    assert_eq!(r.slot(2.), last);
+    assert_eq!(r.layout, old_layout);
+    let scales = f32_attr(&r.attributes, "scalesOpacity");
+    for slot in 0..3 {
+        if slot != last {
+            assert_eq!(scales[slot * 4 + 3], 0.);
+            assert_eq!(f32_attr(&r.attributes, "means")[slot * 4 + 3], -1.);
+        }
+    }
+    assert_eq!(patch_slots(&out).len(), 2);
+    let out = camera(&mut e, 20., 0.1);
+    r.receive(&out);
+    assert_eq!((r.active, r.occupied()), (0, 0));
+    assert_eq!(patch_slots(&out).len(), 1);
+    let out = camera(&mut e, 1., 1.05);
+    r.receive(&out);
+    assert_eq!((r.active, r.occupied(), r.capacity), (3, 3, 3));
+}
+#[test]
+fn none_source_writes_patch_only_modified_record_and_priority_keeps_other_cloud_slots() {
+    let mut e = Engine::new(Config::default()).unwrap();
+    handshake(&mut e, 1600, 8).unwrap();
+    let mut r = Replica::default();
+    r.receive(
+        &load(
+            &mut e,
+            "row",
+            &row_cloud(),
+            json!({"mipmaps":{"type":"none"}}),
+        )
+        .unwrap(),
+    );
+    let before: Vec<_> = (0..5).map(|x| r.slot(x as f32)).collect();
+    let out=apply(&mut e,json!({"type":"write-attribute-range","cloudId":"row","attribute":"means","firstGaussian":2,"gaussianCount":1,"data":[10.,0.,0.5,0.]}),&[]).unwrap();
+    assert_eq!(
+        patch_slots(&out),
+        std::collections::BTreeSet::from([before[2]])
+    );
+    r.receive(&out);
+    assert_eq!(r.slot(10.), before[2]);
+    for x in [0, 1, 3, 4] {
+        assert_eq!(r.slot(x as f32), before[x]);
+    }
+    let out = load(
+        &mut e,
+        "other",
+        &KsplatEncoder::new(source(1)).encode().unwrap(),
+        json!({"format":"ksplat","mipmaps":{"type":"none"}}),
+    )
+    .unwrap();
+    r.receive(&out);
+    for x in [0, 1, 3, 4] {
+        assert_eq!(r.slot(x as f32), before[x]);
+    }
+    let out = apply(
+        &mut e,
+        json!({"type":"set-cloud-priority","cloudId":"other","priority":-10}),
+        &[],
+    )
+    .unwrap();
+    assert!(patch_slots(&out).is_empty());
+    r.receive(&out);
+    let old_slot = r.slot(10.);
+    r.receive(
+        &apply(
+            &mut e,
+            json!({"type":"unload-cloud","cloudId":"other"}),
+            &[],
+        )
+        .unwrap(),
+    );
+    assert_eq!(r.slot(10.), old_slot);
+    assert_eq!((r.active, r.occupied()), (5, 5));
+}
+#[test]
+fn tree_rebuild_and_mode_switch_refresh_identity_and_all_attributes() {
+    let mut e = Engine::new(Config::default()).unwrap();
+    handshake(&mut e, 1600, 8).unwrap();
+    camera(&mut e, 2., 10.);
+    let mut r = Replica::default();
+    r.receive(&load(&mut e,"row",&row_cloud(),json!({"attributes":[{"name":"tag","format":"u32","elementsPerGaussian":1,"source":{"kind":"buffer","data":[10,20,30,40,50]}}]})).unwrap());
+    let out=apply(&mut e,json!({"type":"write-attribute-range","cloudId":"row","attribute":"means","firstGaussian":0,"gaussianCount":1,"data":[9.,0.,0.5,0.]}),&[]).unwrap();
+    r.receive(&out);
+    assert_eq!((r.active, r.occupied()), (5, 5));
+    let nine = r.slot(9.);
+    let Data::U32(tags) = &r.attributes.iter().find(|a| a.name == "tag").unwrap().data else {
+        panic!()
+    };
+    assert_eq!(tags[nine], 10);
+    r.receive(
+        &apply(
+            &mut e,
+            json!({"type":"set-cloud-mipmaps","cloudId":"row","mipmaps":{"type":"none"}}),
+            &[],
+        )
+        .unwrap(),
+    );
+    assert_eq!((r.active, r.occupied()), (5, 5));
+    assert!(r.slot(9.) < r.capacity);
+    r.receive(&apply(&mut e,json!({"type":"set-cloud-mipmaps","cloudId":"row","mipmaps":{"type":"standard","snapshot":{"maxLeaves":2}}}),&[]).unwrap());
+    assert_eq!((r.active, r.occupied()), (5, 5));
+    let out=apply(&mut e,json!({"type":"set-cloud-mipmaps","cloudId":"row","mipmaps":{"type":"standard","snapshot":{"maxLeaves":4}}}),&[]).unwrap();
+    assert!(patch_slots(&out).is_empty());
+    assert!(!out
+        .iter()
+        .any(|p| matches!(p, Payload::BuffersReplaced { .. })));
+}
+#[test]
+fn capacity_shrink_relocates_only_required_owners_and_nonpartial_frontend_gets_full_data() {
+    let mut e = Engine::new(Config::default()).unwrap();
+    handshake(&mut e, 1600, 8).unwrap();
+    camera(&mut e, 2., 0.1);
+    let mut r = Replica::default();
+    r.receive(&load(&mut e, "row", &row_cloud(), json!({})).unwrap());
+    r.receive(&camera(&mut e, 2., 10.));
+    assert_eq!((r.active, r.capacity), (5, 5));
+    r.receive(&handshake(&mut e, 16, 8).unwrap());
+    assert_eq!((r.capacity, r.active), (1, 1));
+    assert!(r.occupied() <= 1);
+    let m = glam::Mat4::IDENTITY.to_cols_array();
+    let out=apply(&mut e,json!({"type":"set-frontend-capabilities","protocolVersion":2,"capabilities":{"maxBufferSize":1600,"maxStorageBufferBindingSize":1600,"maxStorageBuffersPerShaderStage":8,"supportsPartialBufferUpdates":false},"sceneRevision":3,"cameraWorldMatrix":m,"projectionMatrix":m,"viewportWidth":1024,"viewportHeight":1024,"cloudTransforms":[]}),&[]).unwrap();
+    r.receive(&out);
+    let out = camera(&mut e, 3., 0.1);
+    assert!(out
+        .iter()
+        .any(|p| matches!(p, Payload::BuffersReplaced { .. })));
+    r.receive(&out);
+    assert_eq!(r.occupied(), r.active);
+}
