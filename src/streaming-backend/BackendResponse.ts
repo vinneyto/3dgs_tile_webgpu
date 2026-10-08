@@ -19,6 +19,8 @@ export interface BackendMetrics {
   cacheHits: number;
   cacheMisses: number;
   evictedGaussians: number;
+  /** More tree nodes can be loaded into currently unused slots. */
+  prefetchPending?: boolean;
 }
 
 export interface BackendResponse {

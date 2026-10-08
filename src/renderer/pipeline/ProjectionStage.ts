@@ -62,6 +62,10 @@ import {
   decodeActiveSlot,
   encodeActiveSlot,
 } from "./activeSlots";
+import {
+  compactScaleOpacityWGSL,
+  compactRotationWGSL,
+} from "../kernels/compactGaussians";
 import { TILE_SIZE, WORKGROUP_SIZE } from "./constants";
 import type { FrameUniforms } from "./FrameUniforms";
 import { OBJECT_FRAME_VEC4S, type ObjectFrameState } from "./ObjectFrameState";
@@ -240,10 +244,16 @@ export class ProjectionStage {
     const means = storage(data.means, "vec4", data.count).toReadOnly();
     const scalesOpacity = storage(
       data.scalesOpacity,
-      "vec4",
+      data.geometryFormat === "compact" ? "uvec2" : "vec4",
       data.count,
     ).toReadOnly();
-    const rotations = storage(data.rotations, "vec4", data.count).toReadOnly();
+    const rotations = storage(
+      data.rotations,
+      data.geometryFormat === "compact" ? "uint" : "vec4",
+      data.count,
+    ).toReadOnly();
+    const decodeScaleOpacity = wgslFn<any>(compactScaleOpacityWGSL);
+    const decodeRotation = wgslFn<any>(compactRotationWGSL);
     const shCoefficients =
       data.shFormat === "rgb8e8"
         ? storage(
@@ -303,10 +313,22 @@ export class ProjectionStage {
       });
       const sourceLocal = meanObject.xyz;
       const objectId = uint(meanObject.w);
-      const sourceScaleOpacity = scalesOpacity.element(sourceSlot);
+      const sourceScaleOpacity =
+        data.geometryFormat === "compact"
+          ? (
+              decodeScaleOpacity({
+                packed: scalesOpacity.element(sourceSlot),
+              }) as any
+            ).toVar("gaussianShape")
+          : scalesOpacity.element(sourceSlot);
       const sourceScale = sourceScaleOpacity.xyz;
       const sourceOpacity = sourceScaleOpacity.w;
-      const sourceRotation = rotations.element(sourceSlot);
+      const sourceRotation =
+        data.geometryFormat === "compact"
+          ? (
+              decodeRotation({ packed: rotations.element(sourceSlot) }) as any
+            ).toVar("gaussianQuaternion")
+          : rotations.element(sourceSlot);
       const objectBase = uint(data.count).add(
         objectId.mul(uint(OBJECT_FRAME_VEC4S)),
       );

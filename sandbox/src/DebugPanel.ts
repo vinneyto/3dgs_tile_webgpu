@@ -327,7 +327,7 @@ export class DebugPanel {
       ? [
           `worker CPU     compute ${formatMs(worker.computeMs)}  select ${formatMs(worker.selectionMs)}  map ${formatMs(worker.slotMappingMs)}  pack ${formatMs(worker.packingMs)}`,
           `GPU residency  ${formatInteger(worker.residentGaussians)} resident  ${formatInteger(worker.activeGaussians)} active  ${formatInteger(worker.pinnedGaussians)} pinned`,
-          `GPU cache      hits ${formatInteger(worker.cacheHits)}  misses ${formatInteger(worker.cacheMisses)}  evicted ${formatInteger(worker.evictedGaussians)}`,
+          `GPU cache      hits ${formatInteger(worker.cacheHits)}  misses ${formatInteger(worker.cacheMisses)}  evicted ${formatInteger(worker.evictedGaussians)}  ${worker.prefetchPending ? "warming" : "ready"}`,
           `worker stream  copy ${formatMs(worker.streamCopyMs)}  ACK wait ${formatMs(worker.uploadWaitMs)}  ${formatInteger(worker.uploadBatches)} batches / ${formatBytes(worker.uploadedBytes)}`,
         ]
       : [];

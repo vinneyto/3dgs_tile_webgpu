@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { GaussianStore } from "../src/renderer/GaussianStore";
 import { WasmGaussianBackend } from "../src/wasm-backend/WasmGaussianBackend";
 import type { BackendResponse } from "../src/streaming-backend/BackendResponse";
@@ -44,6 +44,16 @@ describe("stable WASM GPU slots", () => {
           1024,
           1024,
         ),
+      );
+      await vi.waitFor(() =>
+        expect(
+          responses.some(
+            (r) =>
+              r.command.type === "prefetch-cache" &&
+              r.isFinal &&
+              r.metrics?.residentGaussians === store.maxGaussians,
+          ),
+        ).toBe(true),
       );
       const data = store.getPackedData();
       const capacity = store.maxGaussians;

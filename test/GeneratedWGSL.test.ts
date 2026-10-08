@@ -42,6 +42,43 @@ import { ProfileDiagnosticsStage } from "../src/renderer/pipeline/ProfileDiagnos
 import { TileRasterizer } from "../src/renderer/pipeline/TileRasterizer";
 
 describe("generated Gaussian WGSL", () => {
+  it("decodes compact geometry with seven shape words and no shader-f16 feature", () => {
+    const data = new GaussianData(
+      {
+        means: new StorageBufferAttribute(new Float32Array([1, 2, 3, 0]), 4),
+        scalesOpacity: new StorageBufferAttribute(new Uint32Array(2), 2),
+        rotations: new StorageBufferAttribute(new Uint32Array(1), 1),
+        shCoefficients: new StorageBufferAttribute(new Uint32Array(1), 1),
+      },
+      {
+        count: 1,
+        geometryFormat: "compact",
+        shFormat: "rgb8e8",
+        activeSlots: new Uint32Array([0]),
+      },
+    );
+    const camera = new PerspectiveCamera();
+    const store = { clouds: [], objectCapacity: 1 } as any;
+    const frame = new FrameUniforms(camera, [0, 0, 0, 0]);
+    const objects = new ObjectFrameState(camera, store, 1);
+    const projection = new ProjectionStage(
+      data,
+      frame,
+      objects,
+      "compensated",
+      createDefaultGaussianNodeSlots(),
+    );
+    const shader = buildCompute((projection as any).computeNode);
+    expect(shader).toContain("unpack2x16float");
+    expect(shader).toContain("decodeCompactRotation");
+    expect(shader).toContain("vec2<u32>");
+    expect(shader).not.toContain("enable f16");
+    expect(shader.match(/var<storage/g)?.length).toBeLessThanOrEqual(8);
+    projection.dispose();
+    objects.dispose();
+    data.dispose();
+  });
+
   it("rejects sparse holes before object reads even with an opacity override", () => {
     const nodes = createDefaultGaussianNodeSlots();
     nodes.gaussianOpacityNode = float(1);

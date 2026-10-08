@@ -4,4 +4,6 @@ export interface FrontendCapabilities {
     maxBufferSize: number;
     maxStorageBuffersPerShaderStage: number;
     supportsPartialBufferUpdates: boolean;
+    /** Decode fp16 log scales/opacity and Spark oct101012 rotations on the GPU. */
+    supportsCompactGaussians?: boolean;
 }

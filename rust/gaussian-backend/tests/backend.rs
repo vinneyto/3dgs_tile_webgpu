@@ -429,9 +429,9 @@ impl Replica {
             .unwrap()
     }
     fn occupied(&self) -> usize {
-        f32_attr(&self.attributes, "scalesOpacity")
+        f32_attr(&self.attributes, "means")
             .chunks(4)
-            .filter(|v| v[3] > 0.0)
+            .filter(|v| v[3] >= 0.0)
             .count()
     }
 }
@@ -778,4 +778,187 @@ fn layout_replacement_repopulates_inactive_cache_and_activates_coarse_before_det
     );
     r.receive(&out);
     assert_eq!(r.active, 10);
+}
+
+fn compact_handshake(e: &mut Engine, limit: usize) {
+    let m = [
+        1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,
+    ];
+    let mut projection = m;
+    projection[0] = 0.1;
+    projection[5] = 0.1;
+    apply(e, json!({"type":"set-frontend-capabilities","protocolVersion":2,"capabilities":{"maxBufferSize":limit,"maxStorageBufferBindingSize":limit,"maxStorageBuffersPerShaderStage":8,"supportsPartialBufferUpdates":true,"supportsCompactGaussians":true},"sceneRevision":1,"cameraWorldMatrix":m,"projectionMatrix":projection,"viewportWidth":1024,"viewportHeight":1024,"cloudTransforms":[]}), &[]).unwrap();
+}
+fn u32_attr<'a>(attrs: &'a [Attribute], name: &str) -> &'a [u32] {
+    match &attrs.iter().find(|a| a.name == name).unwrap().data {
+        Data::U32(v) => v,
+        _ => panic!(),
+    }
+}
+#[test]
+fn compact_geometry_matches_spark_ext_precision_and_keeps_float32_snapshot() {
+    let mut source = GsplatArray::new();
+    for (position, scale, quat) in [
+        (
+            Vec3A::new(123456.75, -0.000123, 32.5),
+            Vec3A::new(1e-8, 1.234, 1e5),
+            Quat::from_rotation_y(2.4),
+        ),
+        (Vec3A::new(-2., 0., 0.), Vec3A::splat(0.2), Quat::IDENTITY),
+    ] {
+        source.push_splat(
+            Gsplat::new(position, 0.73, Vec3A::splat(0.5), scale, quat),
+            None,
+            None,
+            None,
+        );
+    }
+    let bytes = AntiSplatEncoder::new(source).encode().unwrap();
+    let mut plain = Engine::new(Config::default()).unwrap();
+    handshake(&mut plain, 10000, 8).unwrap();
+    let mut compact = Engine::new(Config::default()).unwrap();
+    compact_handshake(&mut compact, 10000);
+    let mut p = Replica::default();
+    p.receive(&load(&mut plain, "x", &bytes, json!({"mipmaps":{"type":"none"}})).unwrap());
+    let mut c = Replica::default();
+    c.receive(
+        &load(
+            &mut compact,
+            "x",
+            &bytes,
+            json!({"mipmaps":{"type":"none"}}),
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        f32_attr(&p.attributes, "means"),
+        f32_attr(&c.attributes, "means")
+    );
+    assert_eq!(
+        u32_attr(&p.attributes, "shCoefficients"),
+        u32_attr(&c.attributes, "shCoefficients")
+    );
+    let shape = u32_attr(&c.attributes, "scalesOpacity");
+    let rotations = u32_attr(&c.attributes, "rotations");
+    assert_eq!(shape.len(), c.capacity * 2);
+    assert_eq!(rotations.len(), c.capacity);
+    for &slot in &c.active_slots {
+        let x = shape[slot * 2];
+        let y = shape[slot * 2 + 1];
+        let ext = [
+            0,
+            (x & 0xffff) << 16,
+            (x >> 16) | ((y & 0xffff) << 16),
+            rotations[slot],
+        ];
+        let decoded_scale = spark_lib::splat_encode::decode_ext_splat_scale(&ext);
+        for (axis, value) in decoded_scale.iter().enumerate() {
+            let expected = f32_attr(&p.attributes, "scalesOpacity")[slot * 4 + axis];
+            assert!((value / expected - 1.0).abs() < 0.01);
+        }
+        let opacity = spark_lib::splat_encode::decode_ext_splat_opacity(&[0, 0, 0, y >> 16]);
+        assert!((opacity - f32_attr(&p.attributes, "scalesOpacity")[slot * 4 + 3]).abs() < 0.001);
+        let decoded = Quat::from_array(spark_lib::splat_encode::decode_quat_oct101012(
+            rotations[slot],
+        ));
+        let expected = Quat::from_array(
+            f32_attr(&p.attributes, "rotations")[slot * 4..slot * 4 + 4]
+                .try_into()
+                .unwrap(),
+        );
+        assert!(decoded.dot(expected).abs() > 0.99999);
+    }
+    let out = load(
+        &mut compact,
+        "tree",
+        &bytes,
+        json!({"mipmaps":{"type":"standard","snapshot":{"maxLeaves":2}}}),
+    )
+    .unwrap();
+    let snap = snapshot(&out);
+    assert_eq!(
+        snap.attributes
+            .iter()
+            .find(|a| a.name == "scalesOpacity")
+            .unwrap()
+            .format,
+        "f32"
+    );
+}
+#[test]
+fn prefetch_fills_tree_in_bounded_batches_without_changing_the_draw_cut() {
+    let mut e = Engine::new(
+        serde_json::from_value(json!({"streaming":{"maxUploadBytesPerUpdate":96}})).unwrap(),
+    )
+    .unwrap();
+    compact_handshake(&mut e, 10000);
+    camera(&mut e, 100., 0.1);
+    let mut r = Replica::default();
+    r.receive(&load(&mut e, "row", &row_cloud(), json!({})).unwrap());
+    let active = r.active_slots.clone();
+    let layout = r.layout;
+    assert!(r.occupied() < r.capacity);
+    for _ in 0..1000 {
+        let out = apply(&mut e, json!({"type":"prefetch-cache"}), &[]).unwrap();
+        for p in &out {
+            match p {
+                Payload::BuffersPatched {
+                    patches,
+                    mipmap_pending,
+                    ..
+                } => {
+                    assert!(!mipmap_pending);
+                    let bytes: usize = patches
+                        .iter()
+                        .map(|p| match &p.data {
+                            Data::F32(v) => v.len() * 4,
+                            Data::U32(v) => v.len() * 4,
+                        })
+                        .sum();
+                    assert!(bytes <= 96);
+                    assert!(patch_slots(&out).is_disjoint(&active));
+                }
+                _ => panic!("Prefetch must not activate slots or replace the layout"),
+            }
+        }
+        r.receive(&out);
+        assert_eq!(r.active_slots, active);
+        assert_eq!(r.layout, layout);
+        if !e.timings.prefetch_pending {
+            break;
+        }
+    }
+    assert_eq!(r.occupied(), r.capacity);
+    for (x, projection) in [(2., 10.), (8., 10.), (100., 0.1), (-2., 10.)] {
+        let out = camera(&mut e, x, projection);
+        assert!(patch_slots(&out).is_empty());
+        assert_eq!(e.timings.cache_misses, 0);
+        assert_eq!(e.timings.evicted_gaussians, 0);
+        r.receive(&out);
+        assert_eq!(r.layout, layout);
+    }
+}
+#[test]
+fn prefetch_stops_at_capacity_and_never_evicts_a_resident_node() {
+    let mut e = Engine::new(Config::default()).unwrap();
+    compact_handshake(&mut e, 352);
+    camera(&mut e, 100., 0.1);
+    let mut r = Replica::default();
+    r.receive(&load(&mut e, "row", &row_cloud(), json!({})).unwrap());
+    let old: std::collections::BTreeSet<_> = (0..r.capacity)
+        .filter(|&slot| f32_attr(&r.attributes, "means")[slot * 4 + 3] >= 0.)
+        .collect();
+    for _ in 0..100 {
+        let out = apply(&mut e, json!({"type":"prefetch-cache"}), &[]).unwrap();
+        assert!(patch_slots(&out).is_disjoint(&old));
+        assert_eq!(e.timings.evicted_gaussians, 0);
+        r.receive(&out);
+        if !e.timings.prefetch_pending {
+            break;
+        }
+    }
+    assert_eq!(r.occupied(), r.capacity);
+    assert!(apply(&mut e, json!({"type":"prefetch-cache"}), &[])
+        .unwrap()
+        .is_empty());
 }

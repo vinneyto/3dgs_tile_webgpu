@@ -7,4 +7,5 @@ import type { SetCloudTransformCommand } from "./SetCloudTransformCommand";
 import type { WriteAttributeRangeCommand } from "./WriteAttributeRangeCommand";
 import type { SetCameraCommand } from "./SetCameraCommand";
 import type { SetFrontendCapabilitiesCommand } from "./SetFrontendCapabilitiesCommand";
-export type BackendCommand = LoadCloudCommand | LoadCloudFromBufferCommand | UnloadCloudCommand | SetCloudPriorityCommand | SetCloudMipmapsCommand | SetCloudTransformCommand | WriteAttributeRangeCommand | SetCameraCommand | SetFrontendCapabilitiesCommand;
+import type { PrefetchCacheCommand } from "./PrefetchCacheCommand";
+export type BackendCommand = PrefetchCacheCommand | LoadCloudCommand | LoadCloudFromBufferCommand | UnloadCloudCommand | SetCloudPriorityCommand | SetCloudMipmapsCommand | SetCloudTransformCommand | WriteAttributeRangeCommand | SetCameraCommand | SetFrontendCapabilitiesCommand;

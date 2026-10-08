@@ -10,9 +10,9 @@ export interface ActiveSlotRange {
 export interface GaussianBuffers {
   /** vec4<f32> per Gaussian. xyz is the local-space mean; w holds objectId for occupied slots, or -1 for an unoccupied slot. */
   means: StorageBufferAttribute;
-  /** vec4<f32> per Gaussian. xyz is positive linear scale; w is opacity in [0, 1]. */
+  /** float32: vec4<f32> linear scale + opacity. compact: uvec2 packed fp16 log scales + opacity. */
   scalesOpacity: StorageBufferAttribute;
-  /** vec4<f32> per Gaussian, normalized quaternion in xyzw order. */
+  /** float32: vec4 quaternion (xyzw). compact: u32 Spark oct101012 quaternion. */
   rotations: StorageBufferAttribute;
   /** SH coefficients in the representation selected by GaussianDataOptions.shFormat. */
   shCoefficients: StorageBufferAttribute;
@@ -28,6 +28,8 @@ export interface GaussianDataOptions {
   shFormat?: GaussianShFormat;
   /** Dispose the supplied Three.js attributes with this object. Defaults to false. */
   ownsBuffers?: boolean;
+  /** Compact geometry keeps float32 means; shape uses u32x2 + u32. */
+  geometryFormat?: "float32" | "compact";
 }
 
 /**
@@ -36,6 +38,7 @@ export interface GaussianDataOptions {
  * attributes can be consumed by node materials, wgslFn compute nodes, or geometries.
  */
 export class GaussianData {
+  readonly geometryFormat: "float32" | "compact";
   readonly count: number;
   readonly shDegree: 0 | 1 | 2 | 3;
   readonly shCoefficientCount: number;
@@ -78,6 +81,7 @@ export class GaussianData {
       throw new RangeError("GaussianData shDegree must be 0, 1, 2, or 3");
     }
 
+    this.geometryFormat = options.geometryFormat ?? "float32";
     this.count = options.count;
     this.activeValues = options.activeSlots
       ? new Uint32Array(this.count)
@@ -133,8 +137,27 @@ export class GaussianData {
     this.ownsBuffers = options.ownsBuffers ?? false;
 
     this.validateVec4Attribute(this.means, "means", this.count);
-    this.validateVec4Attribute(this.scalesOpacity, "scalesOpacity", this.count);
-    this.validateVec4Attribute(this.rotations, "rotations", this.count);
+    if (this.geometryFormat === "compact") {
+      for (const [attribute, width] of [
+        [this.scalesOpacity, 2],
+        [this.rotations, 1],
+      ] as const) {
+        if (
+          !attribute.isStorageBufferAttribute ||
+          !(attribute.array instanceof Uint32Array) ||
+          attribute.itemSize !== width ||
+          attribute.count < this.count
+        )
+          throw new TypeError("Invalid compact Gaussian shape attribute");
+      }
+    } else {
+      this.validateVec4Attribute(
+        this.scalesOpacity,
+        "scalesOpacity",
+        this.count,
+      );
+      this.validateVec4Attribute(this.rotations, "rotations", this.count);
+    }
     this.validateShAttribute(
       this.shCoefficients,
       this.count * this.shCoefficientCount,

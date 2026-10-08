@@ -57,6 +57,8 @@ pub enum AttributeSource {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum Command {
+    #[serde(rename = "prefetch-cache")]
+    Prefetch,
     #[serde(rename = "load-cloud-from-buffer")]
     Load(LoadCommand),
     #[serde(rename = "unload-cloud")]
@@ -130,6 +132,8 @@ pub struct Capabilities {
     pub max_buffer_size: usize,
     pub max_storage_buffers_per_shader_stage: usize,
     pub supports_partial_buffer_updates: bool,
+    #[serde(default)]
+    pub supports_compact_gaussians: bool,
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -252,6 +256,7 @@ pub struct Snapshot {
 pub enum Payload {
     CapabilitiesAccepted {
         protocol_version: u32,
+        supports_cache_prefetch: bool,
     },
     CloudLoaded {
         cloud_id: String,

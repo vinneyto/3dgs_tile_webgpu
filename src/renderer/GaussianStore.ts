@@ -107,6 +107,8 @@ export class GaussianStore implements GaussianRenderStore {
   private lastRoundTripMs = 0;
   private packStats: GaussianStorePackStats | null = null;
   private disposed = false;
+  private prefetchSupported = false;
+  private prefetchScheduled = false;
   private awaitingCapabilities = false;
   private frontendCapabilities: FrontendCapabilities | null = null;
 
@@ -519,6 +521,8 @@ export class GaussianStore implements GaussianRenderStore {
     ) {
       this.capabilitiesAcknowledged.set(response.command.id, true);
     }
+    if (response.payload?.type === "capabilities-accepted")
+      this.prefetchSupported = response.payload.supportsCachePrefetch === true;
     if (response.payload)
       this.handlePayload(response.payload, response.command.id);
     if (response.metrics && this.packStats)
@@ -548,8 +552,39 @@ export class GaussianStore implements GaussianRenderStore {
     if (response.isFinal) {
       this.lastRoundTripMs = response.durationMs;
       this.abortedLoads.delete(response.command.id);
+      if (!response.error && response.metrics?.prefetchPending)
+        this.schedulePrefetch();
     }
   };
+
+  private schedulePrefetch(): void {
+    if (!this.prefetchSupported || this.prefetchScheduled || this.disposed)
+      return;
+    this.prefetchScheduled = true;
+    // A timer gives user commands a chance to enter the queue before warming.
+    setTimeout(() => {
+      if (this.disposed || this.scheduler.state !== "ready") {
+        this.prefetchScheduled = false;
+        return;
+      }
+      void this.scheduler
+        .schedule({
+          type: "prefetch-cache",
+          id: crypto.randomUUID(),
+          latestKey: "prefetch-cache",
+        })
+        .then(
+          () => {
+            this.prefetchScheduled = false;
+            if (this.packStats?.backendMetrics?.prefetchPending)
+              this.schedulePrefetch();
+          },
+          () => {
+            this.prefetchScheduled = false;
+          },
+        );
+    }, 0);
+  }
 
   private handlePayload(event: BackendPayload, commandId: string): void {
     switch (event.type) {
@@ -657,14 +692,21 @@ export class GaussianStore implements GaussianRenderStore {
         ? new GaussianData(
             {
               means: floatAttribute("means", required("means").data),
-              scalesOpacity: floatAttribute(
-                "scalesOpacity",
-                required("scalesOpacity").data,
-              ),
-              rotations: floatAttribute(
-                "rotations",
-                required("rotations").data,
-              ),
+              scalesOpacity:
+                required("scalesOpacity").format === "u32"
+                  ? uintAttribute(
+                      "scalesOpacity",
+                      required("scalesOpacity").data,
+                      2,
+                    )
+                  : floatAttribute(
+                      "scalesOpacity",
+                      required("scalesOpacity").data,
+                    ),
+              rotations:
+                required("rotations").format === "u32"
+                  ? uintAttribute("rotations", required("rotations").data, 1)
+                  : floatAttribute("rotations", required("rotations").data),
               shCoefficients: uintAttribute(
                 "shCoefficients",
                 required("shCoefficients").data,
@@ -677,6 +719,10 @@ export class GaussianStore implements GaussianRenderStore {
                 : undefined,
               shDegree: event.shDegree,
               shFormat: "rgb8e8",
+              geometryFormat:
+                required("scalesOpacity").format === "u32"
+                  ? "compact"
+                  : "float32",
               ownsBuffers: true,
             },
           )
@@ -851,9 +897,11 @@ export class GaussianStore implements GaussianRenderStore {
     if (name === "means")
       return (this.data?.means.array as Float32Array) ?? null;
     if (name === "scalesOpacity")
-      return (this.data?.scalesOpacity.array as Float32Array) ?? null;
+      return (
+        (this.data?.scalesOpacity.array as Float32Array | Uint32Array) ?? null
+      );
     if (name === "rotations")
-      return (this.data?.rotations.array as Float32Array) ?? null;
+      return (this.data?.rotations.array as Float32Array | Uint32Array) ?? null;
     if (name === "shCoefficients")
       return (this.data?.shCoefficients.array as Uint32Array) ?? null;
     return (

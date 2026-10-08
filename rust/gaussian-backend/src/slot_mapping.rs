@@ -14,6 +14,7 @@ pub(crate) struct SlotMapping {
     pub owners: Vec<Option<GaussianKey>>,
     last_used: Vec<u64>,
     epoch: u64,
+    next_free: usize,
 }
 
 pub(crate) struct SlotChanges {
@@ -24,6 +25,20 @@ pub(crate) struct SlotChanges {
 }
 
 impl SlotMapping {
+    pub fn fill_free(&mut self, key: GaussianKey) -> usize {
+        while self.next_free < self.owners.len() && self.owners[self.next_free].is_some() {
+            self.next_free += 1;
+        }
+        let slot = self.next_free;
+        assert!(slot < self.owners.len());
+        assert!(!self.to_slot.contains_key(&key));
+        self.owners[slot] = Some(key);
+        self.last_used[slot] = 0; // Prefetch is less valuable than any actual camera use.
+        self.to_slot.insert(key, slot);
+        self.next_free += 1;
+        slot
+    }
+
     /// Requested keys include the pinned coarse cut and the desired draw cut.
     /// Keep every other valid owner until space is needed; then evict inactive
     /// least-recently-used owners. The caller commits a resident fallback cut
@@ -43,6 +58,7 @@ impl SlotMapping {
         {
             self.to_slot.remove(&key);
         }
+        self.next_free = self.next_free.min(capacity);
         self.owners.resize(capacity, None);
         self.last_used.resize(capacity, 0);
         let mut cleared = Vec::new();
@@ -51,6 +67,9 @@ impl SlotMapping {
                 self.to_slot.remove(&owner.take().unwrap());
                 cleared.push(slot);
             }
+        }
+        if let Some(&slot) = cleared.iter().min() {
+            self.next_free = self.next_free.min(slot);
         }
         let mut selected_slots: Vec<_> = selected
             .iter()
@@ -141,6 +160,38 @@ mod tests {
     fn valid() -> AHashMap<u32, u32> {
         [(0, 1)].into_iter().collect()
     }
+    #[test]
+    fn prefetch_reuses_invalidated_space_and_is_evicted_before_camera_cache() {
+        let mut map = SlotMapping::default();
+        map.reconcile(4, &[key(0), key(1)], &valid());
+        map.fill_free(key(2));
+        map.fill_free(key(3));
+        map.reconcile(4, &[key(0), key(4)], &valid());
+        assert!(map.to_slot.contains_key(&key(1)));
+        assert_eq!(
+            [key(2), key(3)]
+                .iter()
+                .filter(|k| map.to_slot.contains_key(k))
+                .count(),
+            1
+        );
+        let next_generation = GaussianKey {
+            generation: 2,
+            ..key(0)
+        };
+        map.reconcile(4, &[next_generation], &[(0, 2)].into_iter().collect());
+        let extra = GaussianKey {
+            generation: 2,
+            ..key(5)
+        };
+        let slot = map.fill_free(extra);
+        assert_eq!(map.owners[slot], Some(extra));
+        assert_eq!(map.to_slot.len(), 2);
+        map.reconcile(1, &[next_generation], &[(0, 2)].into_iter().collect());
+        map.reconcile(3, &[next_generation], &[(0, 2)].into_iter().collect());
+        assert!(map.fill_free(extra) < 3);
+    }
+
     #[test]
     fn caches_unselected_owners_and_evicts_only_under_pressure() {
         let mut map = SlotMapping::default();

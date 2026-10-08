@@ -199,6 +199,64 @@ describe("streaming backend request protocol", () => {
     scheduler.dispose();
   });
 
+  it("warms compact GPU slots automatically and pans using activation deltas only", async () => {
+    const backend = new StreamingGaussianBackend({
+      defaultMipmaps: { type: "standard" },
+      streaming: { maxUploadBytesPerUpdate: 512 },
+    });
+    const store = new GaussianStore(backend);
+    const responses: BackendResponse[] = [];
+    store.scheduler.onResponse((r) => responses.push(r));
+    const camera = new PerspectiveCamera();
+    camera.position.z = 100000;
+    camera.updateMatrixWorld();
+    store.setFrontendCapabilities(
+      { ...capabilities, supportsCompactGaussians: true },
+      camera,
+      1024,
+      1024,
+    );
+    await store.loadBuffer(ply(...Array.from({ length: 32 }, (_, i) => i)), {
+      mipmaps: { type: "standard", snapshot: { maxLeaves: 8 } },
+    });
+    await vi.waitFor(
+      () =>
+        expect(
+          responses.some(
+            (r) =>
+              r.command.type === "prefetch-cache" &&
+              r.isFinal &&
+              r.metrics?.residentGaussians === store.maxGaussians,
+          ),
+        ).toBe(true),
+      { timeout: 5000 },
+    );
+    const data = store.getPackedData();
+    expect(data.geometryFormat).toBe("compact");
+    expect(data.scalesOpacity.array).toBeInstanceOf(Uint32Array);
+    expect(data.scalesOpacity.itemSize).toBe(2);
+    expect(data.rotations.itemSize).toBe(1);
+    const layout = store.layoutVersion;
+    responses.length = 0;
+    camera.position.set(16, 0, 10);
+    camera.lookAt(16, 0, 0);
+    camera.updateMatrixWorld();
+    store.updateLod(camera);
+    await vi.waitFor(() =>
+      expect(
+        responses.some((r) => r.command.type === "set-camera" && r.isFinal),
+      ).toBe(true),
+    );
+    expect(responses.some((r) => r.payload?.type === "buffers-patched")).toBe(
+      false,
+    );
+    expect(store.getPackedData()).toBe(data);
+    expect(store.layoutVersion).toBe(layout);
+    expect(store.lastCommandError).toBeNull();
+    expect(store.clouds[0]!.raycast).toBeDefined();
+    store.dispose();
+  });
+
   it("loads without handshake, then renders after receiving capabilities", async () => {
     const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
     const scheduler = new SerialRequestScheduler(backend);

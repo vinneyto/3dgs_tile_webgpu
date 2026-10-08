@@ -25,7 +25,7 @@ export class CloudStatus {
     store: GaussianStore,
   ): void {
     this.set(
-      `${source}: ${sourceCount.toLocaleString()}→${cloud.gaussianCount.toLocaleString()} Gaussians · packed ${store.packedShFormat.toUpperCase()} SH degree ${store.shDegree}`,
+      `${source}: ${sourceCount.toLocaleString()}→${cloud.gaussianCount.toLocaleString()} Gaussians · ${store.getPackedData().geometryFormat} geometry · packed ${store.packedShFormat.toUpperCase()} SH degree ${store.shDegree}`,
     );
   }
 

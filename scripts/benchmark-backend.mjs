@@ -45,6 +45,11 @@ const caps = {
   maxStorageBuffersPerShaderStage: 8,
   supportsPartialBufferUpdates: true,
 };
+const warm = process.argv.includes("--warm");
+const compact = process.argv.includes("--compact");
+caps.supportsCompactGaussians = compact;
+const prefetchTimes = [];
+let warmMs = 0;
 const results = [];
 for (let i = 0; i < 20; i++) {
   camera.position.x = 0.8 - i * 0.08;
@@ -96,6 +101,15 @@ for (let i = 0; i < 20; i++) {
       0,
     ),
   });
+  if (i === 0 && warm) {
+    const warming = performance.now();
+    while (engine.timings().prefetchPending) {
+      const before = performance.now();
+      engine.apply({ type: "prefetch-cache" }, new Uint8Array());
+      prefetchTimes.push(performance.now() - before);
+    }
+    warmMs = performance.now() - warming;
+  }
 }
 const times = results
   .slice(1)
@@ -104,6 +118,14 @@ const times = results
 console.log(
   JSON.stringify({
     count,
+    compact,
+    warm,
+    warmMs,
+    prefetchBatches: prefetchTimes.length,
+    maxPrefetchMs: Math.max(0, ...prefetchTimes),
+    cacheMissesAfterInitial: results
+      .slice(1)
+      .reduce((s, r) => s + r.timings.cacheMisses, 0),
     buildMs,
     medianCameraMs: times[Math.floor(times.length / 2)],
     maxCameraMs: times.at(-1),

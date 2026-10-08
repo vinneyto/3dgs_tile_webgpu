@@ -8,7 +8,10 @@ import type { WriteAttributeRangeCommand } from "./WriteAttributeRangeCommand";
 import type { SetCameraCommand } from "./SetCameraCommand";
 import type { SetFrontendCapabilitiesCommand } from "./SetFrontendCapabilitiesCommand";
 
+import type { PrefetchCacheCommand } from "./PrefetchCacheCommand";
+
 export type BackendCommand =
+  | PrefetchCacheCommand
   | LoadCloudCommand
   | LoadCloudFromBufferCommand
   | UnloadCloudCommand

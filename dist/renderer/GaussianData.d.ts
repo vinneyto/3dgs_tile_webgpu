@@ -7,9 +7,9 @@ export interface ActiveSlotRange {
 export interface GaussianBuffers {
     /** vec4<f32> per Gaussian. xyz is the local-space mean; w holds objectId for occupied slots, or -1 for an unoccupied slot. */
     means: StorageBufferAttribute;
-    /** vec4<f32> per Gaussian. xyz is positive linear scale; w is opacity in [0, 1]. */
+    /** float32: vec4<f32> linear scale + opacity. compact: uvec2 packed fp16 log scales + opacity. */
     scalesOpacity: StorageBufferAttribute;
-    /** vec4<f32> per Gaussian, normalized quaternion in xyzw order. */
+    /** float32: vec4 quaternion (xyzw). compact: u32 Spark oct101012 quaternion. */
     rotations: StorageBufferAttribute;
     /** SH coefficients in the representation selected by GaussianDataOptions.shFormat. */
     shCoefficients: StorageBufferAttribute;
@@ -24,6 +24,8 @@ export interface GaussianDataOptions {
     shFormat?: GaussianShFormat;
     /** Dispose the supplied Three.js attributes with this object. Defaults to false. */
     ownsBuffers?: boolean;
+    /** Compact geometry keeps float32 means; shape uses u32x2 + u32. */
+    geometryFormat?: "float32" | "compact";
 }
 /**
  * Gaussian storage expressed as normal Three.js storage attributes. Parsing and
@@ -31,6 +33,7 @@ export interface GaussianDataOptions {
  * attributes can be consumed by node materials, wgslFn compute nodes, or geometries.
  */
 export declare class GaussianData {
+    readonly geometryFormat: "float32" | "compact";
     readonly count: number;
     readonly shDegree: 0 | 1 | 2 | 3;
     readonly shCoefficientCount: number;

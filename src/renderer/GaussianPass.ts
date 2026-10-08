@@ -806,6 +806,7 @@ function frontendCapabilities(device: GPUDevice): FrontendCapabilities {
   return {
     maxStorageBufferBindingSize: device.limits.maxStorageBufferBindingSize,
     maxBufferSize: device.limits.maxBufferSize,
+    supportsCompactGaussians: true,
     maxStorageBuffersPerShaderStage:
       device.limits.maxStorageBuffersPerShaderStage,
     supportsPartialBufferUpdates: true,

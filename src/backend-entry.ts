@@ -37,3 +37,5 @@ export { WasmGaussianBackend } from "./wasm-backend/WasmGaussianBackend";
 export { StreamingGaussianBackend } from "./streaming-backend-impl/StreamingGaussianBackend";
 
 export type { BuffersActivatedPayload } from "./streaming-backend/payloads/BuffersActivatedPayload";
+
+export type { PrefetchCacheCommand } from "./streaming-backend/commands/PrefetchCacheCommand";

@@ -49,6 +49,8 @@ export declare class GaussianStore implements GaussianRenderStore {
     private lastRoundTripMs;
     private packStats;
     private disposed;
+    private prefetchSupported;
+    private prefetchScheduled;
     private awaitingCapabilities;
     private frontendCapabilities;
     constructor(schedulerOrBackend?: RequestScheduler | GaussianBackend);
@@ -81,6 +83,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private submit;
     private readonly handleFailure;
     private readonly handleResponse;
+    private schedulePrefetch;
     private handlePayload;
     private replace;
     private patch;

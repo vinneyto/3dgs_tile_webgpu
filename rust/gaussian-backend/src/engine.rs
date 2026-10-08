@@ -442,6 +442,7 @@ struct SelectedGaussian {
 }
 
 struct Packed {
+    compact: bool,
     capacity: usize,
     count: usize,
     degree: usize,
@@ -466,6 +467,7 @@ pub struct EngineTimings {
     pub cache_hits: usize,
     pub cache_misses: usize,
     pub evicted_gaussians: usize,
+    pub prefetch_pending: bool,
 }
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
@@ -514,6 +516,7 @@ pub struct Engine {
     content_version: u32,
     packed: Option<Packed>,
     pending_upload: Option<UploadPlan>,
+    prefetch_cursors: BTreeMap<(u32, u32), usize>,
     pub timings: EngineTimings,
 }
 
@@ -540,6 +543,7 @@ impl Engine {
             content_version: 0,
             packed: None,
             pending_upload: None,
+            prefetch_cursors: BTreeMap::new(),
             timings: EngineTimings::default(),
         })
     }
@@ -560,6 +564,7 @@ impl Engine {
         self.timings = EngineTimings::default();
         let mut output = Vec::new();
         match command {
+            Command::Prefetch => return self.prefetch(),
             Command::Load(c) => {
                 ensure!(!self.clouds.contains_key(&c.cloud_id), "Duplicate cloud");
                 let options = c.options.unwrap_or_default();
@@ -695,6 +700,7 @@ impl Engine {
                 self.scene_revision = self.scene_revision.max(c.scene_revision);
                 output.push(Payload::CapabilitiesAccepted {
                     protocol_version: 2,
+                    supports_cache_prefetch: true,
                 });
             }
             Command::Write(c) => {
@@ -910,12 +916,14 @@ impl Engine {
             .map(|c| c.object_id + 1)
             .max()
             .unwrap_or(0);
-        let schema = empty_attributes(degree, &extra, 0);
+        let compact = cap.supports_compact_gaussians;
+        let schema = gpu_empty_attributes(degree, &extra, 0, compact);
         let compatible = self
             .packed
             .as_ref()
             .map(|old| {
-                old.capacity == capacity
+                old.compact == compact
+                    && old.capacity == capacity
                     && old.degree == degree
                     && old.object_capacity == object_capacity
                     && old.attributes.len() == schema.len()
@@ -927,6 +935,7 @@ impl Engine {
             })
             .unwrap_or(false);
         let packed = self.packed.get_or_insert_with(|| Packed {
+            compact,
             capacity,
             count: 0,
             degree,
@@ -974,7 +983,8 @@ impl Engine {
         }
         let states_changed = packed.clouds != states;
         if !compatible {
-            packed.attributes = empty_attributes(degree, &extra, capacity);
+            self.prefetch_cursors.clear();
+            packed.attributes = gpu_empty_attributes(degree, &extra, capacity, compact);
             packed.versions.fill(0);
         }
         // A layout replacement repopulates every valid resident owner, not
@@ -1056,7 +1066,15 @@ impl Engine {
                 .iter()
                 .map(|(s, _)| (s.key.node_id, s.level))
                 .collect();
-            let data = attributes_for(source, extras, &selection, id, degree, entries.len());
+            let data = gpu_attributes_for(
+                source,
+                extras,
+                &selection,
+                id,
+                degree,
+                entries.len(),
+                compact,
+            );
             for target in &mut packed.attributes {
                 if let Some(a) = data.iter().find(|a| a.name == target.name) {
                     let w = target.elements_per_gaussian;
@@ -1199,10 +1217,13 @@ impl Engine {
             });
         packed.active = target_active;
         packed.active_slots = target_slots;
+        self.timings.prefetch_pending =
+            cap.supports_partial_buffer_updates && packed.slots.to_slot.len() < capacity;
         self.timings.resident_gaussians = packed.slots.to_slot.len();
         self.timings.active_gaussians = count;
         self.timings.pinned_gaussians = pinned.len();
         packed.count = count;
+        packed.compact = compact;
         packed.capacity = capacity;
         packed.degree = degree;
         packed.object_capacity = object_capacity;
@@ -1294,6 +1315,115 @@ impl Engine {
                 })
                 .collect(),
         }])
+    }
+    fn prefetch(&mut self) -> Result<Vec<Payload>> {
+        let Some(cap) = &self.capabilities else {
+            return Ok(Vec::new());
+        };
+        let Some(packed) = &mut self.packed else {
+            return Ok(Vec::new());
+        };
+        let free = packed.capacity - packed.slots.to_slot.len();
+        self.timings.active_gaussians = packed.count;
+        self.timings.resident_gaussians = packed.slots.to_slot.len();
+        self.timings.pinned_gaussians = self
+            .clouds
+            .values()
+            .filter_map(|c| c.coarse_cut.borrow().as_ref().map(|(_, _, v)| v.len()))
+            .sum();
+        if !cap.supports_partial_buffer_updates || free == 0 {
+            return Ok(Vec::new());
+        }
+        let max_bytes = self
+            .config
+            .streaming
+            .as_ref()
+            .and_then(|s| s.max_upload_bytes_per_update)
+            .unwrap_or(1024 * 1024);
+        let bytes_per_slot: usize = packed
+            .attributes
+            .iter()
+            .map(|a| a.elements_per_gaussian * 4)
+            .sum();
+        let batch = (max_bytes / bytes_per_slot).max(1).min(free);
+        let mut slots = Vec::new();
+        let mut scanned = 0;
+        for cloud in self.clouds.values() {
+            let Some(tree) = &cloud.tree else {
+                continue;
+            };
+            let cursor = self
+                .prefetch_cursors
+                .entry((cloud.object_id, cloud.generation))
+                .or_default();
+            let mut selection = Vec::new();
+            let mut targets = Vec::new();
+            while *cursor < tree.len() && slots.len() < batch && scanned < batch * 4 {
+                let node = *cursor;
+                *cursor += 1;
+                scanned += 1;
+                let selected = cloud.selected(node);
+                if packed.slots.to_slot.contains_key(&selected.key) {
+                    continue;
+                }
+                let slot = packed.slots.fill_free(selected.key);
+                packed.versions[slot] = selected.version;
+                selection.push((node, selected.level));
+                targets.push(slot);
+                slots.push(slot);
+            }
+            if selection.is_empty() {
+                continue;
+            }
+            let data = gpu_attributes_for(
+                &tree.inner,
+                &tree.extras,
+                &selection,
+                cloud.object_id,
+                packed.degree,
+                selection.len(),
+                packed.compact,
+            );
+            for target in &mut packed.attributes {
+                if let Some(a) = data.iter().find(|a| a.name == target.name) {
+                    let w = target.elements_per_gaussian;
+                    for (row, &slot) in targets.iter().enumerate() {
+                        match (&mut target.data, &a.data) {
+                            (Data::F32(t), Data::F32(v)) => t[slot * w..(slot + 1) * w]
+                                .copy_from_slice(&v[row * w..(row + 1) * w]),
+                            (Data::U32(t), Data::U32(v)) => t[slot * w..(slot + 1) * w]
+                                .copy_from_slice(&v[row * w..(row + 1) * w]),
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+        }
+        self.timings.resident_gaussians = packed.slots.to_slot.len();
+        self.timings.prefetch_pending = packed.slots.to_slot.len() < packed.capacity
+            && self.clouds.values().any(|c| {
+                c.tree.as_ref().is_some_and(|t| {
+                    self.prefetch_cursors
+                        .get(&(c.object_id, c.generation))
+                        .copied()
+                        .unwrap_or(0)
+                        < t.len()
+                })
+            });
+        if !slots.is_empty() {
+            slots.sort_unstable();
+            self.pending_upload = Some(UploadPlan {
+                slots,
+                cursor: 0,
+                batch,
+                activation_batch: (max_bytes / 4).max(1),
+                coarse_end: 0,
+                coarse_activation: None,
+                before: None,
+                after: None,
+            });
+        }
+        Ok(Vec::new())
     }
     pub fn next_payload(&mut self) -> Option<Payload> {
         let plan = self.pending_upload.as_mut()?;
@@ -1469,10 +1599,43 @@ fn attributes_for(
     degree: usize,
     capacity: usize,
 ) -> Vec<Attribute> {
-    let mut attributes = empty_attributes(degree, extras, capacity);
+    encode_attributes(source, extras, selection, object, degree, capacity, false)
+}
+fn encode_attributes(
+    source: &GsplatArray,
+    extras: &BTreeMap<String, ExtraAttribute>,
+    selection: &[(usize, u32)],
+    object: u32,
+    degree: usize,
+    capacity: usize,
+    compact: bool,
+) -> Vec<Attribute> {
+    let mut attributes = gpu_empty_attributes(degree, extras, capacity, compact);
     for (slot, &(i, level)) in selection.iter().enumerate() {
         let s = source.get(i);
         let (scale, opacity) = render_scale_opacity(&s);
+        let (shape, rotation) = if compact {
+            let mut a = [0u32; 4];
+            let mut b = [0u32; 4];
+            spark_lib::splat_encode::encode_ext_splat(
+                &mut a,
+                &mut b,
+                s.center().to_array(),
+                opacity,
+                s.rgb().to_array(),
+                scale.to_array(),
+                s.quaternion().normalize().to_array(),
+            );
+            (
+                [
+                    (b[1] >> 16) | ((b[2] & 0xffff) << 16),
+                    (b[2] >> 16) | (a[3] << 16),
+                ],
+                b[3],
+            )
+        } else {
+            ([0, 0], 0)
+        };
         for a in &mut attributes {
             let w = a.elements_per_gaussian;
             let first = slot * w;
@@ -1491,6 +1654,8 @@ fn attributes_for(
                 (Data::F32(v), "rotations") => {
                     v[first..first + 4].copy_from_slice(&s.quaternion().normalize().to_array());
                 }
+                (Data::U32(v), "scalesOpacity") => v[first..first + 2].copy_from_slice(&shape),
+                (Data::U32(v), "rotations") => v[first] = rotation,
                 (Data::U32(v), "mipmapLevel") => v[first] = level,
                 (Data::U32(v), "shCoefficients") => {
                     let dc = (s.rgb() - Vec3A::splat(0.5)) / SH_C0;
@@ -1527,6 +1692,54 @@ fn attributes_for(
     }
     attributes
 }
+fn gpu_empty_attributes(
+    degree: usize,
+    extras: &BTreeMap<String, ExtraAttribute>,
+    count: usize,
+    compact: bool,
+) -> Vec<Attribute> {
+    let mut result = empty_attributes(degree, extras, if compact { 0 } else { count });
+    if compact {
+        for a in &mut result {
+            match a.name.as_str() {
+                "scalesOpacity" => {
+                    a.format = "u32".into();
+                    a.elements_per_gaussian = 2;
+                }
+                "rotations" => {
+                    a.format = "u32".into();
+                    a.elements_per_gaussian = 1;
+                }
+                _ => {}
+            }
+            a.data = if a.format == "f32" {
+                Data::F32(vec![0.0; count * a.elements_per_gaussian])
+            } else {
+                Data::U32(vec![0; count * a.elements_per_gaussian])
+            };
+            if a.name == "means" {
+                if let Data::F32(v) = &mut a.data {
+                    for row in v.chunks_mut(4) {
+                        row[3] = -1.0;
+                    }
+                }
+            }
+        }
+    }
+    result
+}
+fn gpu_attributes_for(
+    source: &GsplatArray,
+    extras: &BTreeMap<String, ExtraAttribute>,
+    selection: &[(usize, u32)],
+    object: u32,
+    degree: usize,
+    capacity: usize,
+    compact: bool,
+) -> Vec<Attribute> {
+    encode_attributes(source, extras, selection, object, degree, capacity, compact)
+}
+
 fn pack_sh(rgb: [f32; 3]) -> u32 {
     let max = rgb.iter().map(|v| v.abs()).fold(0.0, f32::max);
     if max == 0.0 {

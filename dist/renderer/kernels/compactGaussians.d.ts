@@ -1,0 +1,4 @@
+/** Spark ExtSplats precision, adapted to separate shape buffers. No shader-f16 feature required. */
+export declare const compactScaleOpacityWGSL = "\nfn decodeCompactScaleOpacity(packed: vec2<u32>) -> vec4<f32> {\n  let xy = unpack2x16float(packed.x);\n  let za = unpack2x16float(packed.y);\n  return vec4<f32>(exp(vec3<f32>(xy, za.x)), za.y);\n}";
+/** Octahedral axis (10+10 bits), half-angle (12 bits). Matches Spark's oct101012. */
+export declare const compactRotationWGSL = "\nfn decodeCompactRotation(packed: u32) -> vec4<f32> {\n  let p = vec2<f32>(f32(packed & 1023u), f32((packed >> 10u) & 1023u)) / 1023.0 * 2.0 - 1.0;\n  let z = 1.0 - abs(p.x) - abs(p.y);\n  let t = max(-z, 0.0);\n  let xy = p + select(vec2<f32>(t), vec2<f32>(-t), p >= vec2<f32>(0.0));\n  let axis = normalize(vec3<f32>(xy, z));\n  let halfAngle = f32(packed >> 20u) / 4095.0 * 1.5707963267948966;\n  return vec4<f32>(axis * sin(halfAngle), cos(halfAngle));\n}";

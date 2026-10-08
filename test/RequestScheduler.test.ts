@@ -78,6 +78,30 @@ class ManualBackend implements GaussianBackend {
 }
 
 describe("SerialRequestScheduler", () => {
+  it("runs queued camera commands before cache prefetch", async () => {
+    const backend = new ManualBackend();
+    const scheduler = new SerialRequestScheduler(backend);
+    scheduler.start();
+    const command = (id: string) =>
+      createSetCameraCommand(id, 1, matrix, matrix, 16, 16);
+    const first = command("first");
+    const a = scheduler.schedule(first);
+    const warming = scheduler.schedule({ type: "prefetch-cache", id: "warm" });
+    const camera = command("camera");
+    const b = scheduler.schedule(camera);
+    backend.answer(first, true);
+    await a;
+    await Promise.resolve();
+    expect(backend.sent.at(-1)?.id).toBe("camera");
+    backend.answer(camera, true);
+    await b;
+    await Promise.resolve();
+    expect(backend.sent.at(-1)?.id).toBe("warm");
+    backend.answer(backend.sent.at(-1)!, true);
+    await warming;
+    scheduler.dispose();
+  });
+
   it("runs loads before handshake, and waits for the final response", async () => {
     const backend = new ManualBackend();
     const scheduler = new SerialRequestScheduler(backend);
