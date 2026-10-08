@@ -41,7 +41,6 @@ import {
 import {
   countRasterChunksWGSL,
   emitRasterChunkTasksWGSL,
-  maxRasterChunkTasks,
   prepareRasterChunkDispatchWGSL,
 } from "../kernels/rasterChunks";
 import {
@@ -72,6 +71,7 @@ import {
   type GaussianRasterNodeSlots,
 } from "../nodes/GaussianContextNodes";
 import { AttributePool } from "./AttributePool";
+import { RasterChunkWorkspace } from "./RasterChunkWorkspace";
 import { ExclusiveScanStage } from "./ExclusiveScanStage";
 import { TILE_SIZE, WORKGROUP_SIZE } from "./constants";
 import { decodeActiveSlot } from "./activeSlots";
@@ -101,6 +101,8 @@ interface ChunkSchedule {
 export class TileRasterizer {
   private readonly attributes = new AttributePool();
   private readonly chunks: ChunkSchedule | null;
+  private readonly chunkWorkspace: RasterChunkWorkspace | null;
+  private readonly ownsChunkWorkspace: boolean;
   private computeNode: ComputeNode | null = null;
   private chunkComputeNode: ComputeNode | null = null;
   private compositeNode: ComputeNode | null = null;
@@ -123,27 +125,41 @@ export class TileRasterizer {
     private readonly frame: FrameUniforms,
     private readonly maxSplatsPerTile: number | null,
     private readonly rasterChunkSize: number | null,
-    private readonly tileCount: number,
+    private readonly tileCapacity: number,
     nodes: GaussianRasterNodeSlots,
     rasterStats = false,
     private readonly transmittanceThreshold = 1e-4,
     private readonly depthAlphaThreshold = 0.95,
+    chunkWorkspace?: RasterChunkWorkspace,
   ) {
     this.metrics = rasterStats
-      ? this.attributes.createUint("3dgs.raster-work", tileCount * 4)
+      ? this.attributes.createUint("3dgs.raster-work", tileCapacity * 4)
       : null;
     const counters =
       this.metrics === null
         ? null
-        : storage(this.metrics, "uint", tileCount * 4).toAtomic();
+        : storage(this.metrics, "uint", tileCapacity * 4).toAtomic();
     this.clearMetrics =
       counters === null
         ? null
         : Fn(() => {
-            atomicStore(counters.element(instanceIndex), uint(0));
+            If(instanceIndex.lessThan(this.frame.tileCount.mul(4)), () => {
+              atomicStore(counters.element(instanceIndex), uint(0));
+            });
           })()
-            .compute(tileCount * 4)
+            .compute(tileCapacity * 4)
             .setName("3DGS clear raster work metrics");
+    this.chunkWorkspace =
+      rasterChunkSize === null
+        ? null
+        : (chunkWorkspace ??
+          new RasterChunkWorkspace(
+            intersectionCapacity,
+            rasterChunkSize,
+            depthTexture !== null,
+          ));
+    this.ownsChunkWorkspace =
+      this.chunkWorkspace !== null && chunkWorkspace === undefined;
     this.chunks = this.createChunkSchedule();
     this.rebuild(nodes);
   }
@@ -182,7 +198,13 @@ export class TileRasterizer {
   }
 
   encode(tilesX: number, tilesY: number): void {
-    if (this.clearMetrics !== null) this.renderer.compute(this.clearMetrics);
+    const tileCount = tilesX * tilesY;
+    if (this.clearMetrics !== null)
+      this.renderer.compute(this.clearMetrics, [
+        Math.ceil((tileCount * 4) / WORKGROUP_SIZE),
+        1,
+        1,
+      ]);
     if (this.computeNode === null) {
       throw new Error("TileRasterizer has no compute node");
     }
@@ -194,10 +216,11 @@ export class TileRasterizer {
       throw new Error("TileRasterizer has no chunk compute nodes");
     }
 
-    this.renderer.compute(this.chunks.countNode);
+    const groups = Math.ceil(tileCount / WORKGROUP_SIZE);
+    this.renderer.compute(this.chunks.countNode, [groups, 1, 1]);
     this.chunks.offsets.encode(this.renderer);
     this.renderer.compute(this.chunks.prepareNode);
-    this.renderer.compute(this.chunks.emitNode);
+    this.renderer.compute(this.chunks.emitNode, [groups, 1, 1]);
     this.renderer.compute(this.computeNode, [tilesX, tilesY, 1]);
     this.renderer.compute(this.chunkComputeNode, this.chunks.dispatch);
     this.renderer.compute(this.compositeNode, [tilesX, tilesY, 1]);
@@ -216,70 +239,57 @@ export class TileRasterizer {
     this.chunks?.emitNode.dispose();
     this.chunks?.offsets.dispose();
     this.attributes.dispose();
+    if (this.ownsChunkWorkspace) this.chunkWorkspace?.dispose();
   }
 
   private createChunkSchedule(): ChunkSchedule | null {
     if (this.rasterChunkSize === null) return null;
 
-    const taskCapacity = maxRasterChunkTasks(
-      this.intersectionCapacity,
-      this.rasterChunkSize,
-    );
+    const { taskCapacity, tasks, dispatch, partialData, partialStride } =
+      this.chunkWorkspace!;
     const counts = this.attributes.createUint(
       "3dgs.raster-chunk-counts",
-      this.tileCount,
+      this.tileCapacity,
     );
     const offsets = new ExclusiveScanStage(
       counts,
-      this.tileCount,
+      this.tileCapacity,
       "raster-chunks",
-    );
-    const tasks = this.attributes.createUint(
-      "3dgs.raster-chunk-tasks",
-      taskCapacity,
-      2,
-    );
-    const dispatch = this.attributes.createIndirect(
-      "3dgs.raster-chunk-dispatch",
-    );
-    const partialCount = taskCapacity * WORKGROUP_SIZE;
-    const partialStride = this.depthTexture === null ? 1 : 2;
-    const partialData = this.attributes.createFloat(
-      "3dgs.raster-chunk-partials",
-      partialCount * partialStride,
+      "uint",
+      () => Number(this.frame.tileCount.value),
     );
     const tileOffsets = storage(
       this.tileOffsetsAttribute,
       "uint",
       this.tileOffsetsAttribute.count,
     ).toReadOnly();
-    const chunkCounts = storage(counts, "uint", this.tileCount);
+    const chunkCounts = storage(counts, "uint", this.tileCapacity);
     const readonlyChunkCounts = storage(
       counts,
       "uint",
-      this.tileCount,
+      this.tileCapacity,
     ).toReadOnly();
     const chunkOffsets = storage(
       offsets.output,
       "uint",
-      this.tileCount,
+      this.tileCapacity,
     ).toReadOnly();
     const countKernel = wgslFn<Record<string, Node>>(countRasterChunksWGSL);
     const countNode = countKernel({
       tile: instanceIndex,
-      tile_count: uint(this.tileCount),
+      tile_count: this.frame.tileCount,
       chunk_size: uint(this.rasterChunkSize),
       sample_limit: uint(this.maxSplatsPerTile ?? 0),
       tile_offsets: tileOffsets,
       chunk_counts: chunkCounts,
     })
-      .compute(this.tileCount, [WORKGROUP_SIZE])
+      .compute(this.tileCapacity, [WORKGROUP_SIZE])
       .setName("3DGS count exact raster chunks WGSL");
     const prepareKernel = wgslFn<Record<string, Node>>(
       prepareRasterChunkDispatchWGSL,
     );
     const prepareNode = prepareKernel({
-      tile_count: uint(this.tileCount),
+      tile_count: this.frame.tileCount,
       task_capacity: uint(taskCapacity),
       chunk_counts: readonlyChunkCounts,
       chunk_offsets: chunkOffsets,
@@ -290,13 +300,13 @@ export class TileRasterizer {
     const emitKernel = wgslFn<Record<string, Node>>(emitRasterChunkTasksWGSL);
     const emitNode = emitKernel({
       tile: instanceIndex,
-      tile_count: uint(this.tileCount),
+      tile_count: this.frame.tileCount,
       task_capacity: uint(taskCapacity),
       chunk_counts: readonlyChunkCounts,
       chunk_offsets: chunkOffsets,
       tasks: storage(tasks, "uvec2", taskCapacity),
     })
-      .compute(this.tileCount, [WORKGROUP_SIZE])
+      .compute(this.tileCapacity, [WORKGROUP_SIZE])
       .setName("3DGS emit exact raster chunk tasks WGSL");
 
     return {
@@ -319,7 +329,7 @@ export class TileRasterizer {
     const counters =
       this.metrics === null
         ? null
-        : storage(this.metrics, "uint", this.tileCount * 4).toAtomic();
+        : storage(this.metrics, "uint", this.tileCapacity * 4).toAtomic();
     const means = storage(
       this.meansAttribute,
       "vec4",
@@ -695,17 +705,17 @@ export class TileRasterizer {
     const counters =
       this.metrics === null
         ? null
-        : storage(this.metrics, "uint", this.tileCount * 4).toAtomic();
+        : storage(this.metrics, "uint", this.tileCapacity * 4).toAtomic();
     const chunks = this.chunks!;
     const chunkCounts = storage(
       chunks.counts,
       "uint",
-      this.tileCount,
+      this.tileCapacity,
     ).toReadOnly();
     const chunkOffsets = storage(
       chunks.offsets.output,
       "uint",
-      this.tileCount,
+      this.tileCapacity,
     ).toReadOnly();
     const partialData = storage(
       chunks.partialData,
@@ -793,8 +803,15 @@ export class TileRasterizer {
 
   async readWorkStats() {
     if (this.metrics === null) return null;
+    // Capture the draw range before awaiting: a resize may happen during readback.
+    const componentCount = Number(this.frame.tileCount.value) * 4;
     const values = new Uint32Array(
-      await this.renderer.getArrayBufferAsync(this.metrics),
+      await this.renderer.getArrayBufferAsync(
+        this.metrics,
+        null,
+        0,
+        componentCount * 4,
+      ),
     );
     let checked = 0,
       blended = 0,

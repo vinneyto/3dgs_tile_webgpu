@@ -70,15 +70,21 @@ export class ProfileDiagnosticsStage {
     tileOffsets: StorageBufferAttribute,
   ): Promise<GaussianPassProfileStats> {
     const activeCount = this.frame.activeCount.value;
+    const tileCount = Number(this.frame.tileCount.value);
     const [offsetBuffer, flagBuffer] = await Promise.all([
-      this.renderer.getArrayBufferAsync(tileOffsets),
+      this.renderer.getArrayBufferAsync(
+        tileOffsets,
+        null,
+        0,
+        (tileCount + 1) * 4,
+      ),
       this.renderer.getArrayBufferAsync(this.zeroPixelFlags),
     ]);
     const flags = new Uint32Array(flagBuffer);
     let zeroPixelSubpixelSplats = 0;
     for (const flag of flags.subarray(0, activeCount))
       zeroPixelSubpixelSplats += flag;
-    const offsets = new Uint32Array(offsetBuffer);
+    const offsets = new Uint32Array(offsetBuffer).subarray(0, tileCount + 1);
     return {
       tileLoads: summarizeTileLoads(offsets),
       appliedTileCap:

@@ -8,6 +8,7 @@ export class FrameUniforms {
   readonly activeCount = uniform(0, "uint");
   readonly tilesX = uniform(1, "uint");
   readonly tilesY = uniform(1, "uint");
+  readonly tileCount = uniform(1, "uint");
 
   constructor(
     private readonly camera: PerspectiveCamera,
@@ -21,5 +22,6 @@ export class FrameUniforms {
     this.viewport.value.set(width, height, this.camera.near, this.camera.far);
     this.tilesX.value = tilesX;
     this.tilesY.value = tilesY;
+    this.tileCount.value = tilesX * tilesY;
   }
 }

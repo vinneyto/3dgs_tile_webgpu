@@ -216,7 +216,7 @@ export class DebugPanel {
     const stagesLine =
       debug === null
         ? "stages         —"
-        : `stages         rebuilds ${debug.tileStageRebuilds}  radix ${debug.radixBackend} depth ${debug.depthRadixPasses} + tile ${debug.tileRadixPasses}`;
+        : `stages         rebuilds ${debug.tileStageRebuilds}  tiles ${debug.tilesX * debug.tilesY}/${debug.tileCapacity}  radix ${debug.radixBackend} depth ${debug.depthRadixPasses} + tile ${debug.tileRadixPasses}`;
     const subpixelCullLine =
       debug === null
         ? "subpixel cull  —"

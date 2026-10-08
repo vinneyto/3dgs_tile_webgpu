@@ -144,6 +144,16 @@ describe("generated Gaussian WGSL", () => {
     expect(countChunksSource).toContain("count_raster_chunks");
     expect(prepareChunksSource).toContain("prepare_raster_chunk_dispatch");
     expect(emitChunksSource).toContain("emit_raster_chunk_tasks");
+    // Viewport counts stay in uniforms, so resizing does not rebuild these graphs.
+    expect(countChunksSource).toMatch(
+      /count_raster_chunks\(\s*[^,]+,\s*\w+\.nodeUniform\d+/,
+    );
+    expect(prepareChunksSource).toMatch(
+      /prepare_raster_chunk_dispatch\(\s*\w+\.nodeUniform\d+/,
+    );
+    expect(emitChunksSource).toMatch(
+      /emit_raster_chunk_tasks\(\s*[^,]+,\s*\w+\.nodeUniform\d+/,
+    );
     expect(projectionSource).not.toMatch(/return;\s*return;/);
     expect(rasterSource).not.toMatch(/continue;\s*continue;/);
     expect(rasterSource).not.toMatch(/break;\s*break;/);

@@ -592,6 +592,7 @@ export class GaussianPass extends PassNode {
         tilesX: 0,
         tilesY: 0,
         tileStageRebuilds: 0,
+        tileCapacity: 0,
         radixPasses: 0,
         depthRadixPasses: 0,
         tileRadixPasses: 0,

@@ -140,3 +140,12 @@ reports cache counters, attribute bytes, activation bytes and layout replacement
 it excludes browser frame pacing and GPU execution. The residency implementation
 measured approximately 26 ms median camera time and one layout replacement on
 the development container. Use a browser trace to assess actual frame times.
+
+Viewport resizing keeps tile compute stages and buffers within a power-of-two
+reserved tile capacity. Shrinking does not free the reservation; scans, chunk
+scheduling and diagnostic readbacks use only the current tile count. Crossing
+that capacity grows the tile buffers, while the large chunk task/partial buffers
+remain allocated for the lifetime of the Gaussian pipeline. Output GPU textures
+still change with resolution. The sandbox's `stages` line shows current/reserved
+tiles and the number of tile-stage rebuilds; `pass.getDebugInfo().tileCapacity`
+exposes the reservation without a GPU readback.

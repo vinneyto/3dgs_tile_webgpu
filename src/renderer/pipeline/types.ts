@@ -124,6 +124,8 @@ export interface GaussianPassDebugInfo {
   tilesX: number;
   tilesY: number;
   tileStageRebuilds: number;
+  /** Reserved tile slots; only exceeding this capacity rebuilds tile stages. */
+  tileCapacity: number;
   radixPasses: number;
   depthRadixPasses: number;
   tileRadixPasses: number;

@@ -8,6 +8,7 @@ export declare class FrameUniforms {
     readonly activeCount: import("three/webgpu").UniformNode<"uint", number>;
     readonly tilesX: import("three/webgpu").UniformNode<"uint", number>;
     readonly tilesY: import("three/webgpu").UniformNode<"uint", number>;
+    readonly tileCount: import("three/webgpu").UniformNode<"uint", number>;
     constructor(camera: PerspectiveCamera, background: readonly [number, number, number, number]);
     update(width: number, height: number, tilesX: number, tilesY: number): void;
 }

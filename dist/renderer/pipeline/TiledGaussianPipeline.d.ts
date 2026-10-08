@@ -44,6 +44,8 @@ export declare class TiledGaussianPipeline {
     private tilesX;
     private tilesY;
     private tileStageRebuilds;
+    private tileCapacity;
+    private chunkWorkspace;
     constructor(renderer: WebGPURenderer, camera: PerspectiveCamera, data: GaussianData, store: GaussianRenderStore, mode: DepthSortMode, antialiasMode: AntialiasMode, capacity: number, background: readonly [number, number, number, number], profileKernels: boolean, maxRasterizedSplatsPerTile: number | null, rasterChunkSize: number | null, subpixelSampleCulling: boolean, radixBackend: ResolvedRadixBackend, nodes: GaussianNodeSlots, rasterTransmittanceThreshold?: number, rasterStats?: boolean, depthAlphaThreshold?: number);
     prepareFrame(width: number, height: number, colorTexture: StorageTexture, depthTexture: StorageTexture | null): void;
     render(): void;
