@@ -22,6 +22,7 @@ export class WorkerStreamingGaussianBackend implements GaussianBackend {
   >();
   private readonly port: WorkerPort;
   private disposed = false;
+  private readonly cancelAcknowledgements = new Set<() => void>();
 
   constructor(config: BackendConfig, port?: WorkerPort) {
     this.port =
@@ -64,6 +65,8 @@ export class WorkerStreamingGaussianBackend implements GaussianBackend {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    for (const cancel of this.cancelAcknowledgements) cancel();
+    this.cancelAcknowledgements.clear();
     this.port.removeEventListener("message", this.onMessage as EventListener);
     this.port.removeEventListener("error", this.onError as EventListener);
     this.port.removeEventListener(
@@ -80,10 +83,39 @@ export class WorkerStreamingGaussianBackend implements GaussianBackend {
     message: MessageEvent<WorkerOutbound>,
   ): void => {
     if (this.disposed) return;
-    if (message.data.type === "response")
+    if (message.data.type === "response") {
       for (const listener of this.listeners) listener(message.data.response);
-    else if (message.data.type === "failure") this.fail(message.data.failure);
+      const payload = message.data.response.payload;
+      if (payload && "contentVersion" in payload)
+        this.acknowledgeAfterFrame(payload.contentVersion);
+    } else if (message.data.type === "failure") this.fail(message.data.failure);
   };
+
+  private acknowledgeAfterFrame(contentVersion: number): void {
+    let frame: number | undefined;
+    const cancel = (): void => {
+      clearTimeout(timer);
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      this.cancelAcknowledgements.delete(cancel);
+    };
+    const acknowledge = (): void => {
+      cancel();
+      if (!this.disposed)
+        this.port.postMessage({
+          type: "upload-ack",
+          contentVersion,
+        } satisfies WorkerInbound);
+    };
+    // A hidden tab may not receive animation frames. Keep the serial protocol
+    // moving, while allowing visible tabs to render each bounded batch.
+    const timer = setTimeout(
+      acknowledge,
+      typeof requestAnimationFrame === "function" ? 32 : 0,
+    );
+    this.cancelAcknowledgements.add(cancel);
+    if (typeof requestAnimationFrame === "function")
+      frame = requestAnimationFrame(acknowledge);
+  }
 
   private fail(failure: BackendFailure): void {
     for (const listener of this.failureListeners) listener(failure);

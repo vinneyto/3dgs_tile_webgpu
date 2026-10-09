@@ -5,6 +5,7 @@ describe("raster work readback", () => {
   it("sums tile counters using CPU numbers without frame-wide uint overflow", async () => {
     const raster = Object.create(TileRasterizer.prototype);
     raster.metrics = {};
+    raster.frame = { tileCount: { value: 2 } };
     raster.renderer = {
       getArrayBufferAsync: vi
         .fn()

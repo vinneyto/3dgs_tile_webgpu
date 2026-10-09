@@ -19,7 +19,13 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "scripts/build-wasm.mjs",
+    "THIRD_PARTY_NOTICES.md",
+    "rust/Cargo.toml",
+    "rust/Cargo.lock",
+    "rust/gaussian-backend",
+    "rust/vendor/spark-lib"
   ],
   "scripts": {
     "dev": "vite",
@@ -30,7 +36,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "wasm:build": "node scripts/build-wasm.mjs",
+    "wasm:test": "cargo test --manifest-path rust/Cargo.toml -p gaussian-backend"
   },
   "peerDependencies": {
     "three": "^0.185.1"

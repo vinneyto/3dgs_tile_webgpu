@@ -151,8 +151,9 @@ export class RadixSorter {
   }
 
   configure(bitCount: number): void {
-    this.disposePasses();
     const passCount = Math.ceil(Math.max(0, bitCount) / RADIX_BITS);
+    if (passCount === this.passes.length) return;
+    this.disposePasses();
     this.passes = Array.from({ length: passCount }, (_, passIndex) =>
       this.createPass(passIndex, passIndex * RADIX_BITS),
     );

@@ -3,3 +3,4 @@ sandbox-dist/
 .vite/
 coverage/
 *.log
+rust/target/

@@ -12,6 +12,7 @@ import {
   wgslFn,
   workgroupArray,
   workgroupId,
+  uniform,
 } from "three/tsl";
 import {
   addScanOffsetsWGSL,
@@ -23,6 +24,7 @@ import { SCAN_BLOCK_ITEMS, WORKGROUP_SIZE } from "./constants";
 
 interface ScanLevel {
   length: number;
+  runtimeLength: ReturnType<typeof uniform>;
   blockCount: number;
   output: StorageBufferAttribute;
   scanNode: ComputeNode;
@@ -40,6 +42,7 @@ export class ExclusiveScanStage {
     length: number,
     label = "intersections",
     inputMode: "uint" | "projectedVisibility" = "uint",
+    private readonly getLength?: () => number,
   ) {
     this.output = this.attributes.createUint(`3dgs.${label}-offsets`, length);
     const uintScanKernel = wgslFn<Record<string, Node>>(scanBlocksWGSL);
@@ -60,12 +63,13 @@ export class ExclusiveScanStage {
       const scratch = workgroupArray("uint", SCAN_BLOCK_ITEMS);
       const firstLevelVisibility =
         this.levels.length === 0 && inputMode === "projectedVisibility";
+      const runtimeLength = uniform(scanLength, "uint");
       const scanNode = (
         firstLevelVisibility ? visibilityScanKernel : uintScanKernel
       )({
         lane: invocationLocalIndex,
         group_id: workgroupId.x,
-        length: uint(scanLength),
+        length: getLength ? runtimeLength : uint(scanLength),
         input_values: storage(
           scanInput,
           firstLevelVisibility ? "vec4" : "uint",
@@ -79,6 +83,7 @@ export class ExclusiveScanStage {
         .setName(`3DGS ${label} scan WGSL level ${this.levels.length}`);
       this.levels.push({
         length: scanLength,
+        runtimeLength,
         blockCount,
         output: scanOutput,
         scanNode,
@@ -97,7 +102,7 @@ export class ExclusiveScanStage {
       const parent = this.levels[level + 1]!;
       current.addNode = addKernel({
         index: instanceIndex,
-        length: uint(current.length),
+        length: getLength ? current.runtimeLength : uint(current.length),
         values: storage(current.output, "uint", current.length),
         block_offsets: storage(
           parent.output,
@@ -111,11 +116,26 @@ export class ExclusiveScanStage {
   }
 
   encode(renderer: WebGPURenderer): void {
+    let length = this.getLength?.();
     for (const level of this.levels) {
-      renderer.compute(level.scanNode, [level.blockCount, 1, 1]);
+      level.runtimeLength.value = length ?? level.length;
+      const blocks =
+        length === undefined
+          ? level.blockCount
+          : Math.max(1, Math.ceil(length / SCAN_BLOCK_ITEMS));
+      renderer.compute(level.scanNode, [blocks, 1, 1]);
+      if (length !== undefined) length = blocks;
     }
     for (let level = this.levels.length - 2; level >= 0; level--) {
-      renderer.compute(this.levels[level]!.addNode!);
+      const current = this.levels[level]!;
+      if (this.getLength) {
+        if (Number(current.runtimeLength.value) > 0)
+          renderer.compute(current.addNode!, [
+            Math.ceil(Number(current.runtimeLength.value) / WORKGROUP_SIZE),
+            1,
+            1,
+          ]);
+      } else renderer.compute(current.addNode!);
     }
   }
 

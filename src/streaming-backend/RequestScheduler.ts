@@ -63,7 +63,13 @@ export class SerialRequestScheduler implements RequestScheduler {
         }
       }
 
-      this.queue.push({ command, resolve, reject });
+      const pending = { command, resolve, reject };
+      const prefetch = this.queue.findIndex(
+        (p) => p.command.type === "prefetch-cache",
+      );
+      if (command.type !== "prefetch-cache" && prefetch >= 0)
+        this.queue.splice(prefetch, 0, pending);
+      else this.queue.push(pending);
       this.pump();
     });
   }

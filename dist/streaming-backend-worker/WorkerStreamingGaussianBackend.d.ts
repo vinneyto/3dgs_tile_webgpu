@@ -9,6 +9,7 @@ export declare class WorkerStreamingGaussianBackend implements GaussianBackend {
     private readonly failureListeners;
     private readonly port;
     private disposed;
+    private readonly cancelAcknowledgements;
     constructor(config: BackendConfig, port?: WorkerPort);
     subscribe(listener: (response: BackendResponse) => void): () => void;
     onFailure(listener: (failure: BackendFailure) => void): () => void;
@@ -16,6 +17,7 @@ export declare class WorkerStreamingGaussianBackend implements GaussianBackend {
     abort(commandId: string): void;
     dispose(): void;
     private readonly onMessage;
+    private acknowledgeAfterFrame;
     private fail;
     private readonly onError;
     private readonly onMessageError;

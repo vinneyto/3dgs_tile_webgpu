@@ -32,6 +32,8 @@ export class VisibleGaussianStage {
     visibleOffsetsAttribute: StorageBufferAttribute,
     projectedMeanAttribute: StorageBufferAttribute,
     viewport: Node,
+    activeCount?: Node,
+    private readonly getActiveCount?: () => number,
   ) {
     this.buffers = {
       recordsA: this.attributes.createUint(
@@ -65,7 +67,7 @@ export class VisibleGaussianStage {
       prepareVisibleDispatchWGSL,
     );
     this.prepareNode = prepareKernel({
-      gaussian_count: uint(gaussianCount),
+      gaussian_count: activeCount ?? uint(gaussianCount),
       projected_mean: storage(
         projectedMeanAttribute,
         "vec4",
@@ -85,7 +87,7 @@ export class VisibleGaussianStage {
     );
     this.compactNode = compactKernel({
       gid: instanceIndex,
-      gaussian_count: uint(gaussianCount),
+      gaussian_count: activeCount ?? uint(gaussianCount),
       viewport,
       visible_offsets: visibleOffsets,
       projected_mean: storage(
@@ -100,7 +102,16 @@ export class VisibleGaussianStage {
   }
 
   encode(profileKernels = false): void {
-    if (profileKernels) {
+    if (this.getActiveCount) {
+      this.renderer.compute(this.prepareNode);
+      const count = this.getActiveCount();
+      if (count > 0)
+        this.renderer.compute(this.compactNode, [
+          Math.ceil(count / WORKGROUP_SIZE),
+          1,
+          1,
+        ]);
+    } else if (profileKernels) {
       this.renderer.compute(this.prepareNode);
       this.renderer.compute(this.compactNode);
     } else {

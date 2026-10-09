@@ -65,6 +65,7 @@ describe("GaussianPass node slots", () => {
       isFinal: false,
       payload: {
         type: "cloud-loaded",
+        sourceVersion: 1,
         cloudId: "cloud",
         objectId: 0,
         sourceCount: 1,
@@ -91,6 +92,7 @@ describe("GaussianPass node slots", () => {
       isFinal: false,
       payload: {
         type: "cloud-loaded",
+        sourceVersion: 1,
         cloudId: "cloud-2",
         objectId: 1,
         sourceCount: 1,

@@ -1,1 +1,2 @@
-*.ply filter=lfs diff=lfs merge=lfs -text
+# Keep Spark's vendored sources byte-for-byte identical to the upstream commit.
+rust/vendor/** -whitespace

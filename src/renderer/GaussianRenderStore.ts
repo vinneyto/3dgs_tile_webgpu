@@ -28,6 +28,8 @@ export interface GaussianRenderStore {
   setFrontendCapabilities(
     capabilities: FrontendCapabilities,
     camera: Camera,
+    viewportWidth?: number,
+    viewportHeight?: number,
   ): void;
   updateLod(camera: Camera): GaussianStoreLodUpdate;
   getPackedData(): GaussianData;

@@ -35,10 +35,10 @@ import {
   type GaussianPass,
   GaussianStore,
 } from "../../src/index";
-import { StreamingGaussianBackend } from "../../src/streaming-backend-impl/StreamingGaussianBackend";
+import { WasmGaussianBackend } from "../../src/wasm-backend/WasmGaussianBackend";
 import { DEFAULT_BACKEND_CONFIG } from "../../src/renderer/GaussianStore";
-import { WorkerStreamingGaussianBackend } from "../../src/streaming-backend-worker/WorkerStreamingGaussianBackend";
-import { SANDBOX_LOD_LEVELS, type CloudBounds } from "./cloudData";
+import { WorkerWasmGaussianBackend } from "../../src/wasm-backend/WorkerWasmGaussianBackend";
+import { type CloudBounds } from "./cloudData";
 import { CloudStatus } from "./CloudStatus";
 import {
   CENTER_WEIGHTED_AUTOFOCUS_PATTERN,
@@ -325,7 +325,7 @@ export class GaussianSandbox {
     try {
       loading = store.load(url, {
         name: `${url} Gaussian cloud`,
-        lod: { levels: SANDBOX_LOD_LEVELS },
+        mipmaps: { type: "standard", snapshot: { maxLeaves: 25000 } },
       });
       pass = this.createPass(store);
       const cloud = await loading;
@@ -355,7 +355,8 @@ export class GaussianSandbox {
       const buffer = await file.arrayBuffer();
       loading = store.loadBuffer(buffer, {
         name: `${file.name} Gaussian cloud`,
-        lod: { levels: SANDBOX_LOD_LEVELS },
+        fileName: file.name,
+        mipmaps: { type: "standard", snapshot: { maxLeaves: 25000 } },
       });
       pass = this.createPass(store);
       const cloud = await loading;
@@ -379,17 +380,14 @@ export class GaussianSandbox {
   private createStore(): GaussianStore {
     const config = {
       ...DEFAULT_BACKEND_CONFIG,
-      streamingLod: {
-        maxChangedCellsPerUpdate:
-          this.options.streamingLod.maxChangedCellsPerPack,
-        maxUploadBytesPerUpdate:
-          this.options.streamingLod.maxUploadBytesPerPack,
+      streaming: {
+        maxUploadBytesPerUpdate: this.options.streaming.maxUploadBytesPerPack,
       },
     };
     return new GaussianStore(
       this.options.workerBackend
-        ? new WorkerStreamingGaussianBackend(config)
-        : new StreamingGaussianBackend(config),
+        ? new WorkerWasmGaussianBackend(config)
+        : new WasmGaussianBackend(config),
     );
   }
 

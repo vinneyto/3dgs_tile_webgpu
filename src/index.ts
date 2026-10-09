@@ -11,7 +11,10 @@ export {
   unpackShRgb8e8,
   type GaussianShFormat,
 } from "./streaming-backend-impl/GaussianSh";
-export { GaussianRaycastIndex } from "./renderer/GaussianRaycastIndex";
+export {
+  GaussianRaycastIndex,
+  type GaussianMipmapRaycastHit,
+} from "./renderer/GaussianRaycastIndex";
 export type { GaussianBackend } from "./streaming-backend/GaussianBackend";
 export type { BackendConfig } from "./streaming-backend/BackendConfig";
 export type { FrontendCapabilities } from "./streaming-backend/FrontendCapabilities";
@@ -19,6 +22,7 @@ export type { BackendCommand } from "./streaming-backend/commands/BackendCommand
 export type { Command } from "./streaming-backend/commands/Command";
 export type {
   BackendResponse,
+  BackendMetrics,
   BackendPayload,
   BackendFailure,
 } from "./streaming-backend/BackendResponse";
@@ -37,14 +41,18 @@ export type {
   FillAttributeSource,
 } from "./streaming-backend/AttributeInit";
 export type {
-  PackingStrategy,
-  MaximumPackingStrategy,
-  RadialPackingStrategy,
-  TieredRadialPackingStrategy,
-  DistanceAwareRadialPackingStrategy,
-} from "./streaming-backend/PackingStrategy";
+  MipmapConfig,
+  StandardMipmapConfig,
+  NoMipmapConfig,
+  MipmapSnapshotConfig,
+} from "./streaming-backend/MipmapConfig";
+export type { MipmapSnapshot } from "./streaming-backend/MipmapSnapshot";
+export type { MipmapAggregation } from "./streaming-backend/AttributeInit";
+export type { GaussianFileFormat } from "./streaming-backend/CloudLoadOptions";
+export { WasmGaussianBackend } from "./wasm-backend/WasmGaussianBackend";
 export { StreamingGaussianBackend } from "./streaming-backend-impl/StreamingGaussianBackend";
 export { WorkerStreamingGaussianBackend } from "./streaming-backend-worker/WorkerStreamingGaussianBackend";
+export { WorkerWasmGaussianBackend } from "./wasm-backend/WorkerWasmGaussianBackend";
 export type {
   GaussianStoreEvent,
   GaussianStoreEvents,
@@ -52,47 +60,13 @@ export type {
 } from "./renderer/GaussianStoreEvents";
 export { GaussianCloud } from "./renderer/GaussianCloud";
 export {
-  GaussianOctree,
-  GaussianOctreeNode,
-  type GaussianOctreeBuildOptions,
-  type GaussianOctreeRaycastHit,
-  type GaussianOctreeRaycastOptions,
-} from "./streaming-backend-impl/GaussianOctree";
-export {
   OctreeHelper,
   type OctreeHelperOptions,
 } from "./renderer/OctreeHelper";
 export {
-  GaussianLod,
-  GaussianLodNode,
-  type GaussianLodBuildOptions,
-  type GaussianLodLevelOptions,
-  type GaussianLodPacking,
-} from "./streaming-backend-impl/GaussianLod";
-export { LodHelper, type LodHelperOptions } from "./renderer/LodHelper";
-export {
   GaussianLodColorHelper,
   type GaussianLodColorHelperOptions,
 } from "./renderer/GaussianLodColorHelper";
-export {
-  MaximumLodPackingStrategy,
-  DistanceAwareRadialLodPackingStrategy,
-  RadialLodPackingStrategy,
-  StreamingLodPackingStrategy,
-  TieredRadialLodPackingStrategy,
-  isStreamingLodPackingStrategy,
-  type DistanceAwareRadialLodPackingOptions,
-  type GaussianLodPackingContext,
-  type GaussianLodPackingStrategy,
-  type RadialLodPackingOptions,
-  type StreamingLodCellTransition,
-  type StreamingLodPlannedTarget,
-  type StreamingLodPackingBatch,
-  type StreamingLodPackingOptions,
-  type StreamingLodTargetPlanner,
-  type StreamingLodTargetStats,
-  type TieredRadialLodPackingOptions,
-} from "./streaming-backend-impl/lod-packing";
 export {
   GaussianStore,
   type GaussianStoreCloudLodUpdate,
@@ -157,3 +131,14 @@ export {
   rasterPower,
   rasterWeight,
 } from "./renderer/nodes/GaussianContextNodes";
+
+export type { GaussianMipmapSelectionStats } from "./renderer/GaussianStoreTypes";
+
+export type {
+  BuffersAllocatedPayload,
+  PackedAttributeSchema,
+} from "./streaming-backend/payloads/BuffersAllocatedPayload";
+
+export type { BuffersActivatedPayload } from "./streaming-backend/payloads/BuffersActivatedPayload";
+
+export type { PrefetchCacheCommand } from "./streaming-backend/commands/PrefetchCacheCommand";

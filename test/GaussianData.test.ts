@@ -87,6 +87,36 @@ describe("GaussianData", () => {
     ).toThrow(/itemSize.*expected 4/);
   });
 
+  it("stages chunked activation atomically and maintains a compact list with sparse slots", () => {
+    const data = new GaussianData(
+      {
+        means: attribute(6),
+        scalesOpacity: attribute(6),
+        rotations: attribute(6),
+        shCoefficients: attribute(6),
+      },
+      { count: 6, activeSlots: new Uint32Array([0, 5]) },
+    );
+    const first = vi.fn();
+    const second = vi.fn();
+    data.subscribeActiveSlots(first);
+    data.subscribeActiveSlots(second);
+    data.stageActivation(new Uint32Array([2]), new Uint32Array([0]), false);
+    expect(data.activeCount).toBe(2);
+    expect(Array.from(data.activeSlots!.subarray(0, 2))).toEqual([0, 5]);
+    expect(first).not.toHaveBeenCalled();
+    data.stageActivation(new Uint32Array([3]), new Uint32Array(), true);
+    expect(data.activeCount).toBe(3);
+    expect(Array.from(data.activeSlots!.subarray(0, 3))).toEqual([5, 2, 3]);
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+    data.stageActivation(new Uint32Array(), new Uint32Array([5, 3, 2]), true);
+    expect(data.activeCount).toBe(0);
+    expect(() =>
+      data.stageActivation(new Uint32Array([6]), new Uint32Array(), true),
+    ).toThrow(/capacity/);
+  });
+
   it("disposes owned attributes exactly once", () => {
     const buffers = {
       means: attribute(1),

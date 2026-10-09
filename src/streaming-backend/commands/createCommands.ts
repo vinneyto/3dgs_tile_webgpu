@@ -1,13 +1,12 @@
 import type { CloudLoadOptions } from "../CloudLoadOptions";
 import type { FrontendCapabilities } from "../FrontendCapabilities";
-import type { PackingStrategy } from "../PackingStrategy";
+import type { MipmapConfig } from "../MipmapConfig";
 import type { LoadCloudCommand } from "./LoadCloudCommand";
 import type { LoadCloudFromBufferCommand } from "./LoadCloudFromBufferCommand";
 import type { UnloadCloudCommand } from "./UnloadCloudCommand";
 import type { SetCloudPriorityCommand } from "./SetCloudPriorityCommand";
-import type { SetCloudPackingCommand } from "./SetCloudPackingCommand";
+import type { SetCloudMipmapsCommand } from "./SetCloudMipmapsCommand";
 import type { SetCloudTransformCommand } from "./SetCloudTransformCommand";
-import type { SetCloudRaycastableCommand } from "./SetCloudRaycastableCommand";
 import type { WriteAttributeRangeCommand } from "./WriteAttributeRangeCommand";
 import type { SetCameraCommand } from "./SetCameraCommand";
 import type { SetFrontendCapabilitiesCommand } from "./SetFrontendCapabilitiesCommand";
@@ -44,15 +43,15 @@ export const createSetCloudPriorityCommand = (
   cloudId,
   priority,
 });
-export const createSetCloudPackingCommand = (
+export const createSetCloudMipmapsCommand = (
   id: string,
   cloudId: string,
-  packingStrategy: PackingStrategy,
-): SetCloudPackingCommand => ({
-  type: "set-cloud-packing",
+  mipmaps: MipmapConfig,
+): SetCloudMipmapsCommand => ({
+  type: "set-cloud-mipmaps",
   id,
   cloudId,
-  packingStrategy,
+  mipmaps,
 });
 export const createSetCloudTransformCommand = (
   id: string,
@@ -66,16 +65,6 @@ export const createSetCloudTransformCommand = (
   sceneRevision,
   worldMatrix,
   latestKey: `cloud-transform:${cloudId}`,
-});
-export const createSetCloudRaycastableCommand = (
-  id: string,
-  cloudId: string,
-  raycastable: boolean,
-): SetCloudRaycastableCommand => ({
-  type: "set-cloud-raycastable",
-  id,
-  cloudId,
-  raycastable,
 });
 export const createWriteAttributeRangeCommand = (
   id: string,
@@ -98,12 +87,16 @@ export const createSetCameraCommand = (
   sceneRevision: number,
   worldMatrix: readonly number[],
   projectionMatrix: readonly number[],
+  viewportWidth = 1,
+  viewportHeight = 1,
 ): SetCameraCommand => ({
   type: "set-camera",
   id,
   sceneRevision,
   worldMatrix,
   projectionMatrix,
+  viewportWidth,
+  viewportHeight,
   latestKey: "camera",
 });
 export const createSetFrontendCapabilitiesCommand = (
@@ -116,13 +109,17 @@ export const createSetFrontendCapabilitiesCommand = (
     cloudId: string;
     worldMatrix: readonly number[];
   }[],
+  viewportWidth = 1,
+  viewportHeight = 1,
 ): SetFrontendCapabilitiesCommand => ({
   type: "set-frontend-capabilities",
   id,
-  protocolVersion: 1,
+  protocolVersion: 2,
   capabilities: { ...capabilities },
   sceneRevision,
   cameraWorldMatrix,
   projectionMatrix,
   cloudTransforms,
+  viewportWidth,
+  viewportHeight,
 });

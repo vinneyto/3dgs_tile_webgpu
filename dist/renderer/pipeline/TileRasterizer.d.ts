@@ -1,5 +1,6 @@
 import type { StorageBufferAttribute, StorageTexture, WebGPURenderer } from "three/webgpu";
 import { type GaussianRasterNodeSlots } from "../nodes/GaussianContextNodes";
+import { RasterChunkWorkspace } from "./RasterChunkWorkspace";
 import type { FrameUniforms } from "./FrameUniforms";
 import type { DepthSortMode } from "./types";
 /**
@@ -23,17 +24,19 @@ export declare class TileRasterizer {
     private readonly frame;
     private readonly maxSplatsPerTile;
     private readonly rasterChunkSize;
-    private readonly tileCount;
+    private readonly tileCapacity;
     private readonly transmittanceThreshold;
     private readonly depthAlphaThreshold;
     private readonly attributes;
     private readonly chunks;
+    private readonly chunkWorkspace;
+    private readonly ownsChunkWorkspace;
     private computeNode;
     private chunkComputeNode;
     private compositeNode;
     private readonly metrics;
     private readonly clearMetrics;
-    constructor(renderer: WebGPURenderer, gaussianCount: number, intersectionCapacity: number, mode: DepthSortMode, meansAttribute: StorageBufferAttribute, projectedMeanAttribute: StorageBufferAttribute, projectedConicAttribute: StorageBufferAttribute, projectedColorAttribute: StorageBufferAttribute, sortedRecordsAttribute: StorageBufferAttribute, tileOffsetsAttribute: StorageBufferAttribute, colorTexture: StorageTexture, depthTexture: StorageTexture | null, frame: FrameUniforms, maxSplatsPerTile: number | null, rasterChunkSize: number | null, tileCount: number, nodes: GaussianRasterNodeSlots, rasterStats?: boolean, transmittanceThreshold?: number, depthAlphaThreshold?: number);
+    constructor(renderer: WebGPURenderer, gaussianCount: number, intersectionCapacity: number, mode: DepthSortMode, meansAttribute: StorageBufferAttribute, projectedMeanAttribute: StorageBufferAttribute, projectedConicAttribute: StorageBufferAttribute, projectedColorAttribute: StorageBufferAttribute, sortedRecordsAttribute: StorageBufferAttribute, tileOffsetsAttribute: StorageBufferAttribute, colorTexture: StorageTexture, depthTexture: StorageTexture | null, frame: FrameUniforms, maxSplatsPerTile: number | null, rasterChunkSize: number | null, tileCapacity: number, nodes: GaussianRasterNodeSlots, rasterStats?: boolean, transmittanceThreshold?: number, depthAlphaThreshold?: number, chunkWorkspace?: RasterChunkWorkspace);
     rebuild(nodes: GaussianRasterNodeSlots): void;
     encode(tilesX: number, tilesY: number): void;
     dispose(): void;

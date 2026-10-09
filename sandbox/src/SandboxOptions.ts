@@ -9,9 +9,8 @@ export interface SandboxOptions {
   readonly statsEnabled: boolean;
   readonly pixelRatio: number;
   readonly pass: GaussianPassOptions;
-  readonly streamingLod: {
+  readonly streaming: {
     maxUploadBytesPerPack: number;
-    maxChangedCellsPerPack: number;
   };
 }
 
@@ -43,14 +42,9 @@ export function readSandboxOptions(
       subpixelSampleCulling: parameters.get("subpixelCull") !== "0",
       radixBackend: readRadixBackend(parameters),
     },
-    streamingLod: {
+    streaming: {
       maxUploadBytesPerPack:
         readPositiveQuery(parameters, "lodUploadKiB", 1024) * 1024,
-      maxChangedCellsPerPack: readPositiveIntegerQuery(
-        parameters,
-        "lodCells",
-        16,
-      ),
     },
   };
 }
@@ -97,18 +91,6 @@ function readPositiveQuery(
   const value = Number(raw);
   if (!(value > 0) || !Number.isFinite(value)) {
     throw new RangeError(`${name} must be finite and positive`);
-  }
-  return value;
-}
-
-function readPositiveIntegerQuery(
-  parameters: URLSearchParams,
-  name: string,
-  fallback: number,
-): number {
-  const value = readPositiveQuery(parameters, name, fallback);
-  if (!Number.isInteger(value)) {
-    throw new RangeError(`${name} must be a positive integer`);
   }
   return value;
 }

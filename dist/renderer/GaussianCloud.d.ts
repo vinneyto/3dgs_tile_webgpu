@@ -10,8 +10,9 @@ export interface GaussianCloudOwner {
 export declare class GaussianCloud extends Object3D {
     readonly isGaussianCloud = true;
     readonly objectId: number;
-    /** Accumulated alpha required for a pointer hit. Must be in (0, 1). */
-    raycastAlphaThreshold: number;
+    /** Ignore coarse snapshot Gaussians below this opacity. */
+    minRaycastOpacity: number;
+    raycastable: boolean;
     private readonly ownerStore;
     private packedGaussianCount;
     private priority;
@@ -27,10 +28,10 @@ export declare class GaussianCloud extends Object3D {
     updatePacking(gaussianCount: number): void;
     /** Internal Store hook used after the backend confirms a priority change. */
     applyPackingPriority(priority: number): void;
-    /** Attach a transferable snapshot built by the data backend. Raycasts remain synchronous. */
+    /** Attach a coarse snapshot exported by the data backend. Raycasts remain synchronous. */
     setRaycastIndex(index: GaussianRaycastIndex | null): void;
     getRaycastIndex(): GaussianRaycastIndex | null;
-    /** Synchronous raycast against the complete source octree snapshot. */
+    /** Synchronous raycast against the coarse mipmap snapshot. */
     raycast(raycaster: Raycaster, intersections: Intersection[]): void;
     /** Remove this cloud's Gaussian range from its store and detach it from the scene graph. */
     dispose(): void;

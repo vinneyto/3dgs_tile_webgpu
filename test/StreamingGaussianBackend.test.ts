@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { PerspectiveCamera, type WebGPURenderer } from "three/webgpu";
 import {
   GaussianStore,
@@ -21,6 +21,9 @@ import {
   createSetFrontendCapabilitiesCommand,
   createWriteAttributeRangeCommand,
 } from "../src/streaming-backend/commands/createCommands";
+
+import { initializeTestWasm } from "./helpers/wasm";
+beforeAll(initializeTestWasm);
 
 const capabilities = {
   maxStorageBufferBindingSize: 128 * 1024 * 1024,
@@ -70,6 +73,13 @@ class InMemoryWorker {
   readonly commands: BackendCommand[] = [];
   readonly responses: BackendResponse[] = [];
   terminated = false;
+  holdAcknowledgements = false;
+  private uploadDone: (() => void) | null = null;
+  acknowledge(): void {
+    const done = this.uploadDone;
+    this.uploadDone = null;
+    done?.();
+  }
   addEventListener(
     type: string,
     listener: (event: MessageEvent<WorkerOutbound>) => void,
@@ -91,7 +101,13 @@ class InMemoryWorker {
   postMessage(message: WorkerInbound, transfer: ArrayBuffer[] = []): void {
     const received = structuredClone(message, { transfer });
     if (received.type === "initialize") {
-      this.core = new StreamingGaussianBackend(received.config);
+      this.core = new StreamingGaussianBackend(
+        received.config,
+        () =>
+          new Promise<void>((resolve) => {
+            this.uploadDone = resolve;
+          }),
+      );
       this.core.subscribe((response) => {
         this.responses.push(response);
         const wire = structuredClone(
@@ -107,11 +123,140 @@ class InMemoryWorker {
       this.core?.dispatch(received.command);
     } else if (received.type === "abort") {
       this.core?.abort(received.commandId);
-    } else this.core?.dispose();
+    } else if (received.type === "upload-ack") {
+      if (!this.holdAcknowledgements) this.acknowledge();
+    } else if (received.type === "dispose") {
+      this.core?.dispose();
+      this.acknowledge();
+    }
   }
 }
 
 describe("streaming backend request protocol", () => {
+  it("bounds initial uploads and waits for client acknowledgement before copying the next batch", async () => {
+    const port = new InMemoryWorker();
+    const backend = new WorkerStreamingGaussianBackend(
+      { streaming: { maxUploadBytesPerUpdate: 112 } },
+      port as unknown as Worker,
+    );
+    const scheduler = new SerialRequestScheduler(backend);
+    scheduler.start();
+    await scheduler.schedule(
+      createSetFrontendCapabilitiesCommand(
+        "caps",
+        capabilities,
+        1,
+        matrix,
+        matrix,
+        [],
+      ),
+    );
+    port.holdAcknowledgements = true;
+    const pending = scheduler.schedule(
+      createLoadCloudFromBufferCommand("load", "cloud", ply(0, 1, 2, 3, 4), {
+        mipmaps: { type: "none" },
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        port.responses.filter(
+          (r) =>
+            r.command.id === "load" && r.payload?.type === "buffers-allocated",
+        ),
+      ).toHaveLength(1),
+    );
+    expect(
+      port.responses.filter(
+        (r) => r.command.id === "load" && r.payload?.type === "buffers-patched",
+      ),
+    ).toHaveLength(0);
+    port.acknowledge();
+    await vi.waitFor(() =>
+      expect(
+        port.responses.filter(
+          (r) =>
+            r.command.id === "load" && r.payload?.type === "buffers-patched",
+        ),
+      ).toHaveLength(1),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(
+      port.responses.filter(
+        (r) => r.command.id === "load" && r.payload?.type === "buffers-patched",
+      ),
+    ).toHaveLength(1);
+    expect(
+      port.responses.some((r) => r.command.id === "load" && r.isFinal),
+    ).toBe(false);
+    port.holdAcknowledgements = false;
+    port.acknowledge();
+    await expect(pending).resolves.toBe("done");
+    const final = [...port.responses]
+      .reverse()
+      .find((r) => r.command.id === "load" && r.isFinal)!;
+    expect(final.metrics?.uploadedBytes).toBe(5 * 56 + 5 * 4);
+    expect(final.metrics?.uploadBatches).toBe(5); // descriptor + three data batches + activation
+    scheduler.dispose();
+  });
+
+  it("warms compact GPU slots automatically and pans using activation deltas only", async () => {
+    const backend = new StreamingGaussianBackend({
+      defaultMipmaps: { type: "standard" },
+      streaming: { maxUploadBytesPerUpdate: 512 },
+    });
+    const store = new GaussianStore(backend);
+    const responses: BackendResponse[] = [];
+    store.scheduler.onResponse((r) => responses.push(r));
+    const camera = new PerspectiveCamera();
+    camera.position.z = 100000;
+    camera.updateMatrixWorld();
+    store.setFrontendCapabilities(
+      { ...capabilities, supportsCompactGaussians: true },
+      camera,
+      1024,
+      1024,
+    );
+    await store.loadBuffer(ply(...Array.from({ length: 32 }, (_, i) => i)), {
+      mipmaps: { type: "standard", snapshot: { maxLeaves: 8 } },
+    });
+    await vi.waitFor(
+      () =>
+        expect(
+          responses.some(
+            (r) =>
+              r.command.type === "prefetch-cache" &&
+              r.isFinal &&
+              r.metrics?.residentGaussians === store.maxGaussians,
+          ),
+        ).toBe(true),
+      { timeout: 5000 },
+    );
+    const data = store.getPackedData();
+    expect(data.geometryFormat).toBe("compact");
+    expect(data.scalesOpacity.array).toBeInstanceOf(Uint32Array);
+    expect(data.scalesOpacity.itemSize).toBe(2);
+    expect(data.rotations.itemSize).toBe(1);
+    const layout = store.layoutVersion;
+    responses.length = 0;
+    camera.position.set(16, 0, 10);
+    camera.lookAt(16, 0, 0);
+    camera.updateMatrixWorld();
+    store.updateLod(camera);
+    await vi.waitFor(() =>
+      expect(
+        responses.some((r) => r.command.type === "set-camera" && r.isFinal),
+      ).toBe(true),
+    );
+    expect(responses.some((r) => r.payload?.type === "buffers-patched")).toBe(
+      false,
+    );
+    expect(store.getPackedData()).toBe(data);
+    expect(store.layoutVersion).toBe(layout);
+    expect(store.lastCommandError).toBeNull();
+    expect(store.clouds[0]!.raycast).toBeDefined();
+    store.dispose();
+  });
+
   it("loads without handshake, then renders after receiving capabilities", async () => {
     const backend = new StreamingGaussianBackend(DEFAULT_BACKEND_CONFIG);
     const scheduler = new SerialRequestScheduler(backend);
@@ -152,7 +297,7 @@ describe("streaming backend request protocol", () => {
     expect(
       responses.some(
         ({ command, payload }) =>
-          command.id === "handshake" && payload?.type === "buffers-replaced",
+          command.id === "handshake" && payload?.type === "buffers-allocated",
       ),
     ).toBe(true);
     scheduler.dispose();
@@ -160,8 +305,7 @@ describe("streaming backend request protocol", () => {
 
   it("keeps the request open until the last streamed buffer patch", async () => {
     const backend = new StreamingGaussianBackend({
-      maxGaussians: "auto",
-      streamingLod: { maxUploadBytesPerUpdate: 48 },
+      streaming: { maxUploadBytesPerUpdate: 48 },
     });
     const scheduler = new SerialRequestScheduler(backend);
     const responses: BackendResponse[] = [];
@@ -199,7 +343,9 @@ describe("streaming backend request protocol", () => {
     await update;
     const stream = responses.filter(({ command }) => command.id === "write");
     expect(
-      stream.some(({ payload }) => payload?.type === "raycast-replaced"),
+      stream.some(
+        ({ payload }) => payload?.type === "mipmap-snapshot-replaced",
+      ),
     ).toBe(true);
     expect(
       stream.some(({ payload }) => payload?.type === "buffers-patched"),
@@ -214,7 +360,10 @@ describe("streaming backend request protocol", () => {
     const store = new GaussianStore(
       new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG, port as never),
     );
-    const cloud = await store.loadBuffer(ply(0), { name: "first" });
+    const cloud = await store.loadBuffer(ply(0), {
+      name: "first",
+      mipmaps: { type: "standard", snapshot: { maxLeaves: 100 } },
+    });
     expect(port.commands.map(({ type }) => type)).toEqual([
       "load-cloud-from-buffer",
     ]);
@@ -438,11 +587,11 @@ describe("streaming backend request protocol", () => {
     const valid = scheduler.schedule(
       createSetCameraCommand("valid", 2, matrix, matrix),
     );
-    await expect(invalid).rejects.toThrow("sixteen numbers");
+    await expect(invalid).rejects.toThrow(/sixteen/);
     await expect(valid).resolves.toBe("done");
     expect(
       responses.find(({ command }) => command.id === "invalid")?.error?.code,
-    ).toBe("invalid-range");
+    ).toBe("backend-command-error");
     scheduler.dispose();
   });
 });

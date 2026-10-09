@@ -13,7 +13,7 @@ import type {
   GaussianStorePackStats,
 } from "./GaussianStoreTypes";
 import { GaussianRaycastIndex } from "./GaussianRaycastIndex";
-import { markSlotRangesUpdated } from "./utils/slotRanges";
+import { markSlotRangesUpdated, mergeSlotRanges } from "./utils/slotRanges";
 import {
   GaussianStoreAttributes,
   enableGaussianStoreAttribute,
@@ -28,7 +28,7 @@ import type { BackendConfig } from "../streaming-backend/BackendConfig";
 import type { FrontendCapabilities } from "../streaming-backend/FrontendCapabilities";
 import type { CloudLoadOptions } from "../streaming-backend/CloudLoadOptions";
 import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
-import type { PackingStrategy } from "../streaming-backend/PackingStrategy";
+import type { MipmapConfig } from "../streaming-backend/MipmapConfig";
 import type {
   BackendPayload,
   BackendResponse,
@@ -44,15 +44,14 @@ import {
   createLoadCloudFromBufferCommand,
   createUnloadCloudCommand,
   createSetCloudPriorityCommand,
-  createSetCloudPackingCommand,
-  createSetCloudRaycastableCommand,
+  createSetCloudMipmapsCommand,
   createWriteAttributeRangeCommand,
   createSetCloudTransformCommand,
   createSetCameraCommand,
   createSetFrontendCapabilitiesCommand,
 } from "../streaming-backend/commands/createCommands";
 import type { PackedAttributeBuffer } from "../streaming-backend/PackedAttributeBuffer";
-import { WorkerStreamingGaussianBackend } from "../streaming-backend-worker/WorkerStreamingGaussianBackend";
+import { WorkerWasmGaussianBackend } from "../wasm-backend/WorkerWasmGaussianBackend";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
 
 interface ClientCloud {
@@ -60,7 +59,8 @@ interface ClientCloud {
   sourceCount: number;
   bounds: readonly [number, number, number, number, number, number];
   sourceVersion: number;
-  packingStrategy?: PackingStrategy;
+  snapshotVersion: number;
+  mipmaps?: MipmapConfig;
 }
 interface PendingCloud {
   resolve: (cloud: GaussianCloud) => void;
@@ -69,7 +69,7 @@ interface PendingCloud {
   cleanup: () => void;
 }
 export const DEFAULT_BACKEND_CONFIG: BackendConfig = {
-  maxGaussians: "auto",
+  defaultMipmaps: { type: "standard" },
 };
 
 /**
@@ -80,7 +80,6 @@ export class GaussianStore implements GaussianRenderStore {
   readonly attributes = new GaussianStoreAttributes();
   readonly scheduler: RequestScheduler;
   readonly packedShFormat = "rgb8e8" as const;
-  readonly maxGaussiansOption: number | "auto" = "auto";
   private readonly cloudMap = new Map<string, ClientCloud>();
   private readonly cloudIds = new Map<GaussianCloud, string>();
   private readonly pendingLoads = new Map<string, PendingCloud>();
@@ -93,6 +92,8 @@ export class GaussianStore implements GaussianRenderStore {
   private readonly unsubscribeFailure: () => void;
   private data: GaussianData | null = null;
   private revision = 0;
+  private viewportWidth = 1;
+  private viewportHeight = 1;
   private lastCameraView = "";
   private readonly lastCloudTransforms = new Map<string, string>();
   private lastError: Error | null = null;
@@ -103,15 +104,18 @@ export class GaussianStore implements GaussianRenderStore {
   private packedVersion = 0;
   private packedLayoutVersion = 0;
   private pendingLod = false;
+  private lastRoundTripMs = 0;
   private packStats: GaussianStorePackStats | null = null;
   private disposed = false;
+  private prefetchSupported = false;
+  private prefetchScheduled = false;
   private awaitingCapabilities = false;
   private frontendCapabilities: FrontendCapabilities | null = null;
 
   constructor(
     schedulerOrBackend:
       RequestScheduler | GaussianBackend = new SerialRequestScheduler(
-      new WorkerStreamingGaussianBackend(DEFAULT_BACKEND_CONFIG),
+      new WorkerWasmGaussianBackend(DEFAULT_BACKEND_CONFIG),
     ),
   ) {
     // Accept an existing backend for applications that provide a debug transport.
@@ -227,34 +231,18 @@ export class GaussianStore implements GaussianRenderStore {
     }
   }
 
-  async setCloudPacking(
+  async setCloudMipmaps(
     cloud: GaussianCloud,
-    packingStrategy: PackingStrategy,
+    mipmaps: MipmapConfig,
   ): Promise<void> {
     const cloudId = this.requireId(cloud);
     const result = await this.scheduler.schedule(
-      createSetCloudPackingCommand(
-        crypto.randomUUID(),
-        cloudId,
-        packingStrategy,
-      ),
+      createSetCloudMipmapsCommand(crypto.randomUUID(), cloudId, mipmaps),
     );
     const item = this.cloudMap.get(cloudId);
     if (result === "done" && item?.cloud === cloud) {
-      item.packingStrategy = packingStrategy;
+      item.mipmaps = mipmaps;
     }
-  }
-
-  setCloudRaycastable(cloud: GaussianCloud, raycastable: boolean): void {
-    const cloudId = this.requireId(cloud);
-    if (!raycastable) cloud.setRaycastIndex(null);
-    this.submit(
-      createSetCloudRaycastableCommand(
-        crypto.randomUUID(),
-        cloudId,
-        raycastable,
-      ),
-    );
   }
 
   writeAttributeRange(
@@ -278,21 +266,21 @@ export class GaussianStore implements GaussianRenderStore {
 
   async invalidateCloudPacking(cloud: GaussianCloud): Promise<void> {
     const cloudId = this.requireId(cloud);
-    const strategy = this.cloudMap.get(cloudId)!.packingStrategy;
+    const strategy = this.cloudMap.get(cloudId)!.mipmaps;
     if (strategy) {
-      await this.setCloudPacking(cloud, strategy);
+      await this.setCloudMipmaps(cloud, strategy);
     }
   }
 
   enablePackedLodLevelAttribute(): GaussianStorePackedAttribute {
     return (
-      this.attributes.get("lodLevel") ??
-      this.attributes[enableGaussianStoreAttribute]("lodLevel", "u32")
+      this.attributes.get("mipmapLevel") ??
+      this.attributes[enableGaussianStoreAttribute]("mipmapLevel", "u32")
     );
   }
 
   getPackedAttribute(name: string): StorageBufferAttribute | undefined {
-    return name === "lodLevel"
+    return name === "mipmapLevel"
       ? this.attributes.get(name)?.bufferAttribute
       : this.extraBuffers.get(name);
   }
@@ -300,7 +288,11 @@ export class GaussianStore implements GaussianRenderStore {
   setFrontendCapabilities(
     capabilities: FrontendCapabilities,
     camera: Camera,
+    viewportWidth = 1,
+    viewportHeight = 1,
   ): void {
+    this.viewportWidth = viewportWidth;
+    this.viewportHeight = viewportHeight;
     if (this.disposed) throw new Error("GaussianStore disposed");
     const previous = this.frontendCapabilities;
     if (
@@ -332,6 +324,8 @@ export class GaussianStore implements GaussianRenderStore {
       camera.matrixWorld.elements.slice(),
       camera.projectionMatrix.elements.slice(),
       transforms,
+      viewportWidth,
+      viewportHeight,
     );
     this.capabilitiesAcknowledged.set(command.id, false);
     const rejectCapabilities = (error: unknown): void => {
@@ -397,7 +391,12 @@ export class GaussianStore implements GaussianRenderStore {
       ([cloudId, worldMatrix]) =>
         this.lastCloudTransforms.get(cloudId) !== JSON.stringify(worldMatrix),
     );
-    const cameraKey = JSON.stringify([cameraWorldMatrix, projectionMatrix]);
+    const cameraKey = JSON.stringify([
+      cameraWorldMatrix,
+      projectionMatrix,
+      this.viewportWidth,
+      this.viewportHeight,
+    ]);
     const cameraChanged = cameraKey !== this.lastCameraView;
     if (cameraChanged || changedTransforms.length > 0) {
       const sceneRevision = ++this.revision;
@@ -419,6 +418,8 @@ export class GaussianStore implements GaussianRenderStore {
             sceneRevision,
             cameraWorldMatrix,
             projectionMatrix,
+            this.viewportWidth,
+            this.viewportHeight,
           ),
         );
         this.lastCameraView = cameraKey;
@@ -435,8 +436,8 @@ export class GaussianStore implements GaussianRenderStore {
         applied: false,
         pending: this.pendingLod,
         targetStats: {
-          planningMs: 0,
-          roundTripMs: 0,
+          planningMs: this.packStats?.backendMetrics?.selectionMs ?? 0,
+          roundTripMs: this.lastRoundTripMs,
           discardedResults: 0,
           pending: this.pendingLod,
         },
@@ -516,12 +517,22 @@ export class GaussianStore implements GaussianRenderStore {
     if (
       this.capabilitiesAcknowledged.has(response.command.id) &&
       response.payload?.type === "capabilities-accepted" &&
-      response.payload.protocolVersion === 1
+      response.payload.protocolVersion === 2
     ) {
       this.capabilitiesAcknowledged.set(response.command.id, true);
     }
+    if (response.payload?.type === "capabilities-accepted")
+      this.prefetchSupported = response.payload.supportsCachePrefetch === true;
     if (response.payload)
       this.handlePayload(response.payload, response.command.id);
+    if (response.metrics && this.packStats)
+      this.packStats = {
+        ...this.packStats,
+        backendMetrics: response.metrics,
+        planningMs: response.metrics.selectionMs,
+        slotUpdateMs:
+          response.metrics.slotMappingMs + response.metrics.packingMs,
+      };
     if (response.error) {
       const error = new Error(response.error.message);
       if (response.error.code === "cancelled") error.name = "AbortError";
@@ -538,8 +549,42 @@ export class GaussianStore implements GaussianRenderStore {
         this.notify("content");
       }
     }
-    if (response.isFinal) this.abortedLoads.delete(response.command.id);
+    if (response.isFinal) {
+      this.lastRoundTripMs = response.durationMs;
+      this.abortedLoads.delete(response.command.id);
+      if (!response.error && response.metrics?.prefetchPending)
+        this.schedulePrefetch();
+    }
   };
+
+  private schedulePrefetch(): void {
+    if (!this.prefetchSupported || this.prefetchScheduled || this.disposed)
+      return;
+    this.prefetchScheduled = true;
+    // A timer gives user commands a chance to enter the queue before warming.
+    setTimeout(() => {
+      if (this.disposed || this.scheduler.state !== "ready") {
+        this.prefetchScheduled = false;
+        return;
+      }
+      void this.scheduler
+        .schedule({
+          type: "prefetch-cache",
+          id: crypto.randomUUID(),
+          latestKey: "prefetch-cache",
+        })
+        .then(
+          () => {
+            this.prefetchScheduled = false;
+            if (this.packStats?.backendMetrics?.prefetchPending)
+              this.schedulePrefetch();
+          },
+          () => {
+            this.prefetchScheduled = false;
+          },
+        );
+    }, 0);
+  }
 
   private handlePayload(event: BackendPayload, commandId: string): void {
     switch (event.type) {
@@ -556,14 +601,15 @@ export class GaussianStore implements GaussianRenderStore {
           options.name ?? event.cloudId,
           priority,
         );
-        if (event.raycast)
-          cloud.setRaycastIndex(new GaussianRaycastIndex(event.raycast));
+        if (event.mipmapSnapshot)
+          cloud.setRaycastIndex(new GaussianRaycastIndex(event.mipmapSnapshot));
         this.cloudMap.set(event.cloudId, {
           cloud,
           sourceCount: event.sourceCount,
           bounds: event.bounds,
-          sourceVersion: 1,
-          packingStrategy: options.packingStrategy,
+          sourceVersion: event.sourceVersion,
+          snapshotVersion: event.mipmapSnapshot?.snapshotVersion ?? 0,
+          mipmaps: options.mipmaps,
         });
         this.cloudIds.set(cloud, event.cloudId);
         this.pendingLoads.get(commandId)?.cleanup();
@@ -574,25 +620,53 @@ export class GaussianStore implements GaussianRenderStore {
       }
       case "cloud-unloaded":
         break;
-      case "cloud-raycast-changed": {
+      case "mipmap-snapshot-replaced": {
         const item = this.cloudMap.get(event.cloudId);
-        if (item)
+        if (
+          item &&
+          event.sourceVersion >= item.sourceVersion &&
+          event.snapshotVersion > item.snapshotVersion
+        ) {
+          item.sourceVersion = event.sourceVersion;
+          item.snapshotVersion = event.snapshotVersion;
+          item.bounds = event.bounds;
           item.cloud.setRaycastIndex(
-            event.raycast ? new GaussianRaycastIndex(event.raycast) : null,
+            event.snapshot ? new GaussianRaycastIndex(event.snapshot) : null,
           );
+          this.notify("clouds");
+        }
         break;
       }
-      case "raycast-replaced": {
-        const item = this.cloudMap.get(event.cloudId);
-        if (item && event.sourceVersion > item.sourceVersion) {
-          item.sourceVersion = event.sourceVersion;
-          item.bounds = event.bounds;
-          item.cloud.setRaycastIndex(new GaussianRaycastIndex(event.raycast));
-        }
+      case "buffers-allocated": {
+        if (event.layoutVersion <= this.packedLayoutVersion) break;
+        const attributes = event.attributes.map((schema) => {
+          const values =
+            schema.format === "f32"
+              ? new Float32Array(event.capacity * schema.elementsPerGaussian)
+              : new Uint32Array(
+                  event.capacity * schema.elementsPerGaussian +
+                    (schema.name === "shCoefficients" ? event.capacity : 0),
+                );
+          if (schema.name === "means")
+            for (let slot = 0; slot < event.capacity; slot++)
+              values[slot * 4 + 3] = -1;
+          return { ...schema, data: values.buffer };
+        });
+        this.replace({
+          ...event,
+          type: "buffers-replaced",
+          count: 0,
+          activeSlots: new Uint32Array().buffer,
+          attributes,
+        });
+        this.pendingLod = true;
         break;
       }
       case "buffers-replaced":
         this.replace(event);
+        break;
+      case "buffers-activated":
+        this.activate(event);
         break;
       case "buffers-patched":
         this.patch(event);
@@ -618,14 +692,21 @@ export class GaussianStore implements GaussianRenderStore {
         ? new GaussianData(
             {
               means: floatAttribute("means", required("means").data),
-              scalesOpacity: floatAttribute(
-                "scalesOpacity",
-                required("scalesOpacity").data,
-              ),
-              rotations: floatAttribute(
-                "rotations",
-                required("rotations").data,
-              ),
+              scalesOpacity:
+                required("scalesOpacity").format === "u32"
+                  ? uintAttribute(
+                      "scalesOpacity",
+                      required("scalesOpacity").data,
+                      2,
+                    )
+                  : floatAttribute(
+                      "scalesOpacity",
+                      required("scalesOpacity").data,
+                    ),
+              rotations:
+                required("rotations").format === "u32"
+                  ? uintAttribute("rotations", required("rotations").data, 1)
+                  : floatAttribute("rotations", required("rotations").data),
               shCoefficients: uintAttribute(
                 "shCoefficients",
                 required("shCoefficients").data,
@@ -633,8 +714,15 @@ export class GaussianStore implements GaussianRenderStore {
             },
             {
               count: event.capacity,
+              activeSlots: event.activeSlots
+                ? new Uint32Array(event.activeSlots)
+                : undefined,
               shDegree: event.shDegree,
               shFormat: "rgb8e8",
+              geometryFormat:
+                required("scalesOpacity").format === "u32"
+                  ? "compact"
+                  : "float32",
               ownsBuffers: true,
             },
           )
@@ -646,7 +734,7 @@ export class GaussianStore implements GaussianRenderStore {
     for (const buffer of this.extraBuffers.values()) buffer.dispose();
     this.extraBuffers.clear();
     for (const attribute of event.attributes) {
-      if (attribute.name === "lodLevel") {
+      if (attribute.name === "mipmapLevel") {
         this.enablePackedLodLevelAttribute()[replaceGaussianStoreAttribute](
           new Uint32Array(attribute.data),
         );
@@ -678,18 +766,23 @@ export class GaussianStore implements GaussianRenderStore {
     this.packedLayoutVersion = event.layoutVersion;
     this.packedVersion = event.contentVersion;
     this.pendingLod = false;
+    const occupied: number[] = [];
+    if (this.data)
+      for (let slot = 0; slot < event.capacity; slot++)
+        if (this.data.means.array[slot * 4 + 3]! >= 0) occupied.push(slot);
     this.packStats = {
       fullRebuild: true,
+      layoutVersion: event.layoutVersion,
       slotCapacity: event.capacity,
       activeGaussians: event.count,
       reusedSlots: 0,
-      writtenSlots: event.count,
+      writtenSlots: occupied.length,
       clearedSlots: 0,
       estimatedUploadBytes: event.attributes.reduce(
         (sum, item) => sum + item.data.byteLength,
         0,
       ),
-      writtenSlotRanges: event.count ? [{ start: 0, count: event.count }] : [],
+      writtenSlotRanges: mergeSlotRanges(occupied, 0, 0),
       clearedSlotRanges: [],
       planningMs: 0,
       slotUpdateMs: 0,
@@ -717,7 +810,7 @@ export class GaussianStore implements GaussianRenderStore {
           ? new Float32Array(patch.data)
           : new Uint32Array(patch.data);
       array.set(incoming, start);
-      if (patch.name === "lodLevel")
+      if (patch.name === "mipmapLevel")
         this.enablePackedLodLevelAttribute()[updateGaussianStoreAttribute]([
           { start: patch.firstSlot, count: patch.slotCount },
         ]);
@@ -736,7 +829,7 @@ export class GaussianStore implements GaussianRenderStore {
     }
     this.applyCloudStates(event.changedClouds);
     this.packedVersion = event.contentVersion;
-    this.pendingLod = event.lodPending;
+    this.pendingLod = event.mipmapPending;
     const ranges = event.patches.map((item) => ({
       start: item.firstSlot,
       count: item.slotCount,
@@ -745,37 +838,70 @@ export class GaussianStore implements GaussianRenderStore {
     for (const range of ranges)
       for (let i = range.start; i < range.start + range.count; i++)
         touched.add(i);
-    const active = event.changedClouds.reduce(
-      (sum, state) => sum + state.renderedCount,
-      0,
-    );
+    const active = this.count;
+    const means = this.data?.means.array as Float32Array | undefined;
+    const written: number[] = [];
+    const cleared: number[] = [];
+    for (const slot of touched)
+      (means && means[slot * 4 + 3]! < 0 ? cleared : written).push(slot);
     this.packStats = {
       fullRebuild: false,
+      layoutVersion: event.layoutVersion,
       slotCapacity: this.capacity,
       activeGaussians: active,
-      reusedSlots: Math.max(0, active - touched.size),
-      writtenSlots: touched.size,
-      clearedSlots: 0,
+      reusedSlots: Math.max(0, active - written.length),
+      writtenSlots: written.length,
+      clearedSlots: cleared.length,
       estimatedUploadBytes: event.patches.reduce(
         (sum, item) => sum + item.data.byteLength,
         0,
       ),
-      writtenSlotRanges: ranges,
-      clearedSlotRanges: [],
+      writtenSlotRanges: mergeSlotRanges(written, 0, 0),
+      clearedSlotRanges: mergeSlotRanges(cleared, 0, 0),
       planningMs: 0,
       slotUpdateMs: 0,
     };
     this.notify("content");
   }
 
+  private activate(
+    event: Extract<BackendPayload, { type: "buffers-activated" }>,
+  ): void {
+    if (
+      event.layoutVersion !== this.packedLayoutVersion ||
+      event.baseContentVersion !== this.packedVersion
+    )
+      return;
+    this.data?.stageActivation(
+      new Uint32Array(event.addedSlots),
+      new Uint32Array(event.removedSlots),
+      event.commit,
+    );
+    this.packedVersion = event.contentVersion;
+    this.pendingLod = event.mipmapPending;
+    if (event.commit) this.applyCloudStates(event.changedClouds);
+    if (this.packStats)
+      this.packStats = {
+        ...this.packStats,
+        fullRebuild: false,
+        activeGaussians: this.count,
+        estimatedUploadBytes:
+          event.addedSlots.byteLength + event.removedSlots.byteLength,
+      };
+    this.notify("content");
+  }
+
   private attributeArray(name: string): Float32Array | Uint32Array | null {
-    if (name === "lodLevel") return this.enablePackedLodLevelAttribute().array;
+    if (name === "mipmapLevel")
+      return this.enablePackedLodLevelAttribute().array;
     if (name === "means")
       return (this.data?.means.array as Float32Array) ?? null;
     if (name === "scalesOpacity")
-      return (this.data?.scalesOpacity.array as Float32Array) ?? null;
+      return (
+        (this.data?.scalesOpacity.array as Float32Array | Uint32Array) ?? null
+      );
     if (name === "rotations")
-      return (this.data?.rotations.array as Float32Array) ?? null;
+      return (this.data?.rotations.array as Float32Array | Uint32Array) ?? null;
     if (name === "shCoefficients")
       return (this.data?.shCoefficients.array as Uint32Array) ?? null;
     return (

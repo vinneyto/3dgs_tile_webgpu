@@ -9,6 +9,7 @@ import {
   invocationLocalIndex,
   storage,
   uint,
+  uniform,
   wgslFn,
   workgroupArray,
   workgroupId,
@@ -22,6 +23,8 @@ import { SCAN_BLOCK_ITEMS, WORKGROUP_SIZE } from "./constants";
 
 interface SuffixMinLevel {
   length: number;
+  runtimeLength: ReturnType<typeof uniform>;
+  runtimeBlockCount: ReturnType<typeof uniform>;
   blockCount: number;
   values: StorageBufferAttribute;
   scanNode: ComputeNode;
@@ -32,7 +35,11 @@ export class SuffixMinStage {
   private readonly attributes = new AttributePool();
   private readonly levels: SuffixMinLevel[] = [];
 
-  constructor(values: StorageBufferAttribute, length: number) {
+  constructor(
+    values: StorageBufferAttribute,
+    length: number,
+    private readonly getLength?: () => number,
+  ) {
     const scanKernel = wgslFn<Record<string, Node>>(suffixMinBlocksWGSL);
     const addKernel = wgslFn<Record<string, Node>>(addSuffixBlockMinsWGSL);
     let levelValues = values;
@@ -45,10 +52,12 @@ export class SuffixMinStage {
         `3dgs.tile-offset-mins-${level}`,
         blockCount,
       );
+      const runtimeLength = uniform(levelLength, "uint");
+      const runtimeBlockCount = uniform(blockCount, "uint");
       const scanNode = scanKernel({
         lane: invocationLocalIndex,
         group_id: workgroupId.x,
-        length: uint(levelLength),
+        length: getLength ? runtimeLength : uint(levelLength),
         values: storage(levelValues, "uint", levelLength),
         block_mins: storage(blockMins, "uint", blockCount),
         scratch: workgroupArray("uint", SCAN_BLOCK_ITEMS),
@@ -57,6 +66,8 @@ export class SuffixMinStage {
         .setName(`3DGS tile offset suffix scan WGSL ${level}`);
       this.levels.push({
         length: levelLength,
+        runtimeLength,
+        runtimeBlockCount,
         blockCount,
         values: levelValues,
         scanNode,
@@ -71,8 +82,10 @@ export class SuffixMinStage {
       const parent = this.levels[level + 1]!;
       current.addNode = addKernel({
         index: instanceIndex,
-        length: uint(current.length),
-        block_count: uint(parent.length),
+        length: getLength ? current.runtimeLength : uint(current.length),
+        block_count: getLength
+          ? current.runtimeBlockCount
+          : uint(parent.length),
         values: storage(current.values, "uint", current.length),
         block_suffix_mins: storage(
           parent.values,
@@ -86,11 +99,27 @@ export class SuffixMinStage {
   }
 
   encode(renderer: WebGPURenderer): void {
+    let length = this.getLength?.();
     for (const level of this.levels) {
-      renderer.compute(level.scanNode, [level.blockCount, 1, 1]);
+      const activeLength = length ?? level.length;
+      const blocks = Math.max(1, Math.ceil(activeLength / SCAN_BLOCK_ITEMS));
+      level.runtimeLength.value = activeLength;
+      level.runtimeBlockCount.value = blocks;
+      renderer.compute(level.scanNode, [blocks, 1, 1]);
+      if (length !== undefined) length = blocks;
     }
     for (let level = this.levels.length - 2; level >= 0; level--) {
-      renderer.compute(this.levels[level]!.addNode!);
+      const current = this.levels[level]!;
+      if (this.getLength) {
+        renderer.compute(current.addNode!, [
+          Math.max(
+            1,
+            Math.ceil(Number(current.runtimeLength.value) / WORKGROUP_SIZE),
+          ),
+          1,
+          1,
+        ]);
+      } else renderer.compute(current.addNode!);
     }
   }
 

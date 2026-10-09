@@ -10,26 +10,30 @@
     <section id="hud">
       <strong>3DGS WebGPU sandbox</strong>
       <span id="status">Starting WebGPU…</span>
-      <button id="open-ply" type="button">Open PLY</button>
-      <input id="ply-file" type="file" accept=".ply" hidden />
+      <button id="open-ply" type="button">Open cloud</button>
+      <input
+        id="ply-file"
+        type="file"
+        accept=".ply,.splat,.ksplat,.spz,.sog,.sogs,.rad"
+        hidden
+      />
       <small
-        >Orbit: drag · Focus: click · Zoom: wheel · Drop a canonical 3DGS
-        PLY</small
+        >Orbit: drag · Focus: click · Zoom: wheel · Drop a Gaussian cloud</small
       >
       <details id="spatial-debug">
-        <summary>Octree / LOD visualization</summary>
+        <summary>Mipmap visualization</summary>
         <label>
           <input id="show-octree" type="checkbox" />
-          Octree grid
+          Mipmap bounds
         </label>
         <label>
           <input id="color-splats-by-lod" type="checkbox" />
-          Color splats by LOD
+          Color splats by mipmap depth
         </label>
-        <div class="lod-palette" aria-label="LOD color palette">
-          <span data-lod-color="0">LOD 0</span>
-          <span data-lod-color="1">LOD 1</span>
-          <span data-lod-color="2">LOD 2</span>
+        <div class="lod-palette" aria-label="Mipmap color palette">
+          <span data-lod-color="0">Depth 0</span>
+          <span data-lod-color="1">Depth 1</span>
+          <span data-lod-color="2">Depth 2</span>
         </div>
       </details>
       <details id="renderer-diagnostics" open>

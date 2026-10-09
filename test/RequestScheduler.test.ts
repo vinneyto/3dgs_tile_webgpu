@@ -52,7 +52,7 @@ class ManualBackend implements GaussianBackend {
         command: { id: command.id, type: command.type },
         durationMs: 10,
         isFinal: false,
-        payload: { type: "capabilities-accepted", protocolVersion: 1 },
+        payload: { type: "capabilities-accepted", protocolVersion: 2 },
       });
     this.response?.({
       command: { id: command.id, type: command.type },
@@ -78,6 +78,30 @@ class ManualBackend implements GaussianBackend {
 }
 
 describe("SerialRequestScheduler", () => {
+  it("runs queued camera commands before cache prefetch", async () => {
+    const backend = new ManualBackend();
+    const scheduler = new SerialRequestScheduler(backend);
+    scheduler.start();
+    const command = (id: string) =>
+      createSetCameraCommand(id, 1, matrix, matrix, 16, 16);
+    const first = command("first");
+    const a = scheduler.schedule(first);
+    const warming = scheduler.schedule({ type: "prefetch-cache", id: "warm" });
+    const camera = command("camera");
+    const b = scheduler.schedule(camera);
+    backend.answer(first, true);
+    await a;
+    await Promise.resolve();
+    expect(backend.sent.at(-1)?.id).toBe("camera");
+    backend.answer(camera, true);
+    await b;
+    await Promise.resolve();
+    expect(backend.sent.at(-1)?.id).toBe("warm");
+    backend.answer(backend.sent.at(-1)!, true);
+    await warming;
+    scheduler.dispose();
+  });
+
   it("runs loads before handshake, and waits for the final response", async () => {
     const backend = new ManualBackend();
     const scheduler = new SerialRequestScheduler(backend);
@@ -282,6 +306,7 @@ describe("GaussianStore packing settings", () => {
       isFinal: false,
       payload: {
         type: "cloud-loaded",
+        sourceVersion: 1,
         cloudId: load.cloudId,
         objectId: 0,
         sourceCount: 1,
@@ -310,14 +335,14 @@ describe("GaussianStore packing settings", () => {
     await expect(rejectedPriority).rejects.toThrow("priority rejected");
     expect(cloud.packingPriority).toBe(5);
 
-    const packing = store.setCloudPacking(cloud, { type: "maximum" });
+    const packing = store.setCloudMipmaps(cloud, { type: "none" });
     const packingCommand = backend.sent.at(-1)!;
     await cloud.invalidatePacking();
     expect(backend.sent.at(-1)).toBe(packingCommand);
     backend.answer(packingCommand, true);
     await packing;
 
-    const rejectedPacking = store.setCloudPacking(cloud, { type: "radial" });
+    const rejectedPacking = store.setCloudMipmaps(cloud, { type: "standard" });
     backend.answer(backend.sent.at(-1)!, true, {
       code: "invalid-range",
       message: "strategy rejected",
@@ -326,8 +351,8 @@ describe("GaussianStore packing settings", () => {
 
     const retry = cloud.invalidatePacking();
     expect(backend.sent.at(-1)).toMatchObject({
-      type: "set-cloud-packing",
-      packingStrategy: { type: "maximum" },
+      type: "set-cloud-mipmaps",
+      mipmaps: { type: "none" },
     });
     backend.answer(backend.sent.at(-1)!, true);
     await retry;

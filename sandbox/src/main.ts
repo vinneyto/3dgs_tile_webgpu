@@ -50,4 +50,6 @@ import.meta.hot?.dispose(() => {
   sandbox.dispose();
 });
 
-await sandbox.loadUrl(parameters.get("ply") ?? "/sample.ply");
+await sandbox.loadUrl(
+  parameters.get("cloud") ?? parameters.get("ply") ?? "/sample.ply",
+);

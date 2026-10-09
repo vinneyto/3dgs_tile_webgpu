@@ -1,1 +1,5 @@
 dist/
+
+rust/vendor/
+rust/target/
+src/wasm-backend/generated/

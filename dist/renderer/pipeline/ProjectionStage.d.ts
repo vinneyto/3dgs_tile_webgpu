@@ -15,9 +15,14 @@ export declare class ProjectionStage {
     readonly tileCounts: StorageBufferAttribute;
     private readonly attributes;
     private computeNode;
+    private activeVersion;
+    private firstActiveChange;
+    private lastActiveChange;
+    private readonly unsubscribeActiveSlots;
     constructor(data: GaussianData, frame: FrameUniforms, objects: ObjectFrameState, antialiasMode: AntialiasMode, nodes: GaussianProjectionNodeSlots, subpixelSampleCulling?: boolean);
     rebuild(nodes: GaussianProjectionNodeSlots): void;
     encode(renderer: WebGPURenderer): void;
     dispose(): void;
+    private updateActiveSlots;
     private createComputeNode;
 }

@@ -17,6 +17,7 @@ import { IntersectionStage } from "./IntersectionStage";
 import { ObjectFrameState } from "./ObjectFrameState";
 import { ProjectionStage } from "./ProjectionStage";
 import { ProfileDiagnosticsStage } from "./ProfileDiagnosticsStage";
+import { RasterChunkWorkspace } from "./RasterChunkWorkspace";
 import { RadixSorter } from "./RadixSorter";
 import { TileOffsetBuilder } from "./TileOffsetBuilder";
 import { TileRasterizer } from "./TileRasterizer";
@@ -51,6 +52,8 @@ export class TiledGaussianPipeline {
   private tilesX = 0;
   private tilesY = 0;
   private tileStageRebuilds = 0;
+  private tileCapacity = 0;
+  private chunkWorkspace: RasterChunkWorkspace | null = null;
 
   constructor(
     private readonly renderer: WebGPURenderer,
@@ -73,6 +76,7 @@ export class TiledGaussianPipeline {
   ) {
     this.frame = new FrameUniforms(camera, background);
     this.objects = new ObjectFrameState(camera, store, data.count);
+    this.frame.activeCount.value = data.activeCount;
     this.projection = new ProjectionStage(
       data,
       this.frame,
@@ -97,6 +101,7 @@ export class TiledGaussianPipeline {
       data.count,
       "visible",
       "projectedVisibility",
+      () => this.data.activeCount,
     );
     this.visible = new VisibleGaussianStage(
       renderer,
@@ -105,6 +110,8 @@ export class TiledGaussianPipeline {
       this.visibleScan.output,
       this.projection.projectedMean,
       this.frame.viewport,
+      this.frame.activeCount,
+      () => this.data.activeCount,
     );
     this.depthSorter = new RadixSorter(
       renderer,
@@ -126,6 +133,8 @@ export class TiledGaussianPipeline {
       this.orderedTiles.tileCounts,
       data.count,
       "intersections",
+      "uint",
+      () => this.data.activeCount,
     );
     this.intersections = new IntersectionStage(
       renderer,
@@ -156,10 +165,20 @@ export class TiledGaussianPipeline {
     colorTexture: StorageTexture,
     depthTexture: StorageTexture | null,
   ): void {
-    this.frame.update(width, height, this.tilesX, this.tilesY);
+    const tilesX = Math.ceil(width / TILE_SIZE);
+    const tilesY = Math.ceil(height / TILE_SIZE);
+    if (tilesX > 65_535 || tilesY > 65_535) {
+      throw new RangeError("Render size exceeds WebGPU's tile dispatch limit");
+    }
+    this.width = width;
+    this.height = height;
+    this.tilesX = tilesX;
+    this.tilesY = tilesY;
+    this.frame.update(width, height, tilesX, tilesY);
+    this.frame.activeCount.value = this.data.activeCount;
     this.objects.update();
-    if (width !== this.width || height !== this.height) {
-      this.rebuildTileStages(width, height, colorTexture, depthTexture);
+    if (tilesX * tilesY > this.tileCapacity) {
+      this.rebuildTileStages(colorTexture, depthTexture);
     }
     if (this.tileOffsets === null || this.rasterizer === null) {
       throw new Error("TiledGaussianPipeline failed to create tile stages");
@@ -216,6 +235,7 @@ export class TiledGaussianPipeline {
       tilesX: this.tilesX,
       tilesY: this.tilesY,
       tileStageRebuilds: this.tileStageRebuilds,
+      tileCapacity: this.tileCapacity,
       radixPasses: this.depthSorter.passCount + this.sorter.passCount,
       depthRadixPasses: this.depthSorter.passCount,
       tileRadixPasses: this.sorter.passCount,
@@ -249,6 +269,8 @@ export class TiledGaussianPipeline {
     this.tileOffsets = null;
     this.rasterizer?.dispose();
     this.rasterizer = null;
+    this.chunkWorkspace?.dispose();
+    this.chunkWorkspace = null;
     this.sorter.dispose();
     this.intersections.dispose();
     this.scan.dispose();
@@ -262,31 +284,31 @@ export class TiledGaussianPipeline {
   }
 
   private rebuildTileStages(
-    width: number,
-    height: number,
     colorTexture: StorageTexture,
     depthTexture: StorageTexture | null,
   ): void {
-    const tilesX = Math.ceil(width / TILE_SIZE);
-    const tilesY = Math.ceil(height / TILE_SIZE);
-    const tileCount = tilesX * tilesY;
-    if (tilesX > 65_535 || tilesY > 65_535) {
-      throw new RangeError("Render size exceeds WebGPU's tile dispatch limit");
+    const tileCapacity = 2 ** Math.ceil(Math.log2(this.tilesX * this.tilesY));
+    if (this.chunkWorkspace === null && this.rasterChunkSize !== null) {
+      this.chunkWorkspace = new RasterChunkWorkspace(
+        this.capacity,
+        this.rasterChunkSize,
+        depthTexture !== null,
+      );
     }
-
     this.tileOffsets?.dispose();
     this.rasterizer?.dispose();
     const tileBits = Math.max(
       1,
-      Math.ceil(Math.log2(Math.max(2, tileCount + 1))),
+      Math.ceil(Math.log2(Math.max(2, tileCapacity + 1))),
     );
     this.sorter.configure(tileBits);
     this.tileOffsets = new TileOffsetBuilder(
       this.renderer,
       this.mode,
-      tileCount,
+      tileCapacity,
       this.sorter.sortedRecords,
       this.intersections.dispatch,
+      () => Number(this.frame.tileCount.value),
     );
     this.rasterizer = new TileRasterizer(
       this.renderer,
@@ -304,17 +326,14 @@ export class TiledGaussianPipeline {
       this.frame,
       this.maxRasterizedSplatsPerTile,
       this.rasterChunkSize,
-      tileCount,
+      tileCapacity,
       this.nodes,
       this.rasterStats,
       this.rasterTransmittanceThreshold,
       this.depthAlphaThreshold,
+      this.chunkWorkspace ?? undefined,
     );
-    this.width = width;
-    this.height = height;
-    this.tilesX = tilesX;
-    this.tilesY = tilesY;
-    this.frame.update(width, height, tilesX, tilesY);
+    this.tileCapacity = tileCapacity;
     this.tileStageRebuilds++;
   }
 }

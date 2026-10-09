@@ -42,7 +42,7 @@ export class ObjectFrameState {
     this.camera.updateWorldMatrix(true, false);
     this.cameraWorldPosition.setFromMatrixPosition(this.camera.matrixWorld);
     // Removed clouds must become invisible even before the new layout arrives.
-    this.values.fill(0);
+    this.values.fill(0, this.frameComponentOffset);
 
     for (const cloud of this.store.clouds) this.writeCloud(cloud);
     this.attribute.clearUpdateRanges();

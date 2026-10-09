@@ -1,5 +1,5 @@
 import { rasterDepthNodes } from "../sandbox/src/rasterDepthNodes";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DepthTexture,
   PerspectiveCamera,
@@ -10,6 +10,7 @@ import {
 } from "three/webgpu";
 import {
   context,
+  float,
   perspectiveDepthToViewZ,
   texture,
   uniform,
@@ -23,6 +24,9 @@ import { packedStore } from "./helpers/packedStore";
 import {
   createDefaultGaussianNodeSlots,
   gaussianColor,
+  gaussianIndex,
+  rasterGaussianIndex,
+  rasterObjectId,
   gaussianProjectedArea,
   rasterGaussianColor,
   rasterGaussianOpacity,
@@ -38,6 +42,53 @@ import { ProfileDiagnosticsStage } from "../src/renderer/pipeline/ProfileDiagnos
 import { TileRasterizer } from "../src/renderer/pipeline/TileRasterizer";
 
 describe("generated Gaussian WGSL", () => {
+  it("decodes compact geometry with seven shape words and no shader-f16 feature", () => {
+    const data = new GaussianData(
+      {
+        means: new StorageBufferAttribute(new Float32Array([1, 2, 3, 0]), 4),
+        scalesOpacity: new StorageBufferAttribute(new Uint32Array(2), 2),
+        rotations: new StorageBufferAttribute(new Uint32Array(1), 1),
+        shCoefficients: new StorageBufferAttribute(new Uint32Array(1), 1),
+      },
+      {
+        count: 1,
+        geometryFormat: "compact",
+        shFormat: "rgb8e8",
+        activeSlots: new Uint32Array([0]),
+      },
+    );
+    const camera = new PerspectiveCamera();
+    const store = { clouds: [], objectCapacity: 1 } as any;
+    const frame = new FrameUniforms(camera, [0, 0, 0, 0]);
+    const objects = new ObjectFrameState(camera, store, 1);
+    const projection = new ProjectionStage(
+      data,
+      frame,
+      objects,
+      "compensated",
+      createDefaultGaussianNodeSlots(),
+    );
+    const shader = buildCompute((projection as any).computeNode);
+    expect(shader).toContain("unpack2x16float");
+    expect(shader).toContain("decodeCompactRotation");
+    expect(shader).toContain("vec2<u32>");
+    expect(shader).not.toContain("enable f16");
+    expect(shader.match(/var<storage/g)?.length).toBeLessThanOrEqual(8);
+    projection.dispose();
+    objects.dispose();
+    data.dispose();
+  });
+
+  it("rejects sparse holes before object reads even with an opacity override", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.gaussianOpacityNode = float(1);
+    const source = buildPipeline(nodes).projectionSource;
+    const guard = source.match(/if \( \( [^\n]+\.w < 0\.0 \) \) \{\s+return;/);
+    expect(guard).not.toBeNull();
+    const objectId = source.indexOf("u32(", guard!.index);
+    expect(objectId).toBeGreaterThan(guard!.index!);
+  });
+
   it("builds projection and raster TSL shells into compute shaders", () => {
     const data = oneGaussian();
     const { store } = packedStore(data);
@@ -130,6 +181,16 @@ describe("generated Gaussian WGSL", () => {
     expect(countChunksSource).toContain("count_raster_chunks");
     expect(prepareChunksSource).toContain("prepare_raster_chunk_dispatch");
     expect(emitChunksSource).toContain("emit_raster_chunk_tasks");
+    // Viewport counts stay in uniforms, so resizing does not rebuild these graphs.
+    expect(countChunksSource).toMatch(
+      /count_raster_chunks\(\s*[^,]+,\s*\w+\.nodeUniform\d+/,
+    );
+    expect(prepareChunksSource).toMatch(
+      /prepare_raster_chunk_dispatch\(\s*\w+\.nodeUniform\d+/,
+    );
+    expect(emitChunksSource).toMatch(
+      /emit_raster_chunk_tasks\(\s*[^,]+,\s*\w+\.nodeUniform\d+/,
+    );
     expect(projectionSource).not.toMatch(/return;\s*return;/);
     expect(rasterSource).not.toMatch(/continue;\s*continue;/);
     expect(rasterSource).not.toMatch(/break;\s*break;/);
@@ -150,6 +211,78 @@ describe("generated Gaussian WGSL", () => {
     expect(pixelSetup).toBeGreaterThan(-1);
     expect(outerLoop).toBeGreaterThan(pixelSetup);
     expect(outputStore).toBeGreaterThan(outerLoop);
+  });
+
+  it("remaps projection, SH, custom attributes and raster access without an extra storage binding", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.gaussianColorNode = gaussianColor.mul(float(gaussianIndex.add(1)));
+    nodes.rasterColorNode = rasterGaussianColor.mul(
+      float(rasterGaussianIndex.add(1)),
+    );
+    nodes.rasterDiscardNode = rasterObjectId.equal(999);
+    const { projectionSource, rasterSource, chunkSource } = buildPipeline(
+      nodes,
+      true,
+      false,
+      "float32",
+      true,
+    );
+    expect(projectionSource).toContain("gaussianSourceSlot");
+    expect(projectionSource).toContain("gaussianSourceSlot");
+    expect(projectionSource).toMatch(
+      /evaluate_gaussian_sh[^;]+gaussianSourceSlot/s,
+    );
+    expect(
+      (projectionSource.match(/var<storage/g) ?? []).length,
+    ).toBeLessThanOrEqual(8);
+    for (const source of [rasterSource, chunkSource]) {
+      expect(source).toContain("decode_active_slot");
+      expect(source).toContain("rasterSourceSlot");
+    }
+  });
+
+  it("uploads an empty cut and updates active indices independently for two projection pipelines", () => {
+    const data = oneGaussian(true);
+    const { store } = packedStore(data);
+    const frame = new FrameUniforms(new PerspectiveCamera(), [0, 0, 0, 0]);
+    const objects = new ObjectFrameState(
+      new PerspectiveCamera(),
+      store,
+      data.count,
+    );
+    const first = new ProjectionStage(
+      data,
+      frame,
+      objects,
+      "compensated",
+      createDefaultGaussianNodeSlots(),
+    );
+    const second = new ProjectionStage(
+      data,
+      frame,
+      objects,
+      "compensated",
+      createDefaultGaussianNodeSlots(),
+    );
+    expect(
+      buildCompute((first as unknown as { computeNode: unknown }).computeNode),
+    ).toContain("decode_active_slot");
+    const compute = vi.fn();
+    const renderer = { compute } as unknown as WebGPURenderer;
+    data.stageActivation(new Uint32Array(), new Uint32Array([0]), true);
+    first.encode(renderer);
+    expect(compute.mock.calls[0]![1]).toEqual([1, 1, 1]);
+    data.stageActivation(new Uint32Array([0]), new Uint32Array(), true);
+    first.encode(renderer);
+    second.encode(renderer);
+    for (const projection of [first, second]) {
+      const bits = new Uint32Array(data.shCoefficients.array.buffer);
+      expect(bits[4]).toBe(0x3f800000);
+      expect(data.shCoefficients.updateRanges.length).toBeGreaterThan(0);
+      projection.dispose();
+    }
+    objects.dispose();
+    store.dispose();
   });
 
   it("builds representative custom projection and raster graphs", () => {
@@ -314,8 +447,9 @@ function buildPipeline(
   subpixelSampleCulling = true,
   rasterStats = false,
   mode: "float32" | "packed16" = "float32",
+  activeSlots = false,
 ) {
-  const data = oneGaussian();
+  const data = oneGaussian(activeSlots);
   const { store } = packedStore(data);
   const packed = store.getPackedData();
   const camera = new PerspectiveCamera();
@@ -392,7 +526,7 @@ function attribute(array: Float32Array | Uint32Array): StorageBufferAttribute {
   return new StorageBufferAttribute(array, 2);
 }
 
-function oneGaussian(): GaussianData {
+function oneGaussian(activeSlots = false): GaussianData {
   const vec4 = (values: readonly number[]) =>
     new StorageBufferAttribute(new Float32Array(values), 4);
   return new GaussianData(
@@ -402,6 +536,6 @@ function oneGaussian(): GaussianData {
       rotations: vec4([0, 0, 0, 1]),
       shCoefficients: vec4([0, 0, 0, 0]),
     },
-    { count: 1 },
+    { count: 1, activeSlots: activeSlots ? new Uint32Array([0]) : undefined },
   );
 }
