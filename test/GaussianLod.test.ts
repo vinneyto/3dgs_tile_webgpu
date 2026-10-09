@@ -541,7 +541,7 @@ describe("GaussianLod", () => {
       maxGaussians: number;
       planningMs: number;
       roundTripMs: number;
-      release: ReturnType<typeof vi.fn>;
+      release: () => void;
     } | null = null;
     const planner = {
       get pending() {
