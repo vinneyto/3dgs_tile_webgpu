@@ -497,8 +497,7 @@ struct UploadPlan {
     cursor: usize,
     batch: usize,
     activation_batch: usize,
-    coarse_end: usize,
-    coarse_activation: Option<ActivationPlan>,
+    defer_patches: bool,
     before: Option<ActivationPlan>,
     after: Option<ActivationPlan>,
 }
@@ -563,11 +562,18 @@ impl Engine {
         );
         self.timings = EngineTimings::default();
         let mut output = Vec::new();
+        let atomic_load = matches!(&command, Command::Load(_));
         match command {
             Command::Prefetch => return self.prefetch(),
             Command::Load(c) => {
                 ensure!(!self.clouds.contains_key(&c.cloud_id), "Duplicate cloud");
                 let options = c.options.unwrap_or_default();
+                let world = options
+                    .world_matrix
+                    .as_deref()
+                    .map(|m| matrix(m, true))
+                    .transpose()?
+                    .unwrap_or(Mat4::IDENTITY);
                 let source = decode(bytes, &options)?;
                 let extra = extras(&options, source.len())?;
                 self.validate_schemas(&extra)?;
@@ -596,7 +602,7 @@ impl Engine {
                     tree,
                     tree_bounds,
                     bounds,
-                    world: Mat4::IDENTITY,
+                    world,
                     source_version: 1,
                     snapshot_version: 1,
                     generation: 1,
@@ -715,7 +721,7 @@ impl Engine {
             }
         }
         if self.capabilities.is_some() {
-            output.extend(self.pack()?);
+            output.extend(self.pack(atomic_load)?);
         }
         Ok(output)
     }
@@ -896,44 +902,74 @@ impl Engine {
         }
         (selected, pinned, states)
     }
-    fn pack(&mut self) -> Result<Vec<Payload>> {
+    fn pack(&mut self, atomic_load: bool) -> Result<Vec<Payload>> {
         let cap = self.capabilities.as_ref().unwrap();
-        let (degree, extra, budget) = self.validate_layout(cap, None)?;
+        let (degree, extra, mut budget) = self.validate_layout(cap, None)?;
         let selection_start = clock_ms();
         let available: usize = self
             .clouds
             .values()
             .map(|c| c.tree.as_ref().map_or(c.source.len(), |t| t.len()))
             .sum();
-        let capacity = budget.min(available).max(1);
-        let (selected, pinned, states) = self.select(capacity);
-        self.timings.selection_ms = clock_ms() - selection_start;
-        let mapping_start = clock_ms();
-        let count = selected.len();
-        let object_capacity = self
+        let required_objects = self
             .clouds
             .values()
             .map(|c| c.object_id + 1)
             .max()
             .unwrap_or(0);
+        let limit = cap.max_buffer_size.min(cap.max_storage_buffer_binding_size);
+        let old_objects = self.packed.as_ref().map_or(0, |p| p.object_capacity);
+        let reserved_objects = required_objects
+            .max(old_objects)
+            .checked_next_power_of_two()
+            .unwrap_or(required_objects)
+            .max(32);
+        // Reserve the small object table only when it leaves room for the
+        // actual source records. Tight device limits retain exact accounting.
+        let object_capacity = if required_objects > 0
+            && (reserved_objects as usize * 160).saturating_add(available.min(budget).max(1) * 16)
+                <= limit
+        {
+            reserved_objects
+        } else {
+            required_objects
+        };
+        budget = budget.min(limit.saturating_sub(object_capacity as usize * 160) / 16);
+        let old_capacity = self.packed.as_ref().map_or(0, |p| p.capacity);
+        // Keep the allocation on removals. Growth reserves one equally sized
+        // asset, bounded by the same device binding limits as live records.
+        let required = available.min(budget).max(1);
+        let has_cloud_allocation = self.packed.as_ref().is_some_and(|p| !p.clouds.is_empty());
+        let capacity = if old_capacity >= required && (has_cloud_allocation || available == 0) {
+            old_capacity.min(budget).max(1)
+        } else {
+            required.saturating_mul(2).min(budget).max(1)
+        };
+        let (selected, pinned, states) = self.select(capacity.min(available).max(1));
+        self.timings.selection_ms = clock_ms() - selection_start;
+        let mapping_start = clock_ms();
+        let count = selected.len();
         let compact = cap.supports_compact_gaussians;
         let schema = gpu_empty_attributes(degree, &extra, 0, compact);
-        let compatible = self
-            .packed
-            .as_ref()
-            .map(|old| {
-                old.compact == compact
-                    && old.capacity == capacity
-                    && old.degree == degree
-                    && old.object_capacity == object_capacity
-                    && old.attributes.len() == schema.len()
-                    && old.attributes.iter().zip(&schema).all(|(a, b)| {
-                        a.name == b.name
-                            && a.format == b.format
-                            && a.elements_per_gaussian == b.elements_per_gaussian
-                    })
-            })
-            .unwrap_or(false);
+        let same_schema = self.packed.as_ref().is_some_and(|old| {
+            old.compact == compact
+                && old.degree == degree
+                && old.attributes.len() == schema.len()
+                && old.attributes.iter().zip(&schema).all(|(a, b)| {
+                    a.name == b.name
+                        && a.format == b.format
+                        && a.elements_per_gaussian == b.elements_per_gaussian
+                })
+        });
+        let compatible = same_schema
+            && self.packed.as_ref().is_some_and(|old| {
+                old.capacity == capacity && old.object_capacity == object_capacity
+            });
+        let preserve_existing = same_schema
+            && self
+                .packed
+                .as_ref()
+                .is_some_and(|old| capacity >= old.capacity);
         let packed = self.packed.get_or_insert_with(|| Packed {
             compact,
             capacity,
@@ -982,14 +1018,30 @@ impl Engine {
             packed.versions[slot] = 0;
         }
         let states_changed = packed.clouds != states;
-        if !compatible {
+        if !compatible && !preserve_existing {
             self.prefetch_cursors.clear();
             packed.attributes = gpu_empty_attributes(degree, &extra, capacity, compact);
             packed.versions.fill(0);
+        } else if !compatible {
+            for a in &mut packed.attributes {
+                let width = a.elements_per_gaussian;
+                match &mut a.data {
+                    Data::F32(v) => {
+                        let old_len = v.len();
+                        v.resize(capacity * width, 0.0);
+                        if a.name == "means" {
+                            for row in v[old_len..].chunks_mut(width) {
+                                row[3] = -1.0;
+                            }
+                        }
+                    }
+                    Data::U32(v) => v.resize(capacity * width, 0),
+                }
+            }
         }
         // A layout replacement repopulates every valid resident owner, not
         // only the draw cut. Cached rows remain real resident data afterwards.
-        let resident_selection: Vec<_> = if !compatible {
+        let resident_selection: Vec<_> = if !compatible && !preserve_existing {
             let clouds: AHashMap<_, _> = self.clouds.values().map(|c| (c.object_id, c)).collect();
             packed
                 .slots
@@ -1003,7 +1055,7 @@ impl Engine {
         } else {
             Vec::new()
         };
-        let dirty: Vec<(&SelectedGaussian, usize)> = if compatible {
+        let dirty: Vec<(&SelectedGaussian, usize)> = if compatible || preserve_existing {
             requested
                 .iter()
                 .zip(&changes.selected_slots)
@@ -1019,7 +1071,7 @@ impl Engine {
         let packing_start = clock_ms();
         // Capture only candidate slots. Retained, unchanged Gaussians are never
         // repacked, copied or byte-compared on camera updates.
-        let mut candidates: Vec<_> = if compatible {
+        let mut candidates: Vec<_> = if compatible || preserve_existing {
             changes
                 .cleared
                 .iter()
@@ -1115,7 +1167,7 @@ impl Engine {
                 .iter()
                 .zip(&old_active_slots)
                 .any(|(key, &slot)| packed.slots.owners.get(slot).copied().flatten() != Some(*key));
-        let fallback_slots: Vec<_> = if needs_fallback {
+        let fallback_slots: Vec<_> = if needs_fallback && !atomic_load {
             old_pinned
                 .iter()
                 .filter(|(key, slot)| {
@@ -1172,21 +1224,7 @@ impl Engine {
             .iter()
             .map(|s| packed.slots.to_slot[&s.key])
             .collect();
-        let coarse_activation = (!compatible && !pinned_slots.is_empty()).then(|| {
-            let mut counts = AHashMap::<u32, usize>::new();
-            for s in &pinned {
-                *counts.entry(s.key.cloud_id).or_default() += 1;
-            }
-            let clouds = states
-                .iter()
-                .map(|state| CloudState {
-                    rendered_count: counts.get(&state.object_id).copied().unwrap_or(0),
-                    ..state.clone()
-                })
-                .collect();
-            make_activation(&[], &pinned_slots, clouds, true)
-        });
-        let before = needs_fallback.then(|| {
+        let before = (needs_fallback && !atomic_load).then(|| {
             let mut counts = AHashMap::<u32, usize>::new();
             for &slot in &fallback_slots {
                 *counts
@@ -1205,10 +1243,10 @@ impl Engine {
         let after =
             (!compatible || active_changed || needs_fallback || states_changed).then(|| {
                 make_activation(
-                    if compatible {
+                    if compatible || preserve_existing {
                         &fallback_slots
                     } else {
-                        &pinned_slots
+                        &[]
                     },
                     &target_slots,
                     states.clone(),
@@ -1265,7 +1303,7 @@ impl Engine {
             .and_then(|s| s.max_upload_bytes_per_update)
             .unwrap_or(1024 * 1024);
         let batch = (max_bytes / bytes_per_slot).max(1);
-        let slots = if compatible {
+        let slots = if compatible || preserve_existing {
             changed
         } else {
             let pinned_set: ahash::AHashSet<_> = pinned_slots.iter().copied().collect();
@@ -1287,8 +1325,7 @@ impl Engine {
             cursor: 0,
             batch,
             activation_batch: (max_bytes / 4).max(1),
-            coarse_end: if compatible { 0 } else { pinned_slots.len() },
-            coarse_activation,
+            defer_patches: atomic_load && needs_fallback,
             before,
             after,
         });
@@ -1298,6 +1335,7 @@ impl Engine {
         self.layout_version += 1;
         self.content_version += 1;
         Ok(vec![Payload::BuffersAllocated {
+            preserve_existing,
             scene_revision: self.scene_revision,
             layout_version: self.layout_version,
             content_version: self.content_version,
@@ -1417,8 +1455,7 @@ impl Engine {
                 cursor: 0,
                 batch,
                 activation_batch: (max_bytes / 4).max(1),
-                coarse_end: 0,
-                coarse_activation: None,
+                defer_patches: false,
                 before: None,
                 after: None,
             });
@@ -1430,8 +1467,6 @@ impl Engine {
         let packed = self.packed.as_ref().unwrap();
         let activation = if plan.before.is_some() {
             plan.before.as_mut()
-        } else if plan.coarse_activation.is_some() && plan.cursor >= plan.coarse_end {
-            plan.coarse_activation.as_mut()
         } else if plan.cursor >= plan.slots.len() {
             plan.after.as_mut()
         } else {
@@ -1462,8 +1497,6 @@ impl Engine {
             if commit {
                 if plan.before.is_some() {
                     plan.before = None;
-                } else if plan.coarse_activation.is_some() {
-                    plan.coarse_activation = None;
                 } else {
                     plan.after = None;
                 }
@@ -1473,11 +1506,7 @@ impl Engine {
             }
             return Some(payload);
         }
-        let limit = if plan.coarse_activation.is_some() {
-            plan.coarse_end
-        } else {
-            plan.slots.len()
-        };
+        let limit = plan.slots.len();
         let end = plan.cursor.saturating_add(plan.batch).min(limit);
         let group = &plan.slots[plan.cursor..end];
         let mut patches = Vec::new();
@@ -1505,6 +1534,7 @@ impl Engine {
         let base = self.content_version;
         self.content_version += 1;
         let payload = Payload::BuffersPatched {
+            defer_until_activation: plan.defer_patches,
             scene_revision: self.scene_revision,
             layout_version: self.layout_version,
             base_content_version: base,

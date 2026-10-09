@@ -9,6 +9,7 @@ const kernelTimings = document.querySelector<HTMLElement>("#kernel-timings");
 const kernelProfile =
   document.querySelector<HTMLDetailsElement>("#kernel-profile");
 const openButton = document.querySelector<HTMLButtonElement>("#open-ply");
+const addButton = document.querySelector<HTMLButtonElement>("#add-cloud");
 const fileInput = document.querySelector<HTMLInputElement>("#ply-file");
 const octreeToggle = document.querySelector<HTMLInputElement>("#show-octree");
 const lodColorToggle = document.querySelector<HTMLInputElement>(
@@ -22,6 +23,7 @@ if (
   kernelTimings === null ||
   kernelProfile === null ||
   openButton === null ||
+  addButton === null ||
   fileInput === null ||
   octreeToggle === null ||
   lodColorToggle === null
@@ -40,6 +42,7 @@ const sandbox = await GaussianSandbox.create(
 );
 const ui = new SandboxUi(sandbox, {
   openButton,
+  addButton,
   fileInput,
   octreeToggle,
   lodColorToggle,

@@ -3,7 +3,7 @@ use glam::{Quat, Vec3A};
 use serde_json::{json, Value};
 use spark_lib::{
     antisplat::AntiSplatEncoder,
-    gsplat::{Gsplat, GsplatArray, GsplatSH1},
+    gsplat::{Gsplat, GsplatArray, GsplatSH1, GsplatSH2, GsplatSH3},
     ksplat::KsplatEncoder,
     rad::RadEncoder,
     spz::SpzEncoder,
@@ -196,6 +196,7 @@ fn none_uses_remaining_capacity_and_never_exports_a_tree() {
     )
     .unwrap();
     let mut replica = Replica::default();
+    replica.receive(&first);
     replica.receive(&second);
     assert_eq!((replica.active, replica.capacity), (2, 2));
     let Payload::BuffersActivated { changed_clouds, .. } = second.last().unwrap() else {
@@ -299,24 +300,50 @@ struct Replica {
     active_slots: std::collections::BTreeSet<usize>,
     pending_added: Vec<u32>,
     pending_removed: Vec<u32>,
+    pending_layout: Option<Box<Replica>>,
+    deferred: Vec<Patch>,
+    staging_layout: bool,
 }
 impl Replica {
     fn receive(&mut self, payloads: &[Payload]) {
         for payload in payloads {
+            if let Some(candidate) = &mut self.pending_layout {
+                let layout = match payload {
+                    Payload::BuffersPatched { layout_version, .. }
+                    | Payload::BuffersActivated { layout_version, .. } => Some(*layout_version),
+                    _ => None,
+                };
+                if layout == Some(candidate.layout) {
+                    candidate.receive(std::slice::from_ref(payload));
+                    if matches!(payload, Payload::BuffersActivated { commit: true, .. }) {
+                        *self = *self.pending_layout.take().unwrap();
+                        self.staging_layout = false;
+                    }
+                    continue;
+                }
+            }
             match payload {
                 Payload::BuffersAllocated {
                     attributes,
                     capacity,
                     layout_version,
                     content_version,
+                    preserve_existing,
                     ..
                 } => {
-                    self.attributes = attributes
+                    let mut candidate = Replica {
+                        capacity: *capacity,
+                        layout: *layout_version,
+                        content: *content_version,
+                        staging_layout: true,
+                        ..Default::default()
+                    };
+                    candidate.attributes = attributes
                         .iter()
                         .map(|a| {
                             let len = capacity * a.elements_per_gaussian;
-                            let data = if a.format == "f32" {
-                                let mut v = vec![0.0; len];
+                            let mut data = if a.format == "f32" {
+                                let mut v = vec![0.; len];
                                 if a.name == "means" {
                                     for row in v.chunks_mut(4) {
                                         row[3] = -1.;
@@ -326,16 +353,29 @@ impl Replica {
                             } else {
                                 Data::U32(vec![0; len])
                             };
+                            if *preserve_existing {
+                                if let Some(old) =
+                                    self.attributes.iter().find(|old| old.name == a.name)
+                                {
+                                    match (&mut data, &old.data) {
+                                        (Data::F32(dst), Data::F32(src)) => {
+                                            dst[..src.len()].copy_from_slice(src)
+                                        }
+                                        (Data::U32(dst), Data::U32(src)) => {
+                                            dst[..src.len()].copy_from_slice(src)
+                                        }
+                                        _ => panic!(),
+                                    }
+                                }
+                            }
                             Attribute { data, ..a.clone() }
                         })
                         .collect();
-                    self.capacity = *capacity;
-                    self.active = 0;
-                    self.active_slots.clear();
-                    self.pending_added.clear();
-                    self.pending_removed.clear();
-                    self.layout = *layout_version;
-                    self.content = *content_version;
+                    if *preserve_existing {
+                        candidate.active_slots = self.active_slots.clone();
+                        candidate.active = self.active;
+                    }
+                    self.pending_layout = Some(Box::new(candidate));
                 }
                 Payload::BuffersReplaced {
                     attributes,
@@ -359,10 +399,16 @@ impl Replica {
                     base_content_version,
                     content_version,
                     changed_clouds,
+                    defer_until_activation,
                     ..
                 } => {
                     assert_eq!(*layout_version, self.layout);
                     assert_eq!(*base_content_version, self.content);
+                    if *defer_until_activation {
+                        self.deferred.extend(patches.iter().cloned());
+                        self.content = *content_version;
+                        continue;
+                    }
                     for p in patches {
                         let a = self
                             .attributes
@@ -400,6 +446,23 @@ impl Replica {
                     self.pending_added.extend(added_slots);
                     self.pending_removed.extend(removed_slots);
                     if *commit {
+                        for p in self.deferred.drain(..) {
+                            let a = self
+                                .attributes
+                                .iter_mut()
+                                .find(|a| a.name == p.name)
+                                .unwrap();
+                            let first = p.first_slot * a.elements_per_gaussian;
+                            match (&mut a.data, p.data) {
+                                (Data::F32(dst), Data::F32(src)) => {
+                                    dst[first..first + src.len()].copy_from_slice(&src)
+                                }
+                                (Data::U32(dst), Data::U32(src)) => {
+                                    dst[first..first + src.len()].copy_from_slice(&src)
+                                }
+                                _ => panic!(),
+                            }
+                        }
                         for slot in self.pending_removed.drain(..) {
                             self.active_slots.remove(&(slot as usize));
                         }
@@ -414,7 +477,7 @@ impl Replica {
                 }
                 _ => (),
             }
-            if !self.attributes.is_empty() {
+            if !self.staging_layout && !self.attributes.is_empty() {
                 for &slot in &self.active_slots {
                     assert!(f32_attr(&self.attributes, "means")[slot * 4 + 3] >= 0.);
                 }
@@ -744,7 +807,7 @@ fn coarse_coverage_is_reserved_across_clouds_and_respects_combined_buffer_limit(
 }
 
 #[test]
-fn layout_replacement_repopulates_inactive_cache_and_activates_coarse_before_details() {
+fn adding_a_cloud_retains_cache_and_activates_only_after_details() {
     let mut e = Engine::new(
         serde_json::from_value(json!({"streaming":{"maxUploadBytesPerUpdate":56}})).unwrap(),
     )
@@ -768,7 +831,13 @@ fn layout_replacement_repopulates_inactive_cache_and_activates_coarse_before_det
         .iter()
         .rposition(|p| matches!(p, Payload::BuffersPatched { .. }))
         .unwrap();
-    assert!(first_activation < last_patch);
+    assert!(first_activation > last_patch);
+    assert_eq!(
+        out.iter()
+            .filter(|p| matches!(p, Payload::BuffersActivated { commit: true, .. }))
+            .count(),
+        1
+    );
     r.receive(&out);
     assert!(r.occupied() >= resident);
     let out = camera(&mut e, 2., 10.);
@@ -928,7 +997,9 @@ fn prefetch_fills_tree_in_bounded_batches_without_changing_the_draw_cut() {
             break;
         }
     }
-    assert_eq!(r.occupied(), r.capacity);
+    assert_eq!(r.occupied(), 9);
+    assert!(r.occupied() <= r.capacity);
+    assert!(!e.timings.prefetch_pending);
     for (x, projection) in [(2., 10.), (8., 10.), (100., 0.1), (-2., 10.)] {
         let out = camera(&mut e, x, projection);
         assert!(patch_slots(&out).is_empty());
@@ -941,7 +1012,7 @@ fn prefetch_fills_tree_in_bounded_batches_without_changing_the_draw_cut() {
 #[test]
 fn prefetch_stops_at_capacity_and_never_evicts_a_resident_node() {
     let mut e = Engine::new(Config::default()).unwrap();
-    compact_handshake(&mut e, 352);
+    compact_handshake(&mut e, 272);
     camera(&mut e, 100., 0.1);
     let mut r = Replica::default();
     r.receive(&load(&mut e, "row", &row_cloud(), json!({})).unwrap());
@@ -958,7 +1029,118 @@ fn prefetch_stops_at_capacity_and_never_evicts_a_resident_node() {
         }
     }
     assert_eq!(r.occupied(), r.capacity);
+    assert!(r.occupied() <= r.capacity);
+    assert!(!e.timings.prefetch_pending);
     assert!(apply(&mut e, json!({"type":"prefetch-cache"}), &[])
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn adding_within_reservation_does_not_replace_layout_or_upload_old_records() {
+    let mut e = Engine::new(Config::default()).unwrap();
+    handshake(&mut e, 10000, 8).unwrap();
+    let bytes = AntiSplatEncoder::new(source(0)).encode().unwrap();
+    let mut r = Replica::default();
+    r.receive(&load(&mut e, "first", &bytes, json!({"mipmaps":{"type":"none"}})).unwrap());
+    let layout = r.layout;
+    let old = r.active_slots.clone();
+    let out = load(&mut e, "second", &bytes, json!({"mipmaps":{"type":"none"}})).unwrap();
+    assert!(!out
+        .iter()
+        .any(|p| matches!(p, Payload::BuffersAllocated { .. })));
+    assert!(patch_slots(&out).is_disjoint(&old));
+    r.receive(&out);
+    assert_eq!(r.layout, layout);
+    assert_eq!(r.active, 4);
+    let out = load(&mut e, "third", &bytes, json!({"mipmaps":{"type":"none"}})).unwrap();
+    assert!(out.iter().any(|p| matches!(
+        p,
+        Payload::BuffersAllocated {
+            preserve_existing: true,
+            ..
+        }
+    )));
+    let before = r.active_slots.clone();
+    assert!(patch_slots(&out).is_disjoint(&before));
+    for payload in &out {
+        r.receive(std::slice::from_ref(payload));
+        if !matches!(payload, Payload::BuffersActivated { commit: true, .. }) {
+            assert_eq!(r.active_slots, before);
+        }
+    }
+    assert_eq!(r.active, 6);
+    assert!(r.layout > layout);
+}
+
+#[test]
+fn a_load_under_pressure_preserves_the_old_cut_until_all_replacement_rows_arrive() {
+    let mut a = GsplatArray::new_capacity(100, 3);
+    for i in 0..100 {
+        a.push_splat(
+            Gsplat::new(
+                Vec3A::new(i as f32, 0., 0.),
+                1.,
+                Vec3A::splat(0.5),
+                Vec3A::splat(0.2),
+                Quat::IDENTITY,
+            ),
+            Some(GsplatSH1::new([Vec3A::ZERO; 3])),
+            Some(GsplatSH2::new([Vec3A::ZERO; 5])),
+            Some(GsplatSH3::new([Vec3A::ZERO; 7])),
+        );
+    }
+    let bytes = SpzEncoder::new(a).encode().unwrap();
+    let mut e = Engine::new(
+        serde_json::from_value(json!({"streaming":{"maxUploadBytesPerUpdate":112}})).unwrap(),
+    )
+    .unwrap();
+    handshake(&mut e, 10000, 8).unwrap();
+    let mut r = Replica::default();
+    r.receive(
+        &load(
+            &mut e,
+            "first",
+            &bytes,
+            json!({"format":"spz","mipmaps":{"type":"none"}}),
+        )
+        .unwrap(),
+    );
+    let layout = r.layout;
+    let old = r.active_slots.clone();
+    let out = load(
+        &mut e,
+        "second",
+        &bytes,
+        json!({"format":"spz","priority":-10,"mipmaps":{"type":"none"}}),
+    )
+    .unwrap();
+    assert!(!out
+        .iter()
+        .any(|p| matches!(p, Payload::BuffersAllocated { .. })));
+    assert!(out.iter().any(|p| matches!(
+        p,
+        Payload::BuffersPatched {
+            defer_until_activation: true,
+            ..
+        }
+    )));
+    assert_eq!(
+        out.iter()
+            .filter(|p| matches!(p, Payload::BuffersActivated { commit: true, .. }))
+            .count(),
+        1
+    );
+    for payload in &out {
+        r.receive(std::slice::from_ref(payload));
+        if !matches!(payload, Payload::BuffersActivated { commit: true, .. }) {
+            assert_eq!(r.active_slots, old);
+            for &slot in &old {
+                assert_eq!(f32_attr(&r.attributes, "means")[slot * 4 + 3], 0.);
+            }
+        }
+    }
+    assert_eq!(r.layout, layout);
+    assert!(r.active <= r.capacity);
+    assert!(r.active > 100);
 }

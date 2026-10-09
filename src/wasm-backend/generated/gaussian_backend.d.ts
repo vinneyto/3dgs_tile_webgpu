@@ -2,14 +2,14 @@
 /* eslint-disable */
 export class GaussianEngine {
   free(): void;
-  nextPayload(): any;
   constructor(config: any);
+  timings(): any;
   /**
    * Compatibility collecting API; production streams through begin/nextPayload.
    */
   apply(command: any, bytes: Uint8Array): Array<any>;
   begin(command: any, bytes: Uint8Array): Array<any>;
-  timings(): any;
+  nextPayload(): any;
 }
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
@@ -17,11 +17,11 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
   readonly __wbg_gaussianengine_free: (a: number, b: number) => void;
+  readonly gaussianengine_new: (a: any) => [number, number, number];
+  readonly gaussianengine_timings: (a: number) => [number, number, number];
   readonly gaussianengine_apply: (a: number, b: any, c: number, d: number) => [number, number, number];
   readonly gaussianengine_begin: (a: number, b: any, c: number, d: number) => [number, number, number];
-  readonly gaussianengine_new: (a: any) => [number, number, number];
   readonly gaussianengine_nextPayload: (a: number) => [number, number, number];
-  readonly gaussianengine_timings: (a: number) => [number, number, number];
   readonly __wbindgen_malloc: (a: number, b: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
   readonly __wbindgen_exn_store: (a: number) => void;

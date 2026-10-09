@@ -2,6 +2,7 @@ import type { GaussianSandbox } from "./GaussianSandbox";
 
 export interface SandboxUiElements {
   readonly openButton: HTMLButtonElement;
+  readonly addButton: HTMLButtonElement;
   readonly fileInput: HTMLInputElement;
   readonly octreeToggle: HTMLInputElement;
   readonly lodColorToggle: HTMLInputElement;
@@ -12,10 +13,21 @@ export class SandboxUi {
     this.sandbox.setOctreeHelperVisible(this.elements.octreeToggle.checked);
     this.sandbox.setLodColoringEnabled(this.elements.lodColorToggle.checked);
   };
-  private readonly openFilePicker = () => this.elements.fileInput.click();
+  private adding = false;
+  private readonly openFilePicker = () => {
+    this.adding = false;
+    this.elements.fileInput.click();
+  };
+  private readonly addFilePicker = () => {
+    this.adding = true;
+    this.elements.fileInput.click();
+  };
   private readonly loadSelectedFile = () => {
     const file = this.elements.fileInput.files?.[0];
-    if (file !== undefined) void this.sandbox.loadFile(file);
+    if (file !== undefined)
+      void (this.adding
+        ? this.sandbox.addFile(file)
+        : this.sandbox.loadFile(file));
     this.elements.fileInput.value = "";
   };
   private readonly handleDragEnter = (event: DragEvent) => {
@@ -48,6 +60,7 @@ export class SandboxUi {
       this.applySpatialDebugState,
     );
     elements.openButton.addEventListener("click", this.openFilePicker);
+    elements.addButton.addEventListener("click", this.addFilePicker);
     elements.fileInput.addEventListener("change", this.loadSelectedFile);
     addEventListener("dragenter", this.handleDragEnter);
     addEventListener("dragover", this.handleDragOver);
@@ -67,6 +80,7 @@ export class SandboxUi {
       this.applySpatialDebugState,
     );
     elements.openButton.removeEventListener("click", this.openFilePicker);
+    elements.addButton.removeEventListener("click", this.addFilePicker);
     elements.fileInput.removeEventListener("change", this.loadSelectedFile);
     removeEventListener("dragenter", this.handleDragEnter);
     removeEventListener("dragover", this.handleDragOver);

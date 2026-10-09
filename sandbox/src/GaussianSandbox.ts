@@ -327,13 +327,13 @@ export class GaussianSandbox {
         name: `${url} Gaussian cloud`,
         mipmaps: { type: "standard", snapshot: { maxLeaves: 25000 } },
       });
-      pass = this.createPass(store);
       const cloud = await loading;
       if (this.disposed) {
-        pass.dispose();
         store.dispose();
         return;
       }
+      this.frameCloud(boundsFromWorker(store.getBounds(cloud)));
+      pass = this.createPass(store);
       this.show(store, url, cloud, pass);
     } catch (error) {
       void loading?.catch(() => {});
@@ -358,13 +358,13 @@ export class GaussianSandbox {
         fileName: file.name,
         mipmaps: { type: "standard", snapshot: { maxLeaves: 25000 } },
       });
-      pass = this.createPass(store);
       const cloud = await loading;
       if (this.disposed) {
-        pass.dispose();
         store.dispose();
         return;
       }
+      this.frameCloud(boundsFromWorker(store.getBounds(cloud)));
+      pass = this.createPass(store);
       this.show(store, file.name, cloud, pass);
     } catch (error) {
       void loading?.catch(() => {});
@@ -374,6 +374,38 @@ export class GaussianSandbox {
         store.dispose();
       }
       this.cloudStatus.error(error);
+    }
+  }
+
+  /** Add to the existing Store/Pass so layout retention can be tested. */
+  async addFile(file: File): Promise<void> {
+    const store = this.store;
+    if (!store || !this.cloud) return this.loadFile(file);
+    this.cloudStatus.parsing(file.name);
+    try {
+      const bounds = boundsFromWorker(store.getBounds(this.cloud));
+      const x = bounds.radius * 1.5 * store.clouds.length;
+      const cloud = await store.loadBuffer(await file.arrayBuffer(), {
+        name: file.name,
+        fileName: file.name,
+        worldMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1],
+        mipmaps: { type: "standard", snapshot: { maxLeaves: 25000 } },
+      });
+      if (this.disposed || this.store !== store) {
+        cloud.dispose();
+        return;
+      }
+      this.scene.add(cloud);
+      await store.whenRenderReady(cloud);
+      if (!this.disposed && this.store === store)
+        this.cloudStatus.packed(
+          file.name,
+          store.getSourceCount(cloud),
+          cloud,
+          store,
+        );
+    } catch (error) {
+      if (!this.disposed && this.store === store) this.cloudStatus.error(error);
     }
   }
 

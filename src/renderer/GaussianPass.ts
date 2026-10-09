@@ -227,11 +227,16 @@ export class GaussianPass extends PassNode {
     const device = (
       renderer.backend as unknown as { device?: GPUDevice } | undefined
     )?.device;
-    if (device)
+    if (device) {
+      renderer.getDrawingBufferSize(drawingBufferSize);
+      const scale = this.getResolutionScale();
       this.gaussianStore.setFrontendCapabilities(
         frontendCapabilities(device),
         camera,
+        Math.max(1, Math.floor(drawingBufferSize.x * scale)),
+        Math.max(1, Math.floor(drawingBufferSize.y * scale)),
       );
+    }
   }
 
   /** Resolved after the first render when omitted from GaussianPassOptions. */
