@@ -849,6 +849,172 @@ fn adding_a_cloud_retains_cache_and_activates_only_after_details() {
     assert_eq!(r.active, 10);
 }
 
+#[test]
+fn removing_clouds_hides_only_their_slots_and_preserves_surviving_detail() {
+    for mode in ["standard", "none"] {
+        let mut e = Engine::new(
+            serde_json::from_value(json!({"streaming":{"maxUploadBytesPerUpdate":56}})).unwrap(),
+        )
+        .unwrap();
+        handshake(&mut e, 128 * 1024 * 1024, 8).unwrap();
+        camera(&mut e, 2., 10.);
+        let mut r = Replica::default();
+        for id in ["first", "middle", "last"] {
+            r.receive(&load(&mut e, id, &row_cloud(), json!({"mipmaps":{"type":mode}})).unwrap());
+        }
+        assert_eq!(r.active, 15);
+        let layout = r.layout;
+        for (id, object_id) in [("middle", 1.), ("first", 0.), ("last", 2.)] {
+            let surviving: std::collections::BTreeSet<_> = r
+                .active_slots
+                .iter()
+                .copied()
+                .filter(|&slot| f32_attr(&r.attributes, "means")[slot * 4 + 3] != object_id)
+                .collect();
+            let out = apply(&mut e, json!({"type":"unload-cloud","cloudId":id}), &[]).unwrap();
+            if !surviving.is_empty() {
+                assert!(!out
+                    .iter()
+                    .any(|p| matches!(p, Payload::BuffersAllocated { .. })));
+            }
+            let mut removed = false;
+            for payload in &out {
+                r.receive(std::slice::from_ref(payload));
+                if matches!(payload, Payload::BuffersActivated { commit: true, .. }) {
+                    removed = true;
+                }
+                if removed {
+                    assert_eq!(
+                        r.active_slots, surviving,
+                        "survivors never switch to a coarse cut"
+                    );
+                }
+            }
+            assert!(removed);
+            if !surviving.is_empty() {
+                assert_eq!(r.layout, layout);
+            }
+        }
+        assert_eq!(r.active, 0);
+    }
+}
+
+#[test]
+fn removal_under_pressure_keeps_survivors_until_freed_slots_are_ready() {
+    let mut a = GsplatArray::new_capacity(100, 3);
+    for i in 0..100 {
+        a.push_splat(
+            Gsplat::new(
+                Vec3A::new(i as f32, 0., 0.),
+                1.,
+                Vec3A::splat(0.5),
+                Vec3A::splat(0.2),
+                Quat::IDENTITY,
+            ),
+            Some(GsplatSH1::new([Vec3A::ZERO; 3])),
+            Some(GsplatSH2::new([Vec3A::ZERO; 5])),
+            Some(GsplatSH3::new([Vec3A::ZERO; 7])),
+        );
+    }
+    let bytes = SpzEncoder::new(a).encode().unwrap();
+    let mut e = Engine::new(
+        serde_json::from_value(json!({"streaming":{"maxUploadBytesPerUpdate":112}})).unwrap(),
+    )
+    .unwrap();
+    handshake(&mut e, 10000, 8).unwrap();
+    let mut r = Replica::default();
+    r.receive(
+        &load(
+            &mut e,
+            "first",
+            &bytes,
+            json!({"format":"spz","mipmaps":{"type":"none"}}),
+        )
+        .unwrap(),
+    );
+    r.receive(
+        &load(
+            &mut e,
+            "second",
+            &bytes,
+            json!({"format":"spz","priority":-10,"mipmaps":{"type":"none"}}),
+        )
+        .unwrap(),
+    );
+    let surviving: std::collections::BTreeSet<_> = r
+        .active_slots
+        .iter()
+        .copied()
+        .filter(|&slot| f32_attr(&r.attributes, "means")[slot * 4 + 3] == 0.)
+        .collect();
+    assert!(!surviving.is_empty());
+    assert!(surviving.len() < 100);
+    let layout = r.layout;
+    let out = apply(
+        &mut e,
+        json!({"type":"unload-cloud","cloudId":"second"}),
+        &[],
+    )
+    .unwrap();
+    let final_commit = out
+        .iter()
+        .rposition(|p| matches!(p, Payload::BuffersActivated { commit: true, .. }))
+        .unwrap();
+    let last_patch = out
+        .iter()
+        .rposition(|p| matches!(p, Payload::BuffersPatched { .. }))
+        .unwrap();
+    assert!(last_patch < final_commit);
+    let mut removed = false;
+    for (index, payload) in out.iter().enumerate() {
+        r.receive(std::slice::from_ref(payload));
+        if matches!(payload, Payload::BuffersActivated { commit: true, .. }) {
+            removed = true;
+        }
+        if removed && index < final_commit {
+            assert_eq!(r.active_slots, surviving);
+        }
+    }
+    assert_eq!(r.layout, layout);
+    assert_eq!(r.active, 100);
+}
+
+#[test]
+fn removal_during_an_object_table_resize_does_not_keep_deleted_slots() {
+    let mut e = Engine::new(Config::default()).unwrap();
+    handshake(&mut e, 1600, 8).unwrap();
+    camera(&mut e, 2., 10.);
+    let mut r = Replica::default();
+    for id in ["first", "second"] {
+        r.receive(&load(&mut e, id, &row_cloud(), json!({})).unwrap());
+    }
+    let surviving: std::collections::BTreeSet<_> = r
+        .active_slots
+        .iter()
+        .copied()
+        .filter(|&slot| f32_attr(&r.attributes, "means")[slot * 4 + 3] == 0.)
+        .collect();
+    assert_eq!(surviving.len(), 5);
+    let out = apply(
+        &mut e,
+        json!({"type":"unload-cloud","cloudId":"second"}),
+        &[],
+    )
+    .unwrap();
+    assert!(out.iter().any(|p| matches!(
+        p,
+        Payload::BuffersAllocated {
+            preserve_existing: true,
+            ..
+        }
+    )));
+    for payload in &out {
+        r.receive(std::slice::from_ref(payload));
+        assert!(surviving.is_subset(&r.active_slots));
+    }
+    assert_eq!(r.active_slots, surviving);
+}
+
 fn compact_handshake(e: &mut Engine, limit: usize) {
     let m = [
         1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1., 0., 0., 0., 0., 1.,

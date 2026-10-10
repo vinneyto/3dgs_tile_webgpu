@@ -562,7 +562,7 @@ impl Engine {
         );
         self.timings = EngineTimings::default();
         let mut output = Vec::new();
-        let atomic_load = matches!(&command, Command::Load(_));
+        let atomic_update = matches!(&command, Command::Load(_) | Command::Unload(_));
         match command {
             Command::Prefetch => return self.prefetch(),
             Command::Load(c) => {
@@ -721,7 +721,7 @@ impl Engine {
             }
         }
         if self.capabilities.is_some() {
-            output.extend(self.pack(atomic_load)?);
+            output.extend(self.pack(atomic_update)?);
         }
         Ok(output)
     }
@@ -902,7 +902,7 @@ impl Engine {
         }
         (selected, pinned, states)
     }
-    fn pack(&mut self, atomic_load: bool) -> Result<Vec<Payload>> {
+    fn pack(&mut self, atomic_update: bool) -> Result<Vec<Payload>> {
         let cap = self.capabilities.as_ref().unwrap();
         let (degree, extra, mut budget) = self.validate_layout(cap, None)?;
         let selection_start = clock_ms();
@@ -1162,12 +1162,22 @@ impl Engine {
             .map(|key| packed.slots.to_slot[key])
             .collect();
         let active_changed = old_active != target_active;
+        // Removing an object invalidates its own slots, not the displayed cut
+        // of every surviving object. Hide those slots before any uploads.
+        let retained_active_slots: Vec<_> = old_active
+            .iter()
+            .zip(&old_active_slots)
+            .filter(|(key, _)| clouds.contains_key(&key.cloud_id))
+            .map(|(_, &slot)| slot)
+            .collect();
+        let removed_active = retained_active_slots.len() != old_active_slots.len();
         let needs_fallback = compatible
             && old_active
                 .iter()
                 .zip(&old_active_slots)
+                .filter(|(key, _)| clouds.contains_key(&key.cloud_id))
                 .any(|(key, &slot)| packed.slots.owners.get(slot).copied().flatten() != Some(*key));
-        let fallback_slots: Vec<_> = if needs_fallback && !atomic_load {
+        let fallback_slots: Vec<_> = if needs_fallback && !atomic_update {
             old_pinned
                 .iter()
                 .filter(|(key, slot)| {
@@ -1188,7 +1198,7 @@ impl Engine {
                 )
                 .collect()
         } else {
-            old_active_slots.clone()
+            retained_active_slots.clone()
         };
         let make_activation = |from: &[usize], to: &[usize], clouds, pending| {
             // Byte masks avoid rebuilding two large hash tables on every cut.
@@ -1224,27 +1234,38 @@ impl Engine {
             .iter()
             .map(|s| packed.slots.to_slot[&s.key])
             .collect();
-        let before = (needs_fallback && !atomic_load).then(|| {
-            let mut counts = AHashMap::<u32, usize>::new();
-            for &slot in &fallback_slots {
-                *counts
-                    .entry(packed.slots.owners[slot].unwrap().cloud_id)
-                    .or_default() += 1;
-            }
-            let clouds = states
-                .iter()
-                .map(|state| CloudState {
-                    rendered_count: counts.get(&state.object_id).copied().unwrap_or(0),
-                    ..state.clone()
-                })
-                .collect();
-            make_activation(&old_active_slots, &fallback_slots, clouds, true)
-        });
+        let before =
+            (compatible && (removed_active || (needs_fallback && !atomic_update))).then(|| {
+                let mut counts = AHashMap::<u32, usize>::new();
+                if atomic_update {
+                    for key in &old_active {
+                        if clouds.contains_key(&key.cloud_id) {
+                            *counts.entry(key.cloud_id).or_default() += 1;
+                        }
+                    }
+                } else {
+                    for &slot in &fallback_slots {
+                        *counts
+                            .entry(packed.slots.owners[slot].unwrap().cloud_id)
+                            .or_default() += 1;
+                    }
+                }
+                let clouds = states
+                    .iter()
+                    .map(|state| CloudState {
+                        rendered_count: counts.get(&state.object_id).copied().unwrap_or(0),
+                        ..state.clone()
+                    })
+                    .collect();
+                make_activation(&old_active_slots, &fallback_slots, clouds, true)
+            });
         let after =
             (!compatible || active_changed || needs_fallback || states_changed).then(|| {
                 make_activation(
-                    if compatible || preserve_existing {
+                    if compatible {
                         &fallback_slots
+                    } else if preserve_existing {
+                        &old_active_slots
                     } else {
                         &[]
                     },
@@ -1325,7 +1346,7 @@ impl Engine {
             cursor: 0,
             batch,
             activation_batch: (max_bytes / 4).max(1),
-            defer_patches: atomic_load && needs_fallback,
+            defer_patches: atomic_update && needs_fallback,
             before,
             after,
         });

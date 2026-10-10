@@ -656,6 +656,71 @@ describe("streaming backend request protocol", () => {
     store.dispose();
   });
 
+  it("removes only the disposed cloud while retaining survivor detail between upload acknowledgements", async () => {
+    const port = new InMemoryWorker(false);
+    const store = new GaussianStore(
+      new WorkerStreamingGaussianBackend(
+        { streaming: { maxUploadBytesPerUpdate: 56 } },
+        port as unknown as Worker,
+      ),
+    );
+    const camera = new PerspectiveCamera();
+    camera.position.z = 10;
+    camera.updateMatrixWorld();
+    store.setFrontendCapabilities(capabilities, camera, 1024, 1024);
+    const first = await store.loadBuffer(ply(0, 1, 2, 3, 4));
+    await store.whenRenderReady(first);
+    const second = await store.loadBuffer(ply(0, 1, 2, 3, 4));
+    await store.whenRenderReady(second);
+    await vi.waitFor(() =>
+      expect(
+        port.responses.filter(
+          (r) => r.command.type === "load-cloud-from-buffer" && r.isFinal,
+        ),
+      ).toHaveLength(2),
+    );
+    const data = store.getPackedData();
+    const layout = store.layoutVersion;
+    const surviving = Array.from(
+      data.activeSlots!.subarray(0, data.activeCount),
+    ).filter((slot) => data.means.array[slot * 4 + 3] === first.objectId);
+    expect(surviving).toHaveLength(5);
+    port.responses.length = 0;
+    port.holdAcknowledgements = true;
+    second.dispose();
+    await vi.waitFor(() =>
+      expect(
+        port.responses.some(
+          (r) =>
+            r.command.type === "unload-cloud" &&
+            r.payload?.type === "buffers-activated" &&
+            r.payload.commit,
+        ),
+      ).toBe(true),
+    );
+    expect(store.getPackedData()).toBe(data);
+    expect(store.layoutVersion).toBe(layout);
+    expect(first.gaussianCount).toBe(5);
+    expect(
+      Array.from(data.activeSlots!.subarray(0, data.activeCount)).sort(
+        (a, b) => a - b,
+      ),
+    ).toEqual([...surviving].sort((a, b) => a - b));
+    port.holdAcknowledgements = false;
+    port.acknowledge();
+    await vi.waitFor(() =>
+      expect(
+        port.responses.some(
+          (r) => r.command.type === "unload-cloud" && r.isFinal,
+        ),
+      ).toBe(true),
+    );
+    expect(first.gaussianCount).toBe(5);
+    expect(data.activeCount).toBe(5);
+    expect(store.layoutVersion).toBe(layout);
+    store.dispose();
+  });
+
   it("uses an initial transform for the first cut and rejects readiness on removal", async () => {
     const store = new GaussianStore(new StreamingGaussianBackend({}));
     const worldMatrix = [...matrix];
