@@ -51,7 +51,7 @@ describe("stable WASM GPU slots", () => {
             (r) =>
               r.command.type === "prefetch-cache" &&
               r.isFinal &&
-              r.metrics?.residentGaussians === store.maxGaussians,
+              r.metrics?.prefetchPending === false,
           ),
         ).toBe(true),
       );

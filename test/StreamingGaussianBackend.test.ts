@@ -66,6 +66,7 @@ function ply(...positions: number[]): ArrayBuffer {
 }
 
 class InMemoryWorker {
+  constructor(private readonly prefetchEnabled = true) {}
   private core: StreamingGaussianBackend | null = null;
   private listener: ((event: MessageEvent<WorkerOutbound>) => void) | null =
     null;
@@ -109,6 +110,14 @@ class InMemoryWorker {
           }),
       );
       this.core.subscribe((response) => {
+        if (
+          !this.prefetchEnabled &&
+          response.payload?.type === "capabilities-accepted"
+        )
+          response.payload = {
+            ...response.payload,
+            supportsCachePrefetch: false,
+          };
         this.responses.push(response);
         const wire = structuredClone(
           { type: "response", response } satisfies WorkerOutbound,
@@ -226,7 +235,7 @@ describe("streaming backend request protocol", () => {
             (r) =>
               r.command.type === "prefetch-cache" &&
               r.isFinal &&
-              r.metrics?.residentGaussians === store.maxGaussians,
+              r.metrics?.prefetchPending === false,
           ),
         ).toBe(true),
       { timeout: 5000 },
@@ -364,21 +373,26 @@ describe("streaming backend request protocol", () => {
       name: "first",
       mipmaps: { type: "standard", snapshot: { maxLeaves: 100 } },
     });
-    expect(port.commands.map(({ type }) => type)).toEqual([
-      "load-cloud-from-buffer",
-    ]);
+    expect(
+      port.commands
+        .filter((c) => c.type !== "prefetch-cache")
+        .map(({ type }) => type),
+    ).toEqual(["load-cloud-from-buffer"]);
     expect(store.hasPackedData).toBe(false);
     expect(cloud.getRaycastIndex()).not.toBeNull();
     const renderer = {
       hasFeature: () => false,
       backend: { device: { limits: capabilities } },
+      getDrawingBufferSize: (target: { set(x: number, y: number): unknown }) =>
+        target.set(1024, 768),
     } as unknown as WebGPURenderer;
     const pass = new GaussianPass(renderer, new PerspectiveCamera(), store);
     await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
-    expect(port.commands.map(({ type }) => type)).toEqual([
-      "load-cloud-from-buffer",
-      "set-frontend-capabilities",
-    ]);
+    expect(
+      port.commands
+        .filter((c) => c.type !== "prefetch-cache")
+        .map(({ type }) => type),
+    ).toEqual(["load-cloud-from-buffer", "set-frontend-capabilities"]);
     const loadCommand = port.commands[0];
     if (loadCommand?.type !== "load-cloud-from-buffer") {
       throw new Error("Expected a cloud load");
@@ -387,6 +401,10 @@ describe("streaming backend request protocol", () => {
     expect(loadCommand.cloudId).toMatch(uuidPattern);
     expect(loadCommand.id).not.toBe(loadCommand.cloudId);
     expect(port.commands[1]?.id).toMatch(uuidPattern);
+    expect(port.commands[1]).toMatchObject({
+      viewportWidth: 1024,
+      viewportHeight: 768,
+    });
     expect(port.commands[1]?.id).not.toBe(loadCommand.id);
     expect(cloud.name).toBe("first");
     expect(cloud.getRaycastIndex()).not.toBeNull();
@@ -432,11 +450,221 @@ describe("streaming backend request protocol", () => {
     await store.loadBuffer(ply(0));
     await vi.waitFor(() => expect(store.hasPackedData).toBe(true));
     const version = store.layoutVersion;
-    await store.loadBuffer(ply(1));
-    await vi.waitFor(() =>
-      expect(store.layoutVersion).toBeGreaterThan(version),
-    );
+    const second = await store.loadBuffer(ply(1));
+    await store.whenRenderReady(second);
+    expect(store.layoutVersion).toBe(version);
     expect(store.clouds).toHaveLength(2);
+    store.dispose();
+  });
+
+  it("keeps the first cloud invisible until its detailed activation commits", async () => {
+    const port = new InMemoryWorker(false);
+    const backend = new WorkerStreamingGaussianBackend(
+      { streaming: { maxUploadBytesPerUpdate: 112 } },
+      port as unknown as Worker,
+    );
+    const store = new GaussianStore(backend);
+    const camera = new PerspectiveCamera();
+    camera.position.z = 5;
+    camera.updateMatrixWorld();
+    store.setFrontendCapabilities(capabilities, camera, 1024, 1024);
+    await vi.waitFor(() =>
+      expect(
+        port.responses.some(
+          (r) => r.command.type === "set-frontend-capabilities" && r.isFinal,
+        ),
+      ).toBe(true),
+    );
+    port.holdAcknowledgements = true;
+    const cloud = await store.loadBuffer(ply(0, 1));
+    expect(store.isRenderReady(cloud)).toBe(false);
+    await vi.waitFor(() =>
+      expect(
+        port.responses.some((r) => r.payload?.type === "buffers-allocated"),
+      ).toBe(true),
+    );
+    expect(store.hasPackedData).toBe(false);
+    expect(cloud.gaussianCount).toBe(0);
+    port.holdAcknowledgements = false;
+    port.acknowledge();
+    await store.whenRenderReady(cloud);
+    expect(store.hasPackedData).toBe(true);
+    expect(cloud.gaussianCount).toBe(2);
+    expect(
+      port.responses.filter(
+        (r) =>
+          r.command.type === "load-cloud-from-buffer" &&
+          r.payload?.type === "buffers-activated" &&
+          r.payload.commit,
+      ),
+    ).toHaveLength(1);
+    store.dispose();
+  });
+
+  it("retains the live buffers and detail when adding within the reservation, and stages later growth", async () => {
+    const port = new InMemoryWorker(false);
+    const backend = new WorkerStreamingGaussianBackend(
+      { streaming: { maxUploadBytesPerUpdate: 112 } },
+      port as unknown as Worker,
+    );
+    const store = new GaussianStore(backend);
+    const camera = new PerspectiveCamera();
+    camera.position.z = 10;
+    camera.updateMatrixWorld();
+    store.setFrontendCapabilities(capabilities, camera, 1024, 1024);
+    const first = await store.loadBuffer(ply(0, 1));
+    await store.whenRenderReady(first);
+    await vi.waitFor(() =>
+      expect(
+        port.responses.some(
+          (r) => r.command.type === "load-cloud-from-buffer" && r.isFinal,
+        ),
+      ).toBe(true),
+    );
+    const data = store.getPackedData();
+    const layout = store.layoutVersion;
+    const count = first.gaussianCount;
+    port.responses.length = 0;
+    port.holdAcknowledgements = true;
+    const second = await store.loadBuffer(ply(0, 1));
+    await vi.waitFor(() =>
+      expect(
+        port.responses.some((r) => r.payload?.type === "buffers-patched"),
+      ).toBe(true),
+    );
+    expect(store.getPackedData()).toBe(data);
+    expect(first.gaussianCount).toBe(count);
+    expect(second.gaussianCount).toBe(0);
+    expect(
+      port.responses.some((r) => r.payload?.type === "buffers-allocated"),
+    ).toBe(false);
+    port.holdAcknowledgements = false;
+    port.acknowledge();
+    await store.whenRenderReady(second);
+    expect(store.layoutVersion).toBe(layout);
+    expect(store.getPackedData()).toBe(data);
+    expect(first.gaussianCount).toBe(count);
+    expect(second.gaussianCount).toBe(2);
+    await vi.waitFor(() =>
+      expect(
+        port.responses.some(
+          (r) => r.command.type === "load-cloud-from-buffer" && r.isFinal,
+        ),
+      ).toBe(true),
+    );
+    port.responses.length = 0;
+    port.holdAcknowledgements = true;
+    const third = await store.loadBuffer(ply(0, 1));
+    await vi.waitFor(() =>
+      expect(
+        port.responses.some(
+          (r) =>
+            r.payload?.type === "buffers-allocated" &&
+            r.payload.preserveExisting,
+        ),
+      ).toBe(true),
+    );
+    expect(store.getPackedData()).toBe(data);
+    expect(store.layoutVersion).toBe(layout);
+    expect(first.gaussianCount).toBe(count);
+    expect(second.gaussianCount).toBe(2);
+    expect(third.gaussianCount).toBe(0);
+    port.holdAcknowledgements = false;
+    port.acknowledge();
+    await store.whenRenderReady(third);
+    expect(store.layoutVersion).toBeGreaterThan(layout);
+    expect(first.gaussianCount).toBe(count);
+    expect(second.gaussianCount).toBe(2);
+    expect(third.gaussianCount).toBe(2);
+    store.dispose();
+  });
+
+  it("defers overwrites of active slots under a saturated shared budget", async () => {
+    const port = new InMemoryWorker(false);
+    const store = new GaussianStore(
+      new WorkerStreamingGaussianBackend(
+        { streaming: { maxUploadBytesPerUpdate: 112 } },
+        port as unknown as Worker,
+      ),
+    );
+    const text = new TextDecoder().decode(
+      ply(...Array.from({ length: 100 }, (_, i) => i)),
+    );
+    const [header = "", rows = ""] = text.split("end_header\n");
+    const shProperties = Array.from(
+      { length: 45 },
+      (_, i) => `property float f_rest_${i}`,
+    ).join("\n");
+    const shRows = rows
+      .trim()
+      .split("\n")
+      .map((row) => `${row} ${Array(45).fill(0).join(" ")}`)
+      .join("\n");
+    const buffer = new TextEncoder().encode(
+      `${header}${shProperties}\nend_header\n${shRows}\n`,
+    ).buffer;
+    store.setFrontendCapabilities(
+      {
+        ...capabilities,
+        maxBufferSize: 10000,
+        maxStorageBufferBindingSize: 10000,
+      },
+      new PerspectiveCamera(),
+      1024,
+      1024,
+    );
+    const first = await store.loadBuffer(buffer.slice(0), {
+      mipmaps: { type: "none" },
+    });
+    await store.whenRenderReady(first);
+    await vi.waitFor(() =>
+      expect(
+        port.responses.some(
+          (r) => r.command.type === "load-cloud-from-buffer" && r.isFinal,
+        ),
+      ).toBe(true),
+    );
+    const data = store.getPackedData();
+    const before = data.means.array.slice();
+    const layout = store.layoutVersion;
+    port.responses.length = 0;
+    port.holdAcknowledgements = true;
+    const second = await store.loadBuffer(buffer.slice(0), {
+      priority: -10,
+      mipmaps: { type: "none" },
+    });
+    await vi.waitFor(() =>
+      expect(
+        port.responses.some(
+          (r) =>
+            r.payload?.type === "buffers-patched" &&
+            r.payload.deferUntilActivation,
+        ),
+      ).toBe(true),
+    );
+    expect(store.getPackedData()).toBe(data);
+    expect(data.means.array).toEqual(before);
+    expect(first.gaussianCount).toBe(100);
+    expect(second.gaussianCount).toBe(0);
+    port.holdAcknowledgements = false;
+    port.acknowledge();
+    await store.whenRenderReady(second);
+    expect(store.getPackedData()).toBe(data);
+    expect(store.layoutVersion).toBe(layout);
+    expect(second.gaussianCount).toBe(100);
+    expect(first.gaussianCount).toBe(47);
+    store.dispose();
+  });
+
+  it("uses an initial transform for the first cut and rejects readiness on removal", async () => {
+    const store = new GaussianStore(new StreamingGaussianBackend({}));
+    const worldMatrix = [...matrix];
+    worldMatrix[12] = 7;
+    const cloud = await store.loadBuffer(ply(0), { worldMatrix });
+    expect(cloud.position.x).toBe(7);
+    const ready = store.whenRenderReady(cloud);
+    cloud.dispose();
+    await expect(ready).rejects.toThrow("removed before rendering");
     store.dispose();
   });
 
@@ -519,7 +747,11 @@ describe("streaming backend request protocol", () => {
     controller.abort();
     await expect(loading).rejects.toMatchObject({ name: "AbortError" });
     expect(buffer.byteLength).toBeGreaterThan(0);
-    expect(port.commands.map(({ type }) => type)).toEqual(["load-cloud"]);
+    expect(
+      port.commands
+        .filter((c) => c.type !== "prefetch-cache")
+        .map(({ type }) => type),
+    ).toEqual(["load-cloud"]);
     activeController.abort();
     await expect(active).rejects.toMatchObject({ name: "AbortError" });
     store.dispose();

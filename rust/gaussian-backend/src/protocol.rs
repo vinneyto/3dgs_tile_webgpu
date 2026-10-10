@@ -35,6 +35,7 @@ pub struct LoadOptions {
     pub mipmaps: Option<MipmapConfig>,
     pub format: Option<String>,
     pub file_name: Option<String>,
+    pub world_matrix: Option<Vec<f32>>,
     #[serde(default)]
     pub attributes: Vec<AttributeInit>,
 }
@@ -278,6 +279,8 @@ pub enum Payload {
         snapshot: Option<Snapshot>,
     },
     BuffersAllocated {
+        /// Keep resident rows when growing the same attribute schema.
+        preserve_existing: bool,
         scene_revision: u32,
         layout_version: u32,
         content_version: u32,
@@ -316,6 +319,8 @@ pub enum Payload {
         mipmap_pending: bool,
     },
     BuffersPatched {
+        /// A load may replace active slots only at its final activation.
+        defer_until_activation: bool,
         scene_revision: u32,
         layout_version: u32,
         base_content_version: u32,

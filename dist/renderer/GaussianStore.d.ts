@@ -33,6 +33,8 @@ export declare class GaussianStore implements GaussianRenderStore {
     private readonly unsubscribe;
     private readonly unsubscribeFailure;
     private data;
+    private pendingReplacement;
+    private readonly deferredPatches;
     private revision;
     private viewportWidth;
     private viewportHeight;
@@ -67,6 +69,10 @@ export declare class GaussianStore implements GaussianRenderStore {
     subscribe(listener: GaussianStoreListener): () => void;
     load(url: string, options?: CloudLoadOptions, signal?: AbortSignal): Promise<GaussianCloud>;
     loadBuffer(buffer: ArrayBuffer, options?: CloudLoadOptions, signal?: AbortSignal): Promise<GaussianCloud>;
+    /** Resolves after the first target cut is committed, not merely decoded.
+     * A GaussianPass (or an explicit capabilities handshake) must drive packing. */
+    whenRenderReady(cloud: GaussianCloud): Promise<void>;
+    isRenderReady(cloud: GaussianCloud): boolean;
     remove(cloud: GaussianCloud): void;
     setPackingPriority(cloud: GaussianCloud, priority: number): Promise<void>;
     setCloudMipmaps(cloud: GaussianCloud, mipmaps: MipmapConfig): Promise<void>;
@@ -85,6 +91,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private readonly handleResponse;
     private schedulePrefetch;
     private handlePayload;
+    private createData;
     private replace;
     private patch;
     private activate;

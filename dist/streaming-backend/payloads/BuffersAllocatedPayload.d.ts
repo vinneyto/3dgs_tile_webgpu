@@ -7,6 +7,8 @@ export interface PackedAttributeSchema {
 /** Allocate empty sparse buffers once; bounded patches populate them afterward. */
 export interface BuffersAllocatedPayload {
     type: "buffers-allocated";
+    /** Retain resident rows when growing an unchanged attribute schema. */
+    preserveExisting?: boolean;
     sceneRevision: number;
     layoutVersion: number;
     contentVersion: number;
