@@ -124,6 +124,7 @@ export class GaussianStore implements GaussianRenderStore {
   private disposed = false;
   private prefetchSupported = false;
   private prefetchScheduled = false;
+  private lodRecheckTimer: ReturnType<typeof setTimeout> | null = null;
   private awaitingCapabilities = false;
   private frontendCapabilities: FrontendCapabilities | null = null;
 
@@ -492,6 +493,8 @@ export class GaussianStore implements GaussianRenderStore {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.lodRecheckTimer !== null) clearTimeout(this.lodRecheckTimer);
+    this.lodRecheckTimer = null;
     this.pendingReplacement?.data?.dispose();
     this.pendingReplacement = null;
     this.deferredPatches.length = 0;
@@ -594,6 +597,8 @@ export class GaussianStore implements GaussianRenderStore {
       this.abortedLoads.delete(response.command.id);
       if (!response.error && response.metrics?.prefetchPending)
         this.schedulePrefetch();
+      if (!response.error)
+        this.scheduleLodRecheck(response.metrics?.lodRecheckAfterMs);
     }
   };
 
@@ -624,6 +629,24 @@ export class GaussianStore implements GaussianRenderStore {
           },
         );
     }, 0);
+  }
+
+  private scheduleLodRecheck(delay?: number): void {
+    if (this.lodRecheckTimer !== null) clearTimeout(this.lodRecheckTimer);
+    this.lodRecheckTimer = null;
+    if (this.disposed || delay === undefined || !Number.isFinite(delay)) return;
+    this.lodRecheckTimer = setTimeout(
+      () => {
+        this.lodRecheckTimer = null;
+        if (this.disposed) return;
+        this.submit({
+          type: "prefetch-cache",
+          id: crypto.randomUUID(),
+          latestKey: "prefetch-cache",
+        });
+      },
+      Math.max(1, Math.ceil(delay)),
+    );
   }
 
   private handlePayload(event: BackendPayload, commandId: string): void {

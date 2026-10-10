@@ -88,6 +88,11 @@ describe("stable WASM GPU slots", () => {
       expect(slotOf(1)).toBe(sharedSlot);
       data.means.clearUpdateRanges();
       await move("offscreen", 20, 0.1);
+      // The default downgrade grace completes without another camera command.
+      await vi.waitFor(
+        () => expect(data.activeCount).toBeLessThan(initialSlots.length),
+        { interval: 10 },
+      );
       expect(store.count).toBeGreaterThan(0);
       expect(data.activeCount).toBe(store.count);
       expect(data.means.updateRanges).toEqual([]);

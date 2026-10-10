@@ -1,5 +1,8 @@
 /** Node-safe entrypoint: protocol and computation, without browser transport or GPU renderer. */
-export type { BackendConfig } from "./streaming-backend/BackendConfig";
+export type {
+  BackendConfig,
+  BackendLodConfig,
+} from "./streaming-backend/BackendConfig";
 export type { GaussianBackend } from "./streaming-backend/GaussianBackend";
 export type { FrontendCapabilities } from "./streaming-backend/FrontendCapabilities";
 export type { BackendCommand } from "./streaming-backend/commands/BackendCommand";

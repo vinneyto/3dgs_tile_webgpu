@@ -19,6 +19,8 @@ export interface BackendMetrics {
     evictedGaussians: number;
     /** More tree nodes can be loaded into currently unused slots. */
     prefetchPending?: boolean;
+    /** Re-evaluate a deferred downgrade even when the camera is stationary. */
+    lodRecheckAfterMs?: number;
 }
 export interface BackendResponse {
     /** A small reference: never echo buffers from the original command. */

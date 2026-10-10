@@ -2,7 +2,7 @@ export { GaussianData, type GaussianBuffers, type GaussianDataOptions, } from ".
 export { FLOAT32_SH_BYTES_PER_COEFFICIENT, RGB8E8_SH_BYTES_PER_COEFFICIENT, packShRgb8e8, shBytesPerCoefficient, unpackShRgb8e8, type GaussianShFormat, } from "./streaming-backend-impl/GaussianSh";
 export { GaussianRaycastIndex, type GaussianMipmapRaycastHit, } from "./renderer/GaussianRaycastIndex";
 export type { GaussianBackend } from "./streaming-backend/GaussianBackend";
-export type { BackendConfig } from "./streaming-backend/BackendConfig";
+export type { BackendConfig, BackendLodConfig, } from "./streaming-backend/BackendConfig";
 export type { FrontendCapabilities } from "./streaming-backend/FrontendCapabilities";
 export type { BackendCommand } from "./streaming-backend/commands/BackendCommand";
 export type { Command } from "./streaming-backend/commands/Command";
