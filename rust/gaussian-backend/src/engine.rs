@@ -1,4 +1,5 @@
 use crate::{
+    lod::{frustum_weight, LodHistory},
     model::{render_scale_opacity, splat_bounds, union, ExtraAttribute, MipmapArray},
     protocol::*,
     slot_mapping::{GaussianKey, SlotMapping},
@@ -34,6 +35,8 @@ struct Cloud {
     tree_bounds: Vec<[f32; 6]>,
     tree_depths: Vec<u32>,
     tree_features: Vec<(Vec3, f32)>,
+    tree_parents: Vec<Option<usize>>,
+    lod_history: std::cell::RefCell<LodHistory>,
     bounds: [f32; 6],
     world: Mat4,
     source_version: u32,
@@ -257,6 +260,7 @@ fn matrix(values: &[f32], affine: bool) -> Result<Mat4> {
     Ok(m)
 }
 
+#[cfg(test)]
 fn visible(bounds: &[f32; 6], planes: &[Vec4; 6]) -> bool {
     let center = Vec3::new(
         (bounds[0] + bounds[3]) * 0.5,
@@ -302,7 +306,7 @@ fn cut_from(
     tree: &MipmapArray,
     seeds: &[usize],
     budget: usize,
-    score: impl Fn(usize) -> f32,
+    mut score: impl FnMut(usize) -> f32,
     include: impl Fn(usize) -> bool,
     pixel_limit: f32,
     reserve_seeds: bool,
@@ -468,6 +472,8 @@ pub struct EngineTimings {
     pub cache_misses: usize,
     pub evicted_gaussians: usize,
     pub prefetch_pending: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lod_recheck_after_ms: Option<f64>,
 }
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen::prelude::wasm_bindgen]
@@ -521,6 +527,25 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(config: Config) -> Result<Self> {
+        let lod = &config.lod;
+        ensure!(
+            lod.downgrade_delay_ms.is_finite() && lod.downgrade_delay_ms >= 0.0,
+            "LOD downgradeDelayMs must be finite and non-negative"
+        );
+        ensure!(
+            lod.downgrade_step_ms.is_finite() && lod.downgrade_step_ms > 0.0,
+            "LOD downgradeStepMs must be finite and positive"
+        );
+        ensure!(
+            lod.downgrade_threshold.is_finite()
+                && lod.downgrade_threshold > 0.0
+                && lod.downgrade_threshold <= 1.0,
+            "LOD downgradeThreshold must be in (0, 1]"
+        );
+        ensure!(
+            lod.frustum_margin.is_finite() && lod.frustum_margin >= 0.0,
+            "LOD frustumMargin must be finite and non-negative"
+        );
         if let Some(c) = &config.default_mipmaps {
             validate_mipmaps(c)?;
         }
@@ -599,6 +624,8 @@ impl Engine {
                     mipmaps,
                     tree_depths: tree.as_ref().map(depths).unwrap_or_default(),
                     tree_features: tree.as_ref().map(features).unwrap_or_default(),
+                    tree_parents: tree.as_ref().map(parents).unwrap_or_default(),
+                    lod_history: Default::default(),
                     tree,
                     tree_bounds,
                     bounds,
@@ -642,15 +669,18 @@ impl Engine {
                     cloud.tree_bounds.clear();
                     cloud.tree_depths.clear();
                     cloud.tree_features.clear();
+                    cloud.tree_parents.clear();
                 } else if cloud.tree.is_none() {
                     let (tree, bounds) = build_tree(&cloud.source, &cloud.extras, &c.mipmaps)?;
                     cloud.tree_depths = tree.as_ref().map(depths).unwrap_or_default();
                     cloud.tree_features = tree.as_ref().map(features).unwrap_or_default();
+                    cloud.tree_parents = tree.as_ref().map(parents).unwrap_or_default();
                     cloud.tree = tree;
                     cloud.tree_bounds = bounds;
                 }
                 if mode_changed {
                     cloud.generation += 1;
+                    *cloud.lod_history.borrow_mut() = LodHistory::default();
                 }
                 cloud.mipmaps = c.mipmaps;
                 cloud.snapshot_version += 1;
@@ -795,6 +825,7 @@ impl Engine {
     fn select(
         &self,
         budget: usize,
+        now: f64,
     ) -> (
         Vec<SelectedGaussian>,
         Vec<SelectedGaussian>,
@@ -852,31 +883,44 @@ impl Engine {
                     .max(view.y_axis.truncate().length())
                     .max(view.z_axis.truncate().length());
                 let pixels = self.projection.y_axis.y.abs() * self.viewport[1] as f32 * 0.5;
+                let clip = self.projection * view;
+                let mut history = cloud.lod_history.borrow_mut();
                 let indices = cut_from(
                     tree,
                     base,
                     allowance,
                     |i| {
-                        // Offscreen branches remain represented by the pinned cut.
-                        if !visible(&cloud.tree_bounds[i], &planes) {
-                            return 0.0;
-                        }
                         let (center, feature) = cloud.tree_features[i];
+                        let clip_w = (clip * center.extend(1.0)).w;
+                        let weight = frustum_weight(
+                            &cloud.tree_bounds[i],
+                            &planes,
+                            clip_w,
+                            self.config.lod.frustum_margin,
+                        );
                         let center = view.transform_point3(center);
                         let size = feature * scale;
-                        if self.projection.w_axis.w == 0.0 {
+                        let projected = if self.projection.w_axis.w == 0.0 {
                             let distance = center.length().max(size * 0.5).max(1e-6);
                             let forward = (-center.z / distance).clamp(-1.0, 1.0);
                             let importance = 0.2 + 0.8 * forward.max(0.0).powi(2);
                             size * pixels / distance * importance
                         } else {
                             size * pixels
-                        }
+                        };
+                        history.score(
+                            i,
+                            projected * weight,
+                            &tree.inner.children[i],
+                            &self.config.lod,
+                            now,
+                        )
                     },
                     |_| true,
                     1.0,
                     true,
                 );
+                history.commit(&indices, &cloud.tree_parents);
                 let extra = indices
                     .iter()
                     .filter(|i| base.binary_search(i).is_err())
@@ -945,7 +989,9 @@ impl Engine {
         } else {
             required.saturating_mul(2).min(budget).max(1)
         };
-        let (selected, pinned, states) = self.select(capacity.min(available).max(1));
+        let selection_now = clock_ms();
+        let (selected, pinned, states) = self.select(capacity.min(available).max(1), selection_now);
+        self.timings.lod_recheck_after_ms = self.lod_recheck_after(selection_now);
         self.timings.selection_ms = clock_ms() - selection_start;
         let mapping_start = clock_ms();
         let count = selected.len();
@@ -1376,6 +1422,15 @@ impl Engine {
         }])
     }
     fn prefetch(&mut self) -> Result<Vec<Payload>> {
+        let now = clock_ms();
+        self.timings.lod_recheck_after_ms = self.lod_recheck_after(now);
+        if self
+            .timings
+            .lod_recheck_after_ms
+            .is_some_and(|delay| delay <= 1.0)
+        {
+            return self.pack(false);
+        }
         let Some(cap) = &self.capabilities else {
             return Ok(Vec::new());
         };
@@ -1482,6 +1537,12 @@ impl Engine {
             });
         }
         Ok(Vec::new())
+    }
+    fn lod_recheck_after(&self, now: f64) -> Option<f64> {
+        self.clouds
+            .values()
+            .filter_map(|c| c.lod_history.borrow().recheck_after(now))
+            .reduce(f64::min)
     }
     pub fn next_payload(&mut self) -> Option<Payload> {
         let plan = self.pending_upload.as_mut()?;
@@ -1592,6 +1653,15 @@ fn depths(tree: &MipmapArray) -> Vec<u32> {
         for c in tree.get_children(i) {
             result[c] = result[i] + 1;
             stack.push(c);
+        }
+    }
+    result
+}
+fn parents(tree: &MipmapArray) -> Vec<Option<usize>> {
+    let mut result = vec![None; tree.len()];
+    for i in 0..tree.len() {
+        for c in tree.get_children(i) {
+            result[c] = Some(i);
         }
     }
     result
@@ -1892,6 +1962,8 @@ fn write(cloud: &mut Cloud, c: &WriteCommand) -> Result<()> {
     cloud.extras = extras;
     cloud.tree_depths = tree.as_ref().map(depths).unwrap_or_default();
     cloud.tree_features = tree.as_ref().map(features).unwrap_or_default();
+    cloud.tree_parents = tree.as_ref().map(parents).unwrap_or_default();
+    *cloud.lod_history.borrow_mut() = LodHistory::default();
     cloud.tree = tree;
     cloud.tree_bounds = bounds;
     Ok(())

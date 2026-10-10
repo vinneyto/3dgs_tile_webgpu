@@ -696,7 +696,10 @@ fn tree_rebuild_and_mode_switch_refresh_identity_and_all_attributes() {
 }
 #[test]
 fn capacity_shrink_relocates_only_required_owners_and_nonpartial_frontend_gets_full_data() {
-    let mut e = Engine::new(Config::default()).unwrap();
+    // This test exercises replacement transport, independently of temporal LOD.
+    let mut config = Config::default();
+    config.lod.downgrade_delay_ms = 0.0;
+    let mut e = Engine::new(config).unwrap();
     handshake(&mut e, 1600, 8).unwrap();
     camera(&mut e, 2., 0.1);
     let mut r = Replica::default();

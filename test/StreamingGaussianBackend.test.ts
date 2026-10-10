@@ -721,6 +721,88 @@ describe("streaming backend request protocol", () => {
     store.dispose();
   });
 
+  it("settles delayed downgrades while the camera is stationary and restores detail immediately", async () => {
+    const port = new InMemoryWorker(false);
+    const store = new GaussianStore(
+      new WorkerStreamingGaussianBackend(
+        { lod: { downgradeDelayMs: 80, downgradeStepMs: 20 } },
+        port as unknown as Worker,
+      ),
+    );
+    try {
+      const camera = new PerspectiveCamera();
+      camera.position.z = 10;
+      camera.updateMatrixWorld();
+      store.setFrontendCapabilities(capabilities, camera, 1024, 1024);
+      const cloud = await store.loadBuffer(ply(0, 1, 2, 3, 4));
+      await store.whenRenderReady(cloud);
+      expect(cloud.gaussianCount).toBe(5);
+      const layout = store.layoutVersion;
+      camera.position.x = 1000;
+      store.updateLod(camera);
+      await vi.waitFor(
+        () =>
+          expect(
+            port.responses.some(
+              (r) => r.command.type === "set-camera" && r.isFinal,
+            ),
+          ).toBe(true),
+        { interval: 1 },
+      );
+      expect(cloud.gaussianCount).toBe(5);
+      expect(
+        [...port.responses]
+          .reverse()
+          .find((r) => r.command.type === "set-camera" && r.isFinal)?.metrics
+          ?.lodRecheckAfterMs,
+      ).toBeGreaterThan(0);
+      // No further updateLod calls: a bounded timer must finish the downgrade.
+      await vi.waitFor(() => expect(cloud.gaussianCount).toBe(1), {
+        interval: 5,
+      });
+      expect(port.commands.some((c) => c.type === "prefetch-cache")).toBe(true);
+      expect(store.layoutVersion).toBe(layout);
+      port.responses.length = 0;
+      camera.position.x = 0;
+      store.updateLod(camera);
+      await vi.waitFor(
+        () =>
+          expect(
+            port.responses.some(
+              (r) => r.command.type === "set-camera" && r.isFinal,
+            ),
+          ).toBe(true),
+        { interval: 1 },
+      );
+      expect(cloud.gaussianCount).toBe(5);
+      expect(
+        [...port.responses]
+          .reverse()
+          .find((r) => r.command.type === "set-camera" && r.isFinal)?.metrics
+          ?.lodRecheckAfterMs,
+      ).toBeUndefined();
+      expect(store.layoutVersion).toBe(layout);
+      port.responses.length = 0;
+      camera.position.x = 1000;
+      store.updateLod(camera);
+      await vi.waitFor(
+        () =>
+          expect(
+            port.responses.some(
+              (r) => r.command.type === "set-camera" && r.isFinal,
+            ),
+          ).toBe(true),
+        { interval: 1 },
+      );
+      store.dispose();
+      const commandsAtDisposal = port.commands.length;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(port.commands).toHaveLength(commandsAtDisposal);
+    } finally {
+      store.dispose();
+    }
+  });
+
   it("uses an initial transform for the first cut and rejects readiness on removal", async () => {
     const store = new GaussianStore(new StreamingGaussianBackend({}));
     const worldMatrix = [...matrix];

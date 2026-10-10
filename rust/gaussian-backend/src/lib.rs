@@ -1,5 +1,6 @@
 mod ascii_ply;
 mod engine;
+mod lod;
 mod model;
 mod protocol;
 mod slot_mapping;

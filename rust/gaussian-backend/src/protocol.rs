@@ -5,6 +5,27 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     pub default_mipmaps: Option<MipmapConfig>,
     pub streaming: Option<StreamingConfig>,
+    #[serde(default)]
+    pub lod: LodConfig,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct LodConfig {
+    pub downgrade_delay_ms: f64,
+    pub downgrade_step_ms: f64,
+    pub downgrade_threshold: f32,
+    pub frustum_margin: f32,
+}
+impl Default for LodConfig {
+    fn default() -> Self {
+        Self {
+            downgrade_delay_ms: 400.0,
+            downgrade_step_ms: 100.0,
+            downgrade_threshold: 0.7,
+            frustum_margin: 0.15,
+        }
+    }
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

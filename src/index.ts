@@ -16,7 +16,10 @@ export {
   type GaussianMipmapRaycastHit,
 } from "./renderer/GaussianRaycastIndex";
 export type { GaussianBackend } from "./streaming-backend/GaussianBackend";
-export type { BackendConfig } from "./streaming-backend/BackendConfig";
+export type {
+  BackendConfig,
+  BackendLodConfig,
+} from "./streaming-backend/BackendConfig";
 export type { FrontendCapabilities } from "./streaming-backend/FrontendCapabilities";
 export type { BackendCommand } from "./streaming-backend/commands/BackendCommand";
 export type { Command } from "./streaming-backend/commands/Command";
