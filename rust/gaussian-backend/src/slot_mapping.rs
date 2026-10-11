@@ -41,8 +41,8 @@ impl SlotMapping {
 
     /// Requested keys include the pinned coarse cut and the desired draw cut.
     /// Keep every other valid owner until space is needed; then evict inactive
-    /// least-recently-used owners. The caller commits a resident fallback cut
-    /// before uploading a replacement into a previously active slot.
+    /// least-recently-used owners. The caller stages replacements for previously
+    /// active slots until the new attributes and draw cut can commit together.
     pub fn reconcile(
         &mut self,
         capacity: usize,

@@ -568,7 +568,7 @@ fn camera_changes_keep_resident_details_and_revisit_without_attribute_uploads() 
 }
 
 #[test]
-fn pressure_commits_resident_fallback_before_overwriting_active_slots() {
+fn camera_pressure_keeps_the_old_cut_until_replacement_rows_commit() {
     let mut e = Engine::new(
         serde_json::from_value(json!({"streaming":{"maxUploadBytesPerUpdate":56}})).unwrap(),
     )
@@ -579,26 +579,71 @@ fn pressure_commits_resident_fallback_before_overwriting_active_slots() {
     r.receive(&load(&mut e, "row", &row_cloud(), json!({})).unwrap());
     let capacity = r.capacity;
     let mut evictions = 0;
+    let mut transactions = 0;
     for x in [1., 2., 3., 4., 0., 2., 4.] {
+        let old_slots = r.active_slots.clone();
+        let old_means = f32_attr(&r.attributes, "means").to_vec();
+        let old_scales = f32_attr(&r.attributes, "scalesOpacity").to_vec();
         let out = camera(&mut e, x, 0.1);
         evictions += e.timings.evicted_gaussians;
+        let overwritten = !patch_slots(&out).is_disjoint(&old_slots);
+        let mut deferred = 0;
         for payload in out {
-            if let Payload::BuffersPatched { patches, .. } = &payload {
-                for p in patches {
-                    for slot in p.first_slot..p.first_slot + p.slot_count {
-                        assert!(
-                            !r.active_slots.contains(&slot),
-                            "Deactivate/coarsen before slot replacement"
-                        );
+            if let Payload::BuffersPatched {
+                patches,
+                defer_until_activation,
+                ..
+            } = &payload
+            {
+                let bytes: usize = patches
+                    .iter()
+                    .map(|p| match &p.data {
+                        Data::F32(v) => v.len() * 4,
+                        Data::U32(v) => v.len() * 4,
+                    })
+                    .sum();
+                assert!(bytes <= 56, "Transport batches stay bounded");
+                if overwritten {
+                    assert!(*defer_until_activation, "Active replacement must be staged");
+                    deferred += 1;
+                } else {
+                    for p in patches {
+                        for slot in p.first_slot..p.first_slot + p.slot_count {
+                            assert!(!r.active_slots.contains(&slot));
+                        }
                     }
                 }
             }
+            let commit = matches!(&payload, Payload::BuffersActivated { commit: true, .. });
             r.receive(&[payload]);
+            if overwritten && !commit {
+                assert_eq!(
+                    r.active_slots, old_slots,
+                    "Do not flash a coarse fallback cut"
+                );
+                assert_eq!(f32_attr(&r.attributes, "means"), old_means);
+                assert_eq!(f32_attr(&r.attributes, "scalesOpacity"), old_scales);
+            }
             assert!(r.active > 0);
             assert!(r.occupied() <= capacity);
         }
+        if overwritten {
+            transactions += 1;
+            assert!(
+                deferred > 1,
+                "Exercise multiple batches before atomic activation"
+            );
+            assert!(r.deferred.is_empty());
+        }
+        // A repeated, stationary view must not restart a coarse/detail cycle.
+        let stable = r.active_slots.clone();
+        let out = camera(&mut e, x, 0.1);
+        assert!(patch_slots(&out).is_empty());
+        r.receive(&out);
+        assert_eq!(r.active_slots, stable);
     }
     assert!(evictions > 0, "Fixture must exercise cache pressure");
+    assert!(transactions > 0, "Fixture must overwrite an active row");
 }
 
 #[test]
