@@ -49,6 +49,7 @@ import {
 } from "../kernels/rasterHelpers";
 import {
   rasterBreakContextNodes,
+  rasterOutputContextNodes,
   rasterContextNodes,
   rasterGaussianCenter,
   rasterGaussianColor,
@@ -68,6 +69,7 @@ import {
   rasterPixelContextNodes,
   validateGaussianNodeAccess,
   validateGaussianNodeDomain,
+  resolveGaussianNode,
   type GaussianRasterNodeSlots,
 } from "../nodes/GaussianContextNodes";
 import { AttributePool } from "./AttributePool";
@@ -75,6 +77,9 @@ import { RasterChunkWorkspace } from "./RasterChunkWorkspace";
 import { ExclusiveScanStage } from "./ExclusiveScanStage";
 import { TILE_SIZE, WORKGROUP_SIZE } from "./constants";
 import { decodeActiveSlot } from "./activeSlots";
+import { boundaryDeltaWGSL } from "../kernels/tileContribution";
+import { finalizeGaussianDepth } from "./finalizeGaussianDepth";
+import { passContextOverrides } from "./FrameUniforms";
 import type { FrameUniforms } from "./FrameUniforms";
 import type { DepthSortMode } from "./types";
 
@@ -184,11 +189,21 @@ export class TileRasterizer {
       rasterBreakContextNodes,
       "rasterBreakNode",
     );
+    validateGaussianNodeAccess(
+      nodes.rasterOutputDepthNode,
+      rasterOutputContextNodes,
+      "rasterOutputDepthNode",
+    );
+    validateGaussianNodeAccess(
+      nodes.rasterOutputValidNode,
+      rasterOutputContextNodes,
+      "rasterOutputValidNode",
+    );
     const nextDirect = this.createRasterNode(nodes, "direct");
     const nextChunk =
       this.chunks === null ? null : this.createRasterNode(nodes, "chunk");
     const nextComposite =
-      this.chunks === null ? null : this.createCompositeNode();
+      this.chunks === null ? null : this.createCompositeNode(nodes);
     this.computeNode?.dispose();
     this.chunkComputeNode?.dispose();
     this.compositeNode?.dispose();
@@ -434,6 +449,7 @@ export class TileRasterizer {
       }
       const pixelCenter = vec2(pixel).add(0.5);
       const pixelOverrides: OverrideMap = new Map<any, () => any>([
+        ...passContextOverrides(frame),
         [rasterPixelCoordinate, () => pixel],
         [rasterScreenPosition, () => pixelCenter],
         [rasterScreenUV, () => pixelCenter.div(frame.viewport.xy)],
@@ -527,7 +543,15 @@ export class TileRasterizer {
                     value: sharedColor.element(batchIndex).w,
                   }) as any
                 ).toVar("rasterSourceSlot");
-                const delta = pixelCenter.sub(mean.xy);
+                const delta = vec2(
+                  wgslFn<any>(boundaryDeltaWGSL)({
+                    pixel: pixelCenter,
+                    center: mean.xy,
+                    conic: sharedConic.element(batchIndex).xyz,
+                    viewport: frame.viewport.xy,
+                    boundary_axis: frame.boundaryAxis,
+                  }) as any,
+                ).toVar("rasterBoundaryDelta");
                 const earlyOverrides: OverrideMap = new Map(pixelOverrides);
                 earlyOverrides.set(rasterPixelValue, () => pixelValue);
                 earlyOverrides.set(rasterGaussianIndex, () => sourceSlot);
@@ -674,6 +698,7 @@ export class TileRasterizer {
             this.depthTexture,
             frame,
             this.depthAlphaThreshold,
+            nodes,
           );
         } else {
           const partialIndex = taskIndex
@@ -701,7 +726,7 @@ export class TileRasterizer {
       );
   }
 
-  private createCompositeNode(): ComputeNode {
+  private createCompositeNode(nodes: GaussianRasterNodeSlots): ComputeNode {
     const counters =
       this.metrics === null
         ? null
@@ -781,6 +806,7 @@ export class TileRasterizer {
           this.depthTexture,
           frame,
           this.depthAlphaThreshold,
+          nodes,
         );
         if (counters !== null) {
           atomicAdd(counters.element(tile.mul(4).add(2)), uint(1));
@@ -827,18 +853,6 @@ export class TileRasterizer {
   }
 }
 
-function viewDepthToDeviceDepth(viewDepth: any, frame: FrameUniforms): any {
-  const viewZ = viewDepth.negate();
-  return clamp(
-    frame.viewport.z
-      .add(viewZ)
-      .mul(frame.viewport.w)
-      .div(frame.viewport.w.sub(frame.viewport.z).mul(viewZ)),
-    0,
-    1,
-  );
-}
-
 function storeFinalPixel(
   accumulated: any,
   transmittance: any,
@@ -848,6 +862,7 @@ function storeFinalPixel(
   depthTexture: StorageTexture | null,
   frame: FrameUniforms,
   depthAlphaThreshold: number,
+  nodes: GaussianRasterNodeSlots,
 ): void {
   const backgroundAlpha = clamp(float(frame.background[3]), 0, 1);
   accumulated.addAssign(
@@ -858,13 +873,14 @@ function storeFinalPixel(
   const alpha = float(1).sub(transmittance.mul(float(1).sub(backgroundAlpha)));
   textureStore(colorOutput, ivec2(pixel), vec4(accumulated, alpha));
   if (depthTexture !== null) {
-    const gaussianAlpha = float(1).sub(transmittance);
-    const deviceDepth = gaussianAlpha
-      .greaterThan(depthAlphaThreshold)
-      .select(
-        viewDepthToDeviceDepth(weightedViewDepth.div(gaussianAlpha), frame),
-        float(1),
-      );
+    const deviceDepth = finalizeGaussianDepth(
+      weightedViewDepth,
+      transmittance,
+      pixel,
+      frame,
+      depthAlphaThreshold,
+      nodes,
+    );
     textureStore(
       storageTexture(depthTexture),
       ivec2(pixel),
@@ -874,5 +890,5 @@ function storeFinalPixel(
 }
 
 function resolveNode(node: Node, overrides: OverrideMap): any {
-  return (node as any).context({ overrideNodes: overrides });
+  return resolveGaussianNode(node, overrides);
 }

@@ -1,34 +1,8 @@
-import type { AntialiasMode } from "../pipeline/types";
 import type { GaussianShFormat } from "../../streaming-backend-impl/GaussianSh";
-import { tileContributionWGSL } from "./tileContribution";
+import { boundaryTileContributionWGSL } from "./tileContribution";
 
-export function projectionCovarianceWGSL(antialiasMode: AntialiasMode): string {
-  const originalDeterminant =
-    antialiasMode === "compensated"
-      ? "max(sigma00_unfiltered * sigma11_unfiltered - sigma01 * sigma01, 0.0)"
-      : "1.0";
-
-  return /* wgsl */ `
-fn project_gaussian_covariance_${antialiasMode}(
-  view: vec4<f32>,
-  scale_input: vec3<f32>,
-  rotation_input: vec4<f32>,
-  model_view: mat4x4<f32>,
-  projection: mat4x4<f32>,
-  viewport: vec4<f32>
-) -> mat4x4<f32> {
-  let depth = -view.z;
-  if (!(depth > viewport.z && depth < viewport.w)) { return mat4x4<f32>(); }
-  let clip = projection * view;
-  if (clip.w <= 0.0) { return mat4x4<f32>(); }
-  let ndc = clip.xy / clip.w;
-  let width = viewport.x;
-  let height = viewport.y;
-  let center = vec2<f32>(
-    (ndc.x * 0.5 + 0.5) * width,
-    (0.5 - ndc.y * 0.5) * height
-  );
-
+export const viewCovarianceWGSL = /* wgsl */ `
+fn gaussian_view_covariance(scale_input: vec3<f32>, rotation_input: vec4<f32>, model_view: mat4x4<f32>) -> mat3x3<f32> {
   let scale = max(scale_input, vec3<f32>(1e-7));
   let q = normalize(rotation_input);
   let xx = q.x * q.x;
@@ -55,28 +29,18 @@ fn project_gaussian_covariance_${antialiasMode}(
     model_view[1].xyz,
     model_view[2].xyz
   );
-  let covariance_view = local_to_view * covariance_local * transpose(local_to_view);
-  let fx = 0.5 * width * projection[0][0];
-  let fy = 0.5 * height * projection[1][1];
-  let inverse_depth = 1.0 / depth;
-  let j0 = vec3<f32>(
-    fx * inverse_depth,
-    0.0,
-    fx * view.x * inverse_depth * inverse_depth
-  );
-  let j1 = vec3<f32>(
-    0.0,
-    -fy * inverse_depth,
-    -fy * view.y * inverse_depth * inverse_depth
-  );
-  let covariance_j0 = covariance_view * j0;
-  let covariance_j1 = covariance_view * j1;
-  let sigma00_unfiltered = dot(j0, covariance_j0);
-  var sigma01 = dot(j0, covariance_j1);
-  let sigma11_unfiltered = dot(j1, covariance_j1);
-  let original_determinant = ${originalDeterminant};
-  var sigma00 = sigma00_unfiltered + 0.3;
-  var sigma11 = sigma11_unfiltered + 0.3;
+  return local_to_view * covariance_local * transpose(local_to_view);
+
+}
+`;
+
+/** Filter, stabilize and invert an arbitrary image covariance (xx, xy, yy). */
+export const projectionResultWGSL = /* wgsl */ `
+fn gaussian_projection_result(center: vec2<f32>, depth: f32, covariance: vec3<f32>, filter_variance: f32) -> mat4x4<f32> {
+  let original_determinant = max(covariance.x * covariance.z - covariance.y * covariance.y, 0.0);
+  var sigma00 = covariance.x + filter_variance;
+  var sigma01 = covariance.y;
+  var sigma11 = covariance.z + filter_variance;
   let max_f32 = 3.402823e+38;
   let covariance_is_finite =
     sigma00 == sigma00 && abs(sigma00) <= max_f32 &&
@@ -112,7 +76,44 @@ fn project_gaussian_covariance_${antialiasMode}(
   );
 }
 `;
+
+export const perspectiveProjectionWGSL = /* wgsl */ `
+fn perspective_gaussian_projection(view: vec3<f32>, covariance_view: mat3x3<f32>, projection: mat4x4<f32>, viewport: vec4<f32>, filter_variance: f32) -> mat4x4<f32> {
+  let depth = -view.z;
+  if (!(depth > viewport.z && depth < viewport.w)) { return mat4x4<f32>(); }
+  let clip = projection * vec4<f32>(view, 1.0);
+  if (clip.w <= 0.0) { return mat4x4<f32>(); }
+  let ndc = clip.xy / clip.w;
+  let center = vec2<f32>((ndc.x * 0.5 + 0.5) * viewport.x, (0.5 - ndc.y * 0.5) * viewport.y);
+  let fx = 0.5 * viewport.x * projection[0][0];
+  let fy = 0.5 * viewport.y * projection[1][1];
+  let inverse_depth = 1.0 / depth;
+  let j0 = vec3<f32>(fx * inverse_depth, 0.0, fx * view.x * inverse_depth * inverse_depth);
+  let j1 = vec3<f32>(0.0, -fy * inverse_depth, -fy * view.y * inverse_depth * inverse_depth);
+  let covariance = vec3<f32>(dot(j0, covariance_view * j0), dot(j0, covariance_view * j1), dot(j1, covariance_view * j1));
+  return gaussian_projection_result(center, depth, covariance, filter_variance);
 }
+`;
+
+export const projectionIsValidWGSL = /* wgsl */ `
+fn gaussian_projection_is_valid(p: mat4x4<f32>) -> bool {
+  let max_f32 = 3.402823e+38;
+  for (var i = 0u; i < 3u; i++) {
+    if (!all(p[i] == p[i]) || !all(abs(p[i]) <= vec4<f32>(max_f32))) { return false; }
+  }
+  let covariance = p[2].xyz;
+  let determinant = covariance.x * covariance.z - covariance.y * covariance.y;
+  let conic = p[1].xyz;
+  // The stored support radii use nine bits per axis. Custom roots must use
+  // the same stabilized covariance range as gaussian_projection_result.
+  if (!(p[0].w > 0.0 && p[0].z > 0.0 && determinant > 1e-8 &&
+      covariance.x > 0.0 && covariance.z > 0.0 && covariance.x <= 1e4 && covariance.z <= 1e4 &&
+      conic.x > 0.0 && conic.z > 0.0 && p[2].w >= 0.0)) { return false; }
+  let expected_conic = vec3<f32>(covariance.z, -covariance.y, covariance.x) / determinant;
+  return abs(p[1].w - determinant) <= max(1e-6, determinant * 1e-3) &&
+    all(abs(conic - expected_conic) <= max(vec3<f32>(1e-6), abs(expected_conic) * 1e-3));
+}
+`;
 
 export function evaluateShWGSL(format: GaussianShFormat): string {
   const coefficientType = format === "rgb8e8" ? "u32" : "vec4<f32>";
@@ -187,20 +188,26 @@ fn subpixel_has_sample(
   conic: vec3<f32>,
   power_threshold: f32,
   extent: vec2<f32>,
-  viewport: vec2<u32>
+  viewport: vec2<u32>,
+  boundary_axis: u32
 ) -> bool {
   if (extent.x * 2.0 > 1.0 || extent.y * 2.0 > 1.0) { return true; }
+  var canonical_center = center;
+  if (boundary_axis == 1u) { canonical_center.x -= floor(center.x / f32(viewport.x)) * f32(viewport.x); }
+  if (boundary_axis == 2u) { canonical_center.y -= floor(center.y / f32(viewport.y)) * f32(viewport.y); }
+  let minimum = vec2<i32>(ceil(canonical_center - extent - vec2<f32>(0.5)));
+  let maximum = vec2<i32>(floor(canonical_center + extent - vec2<f32>(0.5)));
   let pixel_min = vec2<i32>(
-    max(i32(ceil(center.x - extent.x - 0.5)), 0),
-    max(i32(ceil(center.y - extent.y - 0.5)), 0)
+    select(max(minimum.x, 0), minimum.x, boundary_axis == 1u),
+    select(max(minimum.y, 0), minimum.y, boundary_axis == 2u)
   );
   let pixel_max = vec2<i32>(
-    min(i32(floor(center.x + extent.x - 0.5)), i32(viewport.x) - 1),
-    min(i32(floor(center.y + extent.y - 0.5)), i32(viewport.y) - 1)
+    select(min(maximum.x, i32(viewport.x) - 1), maximum.x, boundary_axis == 1u),
+    select(min(maximum.y, i32(viewport.y) - 1), maximum.y, boundary_axis == 2u)
   );
   for (var pixel_y = pixel_min.y; pixel_y <= pixel_max.y; pixel_y++) {
     for (var pixel_x = pixel_min.x; pixel_x <= pixel_max.x; pixel_x++) {
-      let delta = vec2<f32>(f32(pixel_x) + 0.5, f32(pixel_y) + 0.5) - center;
+      let delta = vec2<f32>(f32(pixel_x) + 0.5, f32(pixel_y) + 0.5) - canonical_center;
       let sigma = 0.5 * (
         conic.x * delta.x * delta.x +
         2.0 * conic.y * delta.x * delta.y +
@@ -214,29 +221,16 @@ fn subpixel_has_sample(
 `;
 
 export function countContributingTilesWGSL(): string {
-  const contribution = tileContributionWGSL({
-    center: "center",
-    conic: "conic",
-    powerThreshold: "power_threshold",
-    tileX: "tile_x",
-    tileY: "tile_y",
-    onHit: "count++;",
-  });
   return /* wgsl */ `
-fn count_contributing_tiles(
-  center: vec2<f32>,
-  conic: vec3<f32>,
-  power_threshold: f32,
-  tile_min: vec2<i32>,
-  tile_max: vec2<i32>
-) -> u32 {
+fn count_contributing_tiles(center: vec2<f32>, conic: vec3<f32>, power_threshold: f32, radius: vec2<f32>, tile_min: vec2<i32>, tile_max: vec2<i32>, viewport: vec2<f32>, boundary_axis: u32) -> u32 {
   var count = 0u;
   for (var tile_y = tile_min.y; tile_y <= tile_max.y; tile_y++) {
     for (var tile_x = tile_min.x; tile_x <= tile_max.x; tile_x++) {
-${contribution}
+      if (gaussian_boundary_tile_hit(center, conic, power_threshold, radius, vec2<i32>(tile_x, tile_y), viewport, boundary_axis)) { count++; }
     }
   }
   return count;
 }
+${boundaryTileContributionWGSL()}
 `;
 }

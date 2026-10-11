@@ -30,11 +30,14 @@ import type { GaussianData } from "../GaussianData";
 import {
   countContributingTilesWGSL,
   evaluateShWGSL,
-  projectionCovarianceWGSL,
+  projectionIsValidWGSL,
   subpixelHasSampleWGSL,
 } from "../kernels/projectionHelpers";
 import {
   gaussianColor,
+  gaussianPositionView,
+  gaussianCovarianceView,
+  passContextNodes,
   gaussianIndex,
   gaussianObjectId,
   gaussianObjectMatrix,
@@ -54,6 +57,7 @@ import {
   projectionContextNodes,
   validateGaussianNodeAccess,
   validateGaussianNodeDomain,
+  resolveGaussianNode,
   type GaussianProjectionNodeSlots,
 } from "../nodes/GaussianContextNodes";
 import { AttributePool } from "./AttributePool";
@@ -67,6 +71,8 @@ import {
   compactRotationWGSL,
 } from "../kernels/compactGaussians";
 import { TILE_SIZE, WORKGROUP_SIZE } from "./constants";
+import { gaussianViewCovariance } from "../nodes/GaussianProjectionNodes";
+import { passContextOverrides } from "./FrameUniforms";
 import type { FrameUniforms } from "./FrameUniforms";
 import { OBJECT_FRAME_VEC4S, type ObjectFrameState } from "./ObjectFrameState";
 import type { AntialiasMode } from "./types";
@@ -74,6 +80,7 @@ import type { AntialiasMode } from "./types";
 type OverrideMap = Map<any, () => any>;
 
 const sourceAccessors = new Set<Node>([
+  ...passContextNodes,
   gaussianIndex,
   gaussianObjectId,
   gaussianPositionLocal,
@@ -88,8 +95,13 @@ const worldAccessors = new Set<Node>([
   gaussianPositionWorld,
   gaussianViewDirection,
 ]);
-const projectedAccessors = new Set<Node>([
+const rootAccessors = new Set<Node>([
   ...worldAccessors,
+  gaussianPositionView,
+  gaussianCovarianceView,
+]);
+const projectedAccessors = new Set<Node>([
+  ...rootAccessors,
   gaussianViewDepth,
   gaussianScreenPosition,
   gaussianProjectedSigma,
@@ -143,6 +155,7 @@ export class ProjectionStage {
 
   rebuild(nodes: GaussianProjectionNodeSlots): void {
     for (const node of [
+      nodes.gaussianProjectionNode,
       nodes.gaussianPositionLocalNode,
       nodes.gaussianPositionWorldNode,
       nodes.gaussianScaleNode,
@@ -153,6 +166,11 @@ export class ProjectionStage {
     ]) {
       validateGaussianNodeDomain(node, projectionContextNodes, "projection");
     }
+    validateGaussianNodeAccess(
+      nodes.gaussianProjectionNode,
+      rootAccessors,
+      "gaussianProjectionNode",
+    );
     validateGaussianNodeAccess(
       nodes.gaussianPositionLocalNode,
       sourceAccessors,
@@ -274,9 +292,7 @@ export class ProjectionStage {
     const projectedConic = storage(this.projectedConic, "vec4", data.count);
     const projectedColor = storage(this.projectedColor, "vec4", data.count);
     const tileCounts = storage(this.tileCounts, "uint", data.count);
-    const projectCovariance = wgslFn<any>(
-      projectionCovarianceWGSL(this.antialiasMode),
-    );
+    const projectionIsValid = wgslFn<any>(projectionIsValidWGSL);
     const evaluateSh = wgslFn<any>(evaluateShWGSL(data.shFormat));
     const countTiles = wgslFn<any>(countContributingTilesWGSL());
     const subpixelHasSample = wgslFn<any>(subpixelHasSampleWGSL);
@@ -352,6 +368,7 @@ export class ProjectionStage {
         Return();
       });
       const sourceOverrides: OverrideMap = new Map<any, () => any>([
+        ...passContextOverrides(frame),
         [gaussianIndex, () => sourceSlot],
         [gaussianObjectId, () => objectId],
         [gaussianPositionLocal, () => sourceLocal],
@@ -371,16 +388,16 @@ export class ProjectionStage {
       const viewDirection = normalize(positionLocal.sub(cameraLocal));
       worldOverrides.set(gaussianViewDirection, () => viewDirection);
 
-      let viewPosition: any;
-      if (nodes.gaussianPositionWorldNode === gaussianPositionWorld) {
-        viewPosition = modelView.mul(vec4(positionLocal, 1));
-      } else {
-        const positionWorld = resolveNode(
-          nodes.gaussianPositionWorldNode,
-          worldOverrides,
-        ).toVar("gaussianPositionWorldValue");
-        viewPosition = frame.view.mul(vec4(positionWorld, 1));
-      }
+      const positionWorld =
+        nodes.gaussianPositionWorldNode === gaussianPositionWorld
+          ? standardWorld
+          : resolveNode(nodes.gaussianPositionWorldNode, worldOverrides).toVar(
+              "gaussianPositionWorldValue",
+            );
+      let viewPosition: any =
+        nodes.gaussianPositionWorldNode === gaussianPositionWorld
+          ? modelView.mul(vec4(positionLocal, 1))
+          : frame.view.mul(vec4(positionWorld, 1));
       viewPosition = viewPosition.toVar("gaussianViewPosition");
       const scale = resolveNode(nodes.gaussianScaleNode, worldOverrides).toVar(
         "gaussianScaleValue",
@@ -389,17 +406,21 @@ export class ProjectionStage {
         nodes.gaussianRotationNode,
         worldOverrides,
       ).toVar("gaussianRotationValue");
-      const projected = (
-        projectCovariance({
-          view: viewPosition,
-          scale_input: scale,
-          rotation_input: rotation,
-          model_view: modelView,
-          projection: frame.projection,
-          viewport: frame.viewport,
-        }) as any
+      const covarianceView = (
+        gaussianViewCovariance(scale, rotation, modelView) as any
+      ).toVar("gaussianCovarianceViewValue");
+      const rootOverrides = new Map(worldOverrides);
+      rootOverrides.set(gaussianPositionLocal, () => positionLocal);
+      rootOverrides.set(gaussianPositionWorld, () => positionWorld);
+      rootOverrides.set(gaussianScale, () => scale);
+      rootOverrides.set(gaussianRotation, () => rotation);
+      rootOverrides.set(gaussianPositionView, () => viewPosition.xyz);
+      rootOverrides.set(gaussianCovarianceView, () => covarianceView);
+      const projected = resolveNode(
+        nodes.gaussianProjectionNode,
+        rootOverrides,
       ).toVar("gaussianProjection");
-      If(projected.element(0).w.lessThanEqual(0), () => {
+      If((projectionIsValid({ p: projected }) as any).not(), () => {
         Return();
       });
 
@@ -410,6 +431,8 @@ export class ProjectionStage {
       const covariance = projected.element(2).xyz;
       const originalDeterminant = projected.element(2).w;
       const projectedOverrides = new Map(worldOverrides);
+      projectedOverrides.set(gaussianPositionView, () => viewPosition.xyz);
+      projectedOverrides.set(gaussianCovarianceView, () => covarianceView);
       projectedOverrides.set(gaussianViewDepth, () => depth);
       projectedOverrides.set(gaussianScreenPosition, () => center);
       projectedOverrides.set(gaussianProjectedSigma, () => sqrt(covariance.xz));
@@ -426,7 +449,7 @@ export class ProjectionStage {
               sqrt(clamp(originalDeterminant.div(determinant), 0, 1)),
             )
           : opacityBase;
-      If(opacity.lessThan(float(1 / 255)), () => {
+      If(opacity.lessThan(float(1 / 255)).or(opacity.notEqual(opacity)), () => {
         Return();
       });
       const powerThreshold = log(opacity.mul(255));
@@ -445,11 +468,22 @@ export class ProjectionStage {
       const boundsMin = center.sub(radius);
       const boundsMax = center.add(radius);
       If(
-        boundsMax.x
-          .lessThan(0)
-          .or(boundsMax.y.lessThan(0))
-          .or(boundsMin.x.greaterThanEqual(frame.viewport.x))
-          .or(boundsMin.y.greaterThanEqual(frame.viewport.y)),
+        frame.boundaryAxis
+          .notEqual(1)
+          .and(
+            boundsMax.x
+              .lessThan(0)
+              .or(boundsMin.x.greaterThanEqual(frame.viewport.x)),
+          )
+          .or(
+            frame.boundaryAxis
+              .notEqual(2)
+              .and(
+                boundsMax.y
+                  .lessThan(0)
+                  .or(boundsMin.y.greaterThanEqual(frame.viewport.y)),
+              ),
+          ),
         () => {
           Return();
         },
@@ -461,6 +495,7 @@ export class ProjectionStage {
           power_threshold: powerThreshold,
           extent: vec2(extentX, extentY),
           viewport: uvec2(frame.viewport.xy),
+          boundary_axis: frame.boundaryAxis,
         }) as any;
         If(hasSample.not(), () => {
           // Negative opacity is an invisible marker read only by the optional
@@ -472,10 +507,19 @@ export class ProjectionStage {
       const maxTile = ivec2(int(frame.tilesX), int(frame.tilesY)).sub(1);
       const tileMin = ivec2(
         clamp(floor(boundsMin.div(float(TILE_SIZE))), vec2(0), vec2(maxTile)),
-      );
+      ).toVar();
       const tileMax = ivec2(
         clamp(floor(boundsMax.div(float(TILE_SIZE))), vec2(0), vec2(maxTile)),
-      );
+      ).toVar();
+
+      If(frame.boundaryAxis.equal(1), () => {
+        tileMin.x.assign(0);
+        tileMax.x.assign(maxTile.x);
+      });
+      If(frame.boundaryAxis.equal(2), () => {
+        tileMin.y.assign(0);
+        tileMax.y.assign(maxTile.y);
+      });
 
       const standardColor = evaluateSh({
         gid: sourceSlot,
@@ -498,6 +542,9 @@ export class ProjectionStage {
         center,
         conic,
         power_threshold: powerThreshold,
+        radius,
+        viewport: frame.viewport.xy,
+        boundary_axis: frame.boundaryAxis,
         tile_min: tileMin,
         tile_max: tileMax,
       }) as any;
@@ -527,5 +574,5 @@ export class ProjectionStage {
 }
 
 function resolveNode(node: Node, overrides: OverrideMap): any {
-  return (node as any).context({ overrideNodes: overrides });
+  return resolveGaussianNode(node, overrides);
 }

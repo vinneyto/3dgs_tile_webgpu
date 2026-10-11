@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   PerspectiveCamera,
+  Camera,
   Scene,
   StorageBufferAttribute,
   type NodeFrame,
   type WebGPURenderer,
 } from "three/webgpu";
-import { float, vec3 } from "three/tsl";
+import { float, vec3, vec2, uniform } from "three/tsl";
 
 import { GaussianData } from "../src/renderer/GaussianData";
 import { GaussianPass } from "../src/renderer/GaussianPass";
@@ -18,10 +19,15 @@ import type { RequestScheduler } from "../src/streaming-backend/RequestScheduler
 import type { GaussianPassOptions } from "../src/renderer/pipeline/types";
 import {
   gaussianColor,
+  gaussianPositionView,
+  rasterOutputDepth,
+  rasterOutputValid,
   gaussianPositionLocal,
   gaussianPositionWorld,
   rasterGaussianColor,
 } from "../src/renderer/nodes/GaussianContextNodes";
+
+import { gaussianProjectionResult } from "../src/renderer/nodes/GaussianProjectionNodes";
 
 const TEST_LIMITS = {
   maxStorageBufferBindingSize: 1_073_741_824,
@@ -204,6 +210,177 @@ describe("GaussianPass node slots", () => {
     expect(pass.depthTexture?.image).toMatchObject({ width: 32, height: 32 });
     expect(renderTargetDisposed).toHaveBeenCalledTimes(2);
     expect(depthTextureDisposed).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps external passes backend-free across creation, pose changes, resize and rendering", () => {
+    const { store } = packedStore(oneGaussian());
+    const capabilities = vi.spyOn(store, "setFrontendCapabilities");
+    const updateLod = vi.spyOn(store, "updateLod");
+    const camera = new PerspectiveCamera();
+    const renderer = createRenderer();
+    const pass = new GaussianPass(renderer, camera, store, {
+      dataMode: "external",
+      fixedSize: { width: 73, height: 19 },
+      outputDepth: true,
+    });
+    const pipeline = createPipelineMock();
+    Object.assign(pass, {
+      pipeline,
+      pipelineLayoutVersion: store.layoutVersion,
+    });
+    pass.setResolutionScale(0.25);
+    pass.render();
+    camera.position.x = 10;
+    pass.setSize(4096, 2048);
+    pass.render();
+    pass.setFixedSize(101, 23);
+    pass.render();
+    expect(capabilities).not.toHaveBeenCalled();
+    expect(updateLod).not.toHaveBeenCalled();
+    expect(pipeline.prepareFrame.mock.calls.map(([w, h]) => [w, h])).toEqual([
+      [73, 19],
+      [73, 19],
+      [101, 23],
+    ]);
+    expect(pass.depthTexture?.image).toMatchObject({ width: 101, height: 23 });
+    pass.useDrawingBufferSize().render();
+    expect(pipeline.prepareFrame).toHaveBeenLastCalledWith(
+      8,
+      8,
+      pass.colorTexture,
+      pass.depthTexture,
+    );
+    pass.dispose();
+    store.dispose();
+  });
+
+  it("does not start an external store before the owner supplies data", () => {
+    const { store } = packedStore(oneGaussian(), false);
+    const capabilities = vi.spyOn(store, "setFrontendCapabilities");
+    const lod = vi.spyOn(store, "updateLod");
+    const pass = new GaussianPass(
+      createRenderer(),
+      new PerspectiveCamera(),
+      store,
+      { dataMode: "external" },
+    );
+    pass.render();
+    expect(store.hasPackedData).toBe(false);
+    expect(capabilities).not.toHaveBeenCalled();
+    expect(lod).not.toHaveBeenCalled();
+    expect(pass.renderCount).toBe(0);
+    pass.dispose();
+    store.dispose();
+  });
+
+  it("supports an explicit scalar range and generic Camera with a custom root", () => {
+    const { store } = packedStore(oneGaussian());
+    const camera = new Camera();
+    const pass = new GaussianPass(createRenderer(), camera, store, {
+      dataMode: "external",
+      depthRange: [0.01, 500],
+      redrawStrategy: "auto",
+    });
+    const pipeline = createPipelineMock();
+    Object.assign(pass, {
+      pipeline,
+      pipelineLayoutVersion: store.layoutVersion,
+    });
+    expect(() => pass.render()).toThrow(/default GaussianPass projection/);
+    pass.gaussianProjectionNode = gaussianProjectionResult(
+      vec2(10, 10),
+      gaussianPositionView.length(),
+      vec3(4, 0, 4),
+    );
+    pass.rasterOutputDepthNode = rasterOutputDepth;
+    pass.invalidDepthValue = Infinity;
+    pass.render();
+    pass.render();
+    camera.rotation.y = 0.25;
+    pass.render();
+    expect(pipeline.render).toHaveBeenCalledTimes(2);
+    expect(pipeline.rebuildProjection).toHaveBeenCalledOnce();
+    expect(pipeline.rebuildRasterizer).toHaveBeenCalledOnce();
+    pass.dispose();
+    store.dispose();
+  });
+
+  it("keeps pass caches independent and invalidates changed uniforms without rebuilding graphs", () => {
+    const { store } = packedStore(oneGaussian());
+    const renderer = createRenderer();
+    const a = new GaussianPass(renderer, new PerspectiveCamera(), store, {
+      dataMode: "external",
+      redrawStrategy: "auto",
+    });
+    const b = new GaussianPass(renderer, new PerspectiveCamera(), store, {
+      dataMode: "external",
+      redrawStrategy: "auto",
+    });
+    const pa = createPipelineMock(),
+      pb = createPipelineMock();
+    Object.assign(a, {
+      pipeline: pa,
+      pipelineLayoutVersion: store.layoutVersion,
+    });
+    Object.assign(b, {
+      pipeline: pb,
+      pipelineLayoutVersion: store.layoutVersion,
+    });
+    const offset = uniform(1);
+    a.gaussianProjectionNode = gaussianProjectionResult(
+      vec2(offset),
+      float(2),
+      vec3(4, 0, 4),
+    );
+    a.render();
+    b.render();
+    offset.value = 2;
+    a.invalidate();
+    a.render();
+    b.render();
+    a.boundaryPolicy = "repeat-x";
+    a.render();
+    b.render();
+    a.invalidDepthValue = Infinity;
+    a.render();
+    a.filterVariance = 0;
+    a.render();
+    a.depthRange = [0.1, 50];
+    a.render();
+    expect(pa.render).toHaveBeenCalledTimes(6);
+    expect(pb.render).toHaveBeenCalledOnce();
+    expect(pa.rebuildProjection).toHaveBeenCalledOnce();
+    expect(pa.rebuildRasterizer).not.toHaveBeenCalled();
+    a.rasterOutputValidNode = rasterOutputValid;
+    a.rasterOutputDepthNode = rasterOutputDepth;
+    a.render();
+    expect(pa.rebuildRasterizer).toHaveBeenCalledOnce();
+    a.dispose();
+    b.dispose();
+    store.dispose();
+  });
+
+  it("validates generic pass configuration", () => {
+    for (const fixedSize of [
+      { width: 0, height: 1 },
+      { width: 1.5, height: 1 },
+    ])
+      expect(() => createPass({ fixedSize })).toThrow(/fixedSize/);
+    for (const depthRange of [
+      [0, 1],
+      [2, 1],
+      [1, Infinity],
+      [1, 1 + 1e-10],
+    ] as const)
+      expect(() => createPass({ depthRange })).toThrow(/depthRange/);
+    expect(() => createPass({ filterVariance: -1 })).toThrow(/filterVariance/);
+    expect(() => createPass({ invalidDepthValue: NaN })).toThrow(
+      /invalidDepthValue/,
+    );
+    expect(() => createPass({ boundaryPolicy: "wrap" as never })).toThrow(
+      /boundaryPolicy/,
+    );
+    expect(() => createPass({ dataMode: "auto" as never })).toThrow(/dataMode/);
   });
 
   it("exposes the documented identity defaults", () => {

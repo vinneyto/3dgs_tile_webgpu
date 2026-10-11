@@ -1,8 +1,4 @@
-import type {
-  PerspectiveCamera,
-  StorageTexture,
-  WebGPURenderer,
-} from "three/webgpu";
+import type { Camera, StorageTexture, WebGPURenderer } from "three/webgpu";
 import type { GaussianData } from "../GaussianData";
 import type { GaussianRenderStore } from "../GaussianRenderStore";
 import type {
@@ -25,6 +21,7 @@ import { VisibleGaussianStage } from "./VisibleGaussianStage";
 import { TILE_SIZE } from "./constants";
 import type {
   AntialiasMode,
+  GaussianRenderDomain,
   DepthSortMode,
   GaussianPassDebugInfo,
   GaussianPassResources,
@@ -57,7 +54,7 @@ export class TiledGaussianPipeline {
 
   constructor(
     private readonly renderer: WebGPURenderer,
-    camera: PerspectiveCamera,
+    camera: Camera,
     private readonly data: GaussianData,
     store: GaussianRenderStore,
     private readonly mode: DepthSortMode,
@@ -73,8 +70,9 @@ export class TiledGaussianPipeline {
     private readonly rasterTransmittanceThreshold = 1e-4,
     private readonly rasterStats = false,
     private readonly depthAlphaThreshold = 0.95,
+    domain?: GaussianRenderDomain,
   ) {
-    this.frame = new FrameUniforms(camera, background);
+    this.frame = new FrameUniforms(camera, background, domain);
     this.objects = new ObjectFrameState(camera, store, data.count);
     this.frame.activeCount.value = data.activeCount;
     this.projection = new ProjectionStage(

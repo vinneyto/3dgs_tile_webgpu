@@ -1,0 +1,27 @@
+import { WGSLNodeBuilder } from "three/webgpu";
+import { context } from "three/tsl";
+
+export function buildCompute(computeNode: unknown): string {
+  const renderer = {
+    backend: {
+      isWebGPUBackend: true,
+      utils: { getTextureSampleData: () => ({ primarySamples: 1 }) },
+    },
+    contextNode: context({}),
+    coordinateSystem: 2000,
+    getRenderTarget: () => null,
+    getPixelRatio: () => 1,
+    getDrawingBufferSize: () => ({ width: 16, height: 16 }),
+    hasFeature: () => false,
+    hasCompatibility: () => false,
+  };
+  const builder = new WGSLNodeBuilder(
+    computeNode as never,
+    renderer as never,
+  ) as unknown as {
+    build(): void;
+    computeShader: string;
+  };
+  builder.build();
+  return builder.computeShader;
+}

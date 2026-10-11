@@ -1,29 +1,30 @@
 import { describe, expect, it } from "vitest";
 import {
   evaluateShWGSL,
-  projectionCovarianceWGSL,
+  perspectiveProjectionWGSL,
+  projectionResultWGSL,
+  viewCovarianceWGSL,
 } from "../src/renderer/kernels/projectionHelpers";
 
-describe("projectionWGSL antialias specialization", () => {
-  it("preserves subpixel energy in compensated mode", () => {
-    const source = projectionCovarianceWGSL("compensated");
-
-    expect(source).toContain("max(sigma00_unfiltered * sigma11_unfiltered");
+describe("generic projection helpers", () => {
+  it("uses one covariance stabilization helper for custom and default projections", () => {
+    expect(perspectiveProjectionWGSL).toContain(
+      "return gaussian_projection_result(center, depth, covariance, filter_variance)",
+    );
+    expect(projectionResultWGSL).toContain("covariance.x + filter_variance");
+    expect(projectionResultWGSL).toContain(
+      "max(covariance.x * covariance.z - covariance.y * covariance.y, 0.0)",
+    );
+    expect(projectionResultWGSL).toContain("let conic = vec3<f32>");
   });
-
-  it("keeps the classic fixed-opacity low-pass mode", () => {
-    const source = projectionCovarianceWGSL("classic");
-
-    expect(source).toContain("let original_determinant = 1.0;");
-  });
-
-  it("keeps covariance and projection in one substantial WGSL helper", () => {
-    const source = projectionCovarianceWGSL("compensated");
-
-    expect(source).toContain("let covariance_local");
-    expect(source).toContain("let covariance_view");
-    expect(source).toContain("let conic = vec3<f32>");
-    expect(source).toContain("return mat4x4<f32>(");
+  it("confines perspective clipping to the default projection", () => {
+    expect(perspectiveProjectionWGSL).toContain(
+      "depth > viewport.z && depth < viewport.w",
+    );
+    expect(projectionResultWGSL).not.toContain("viewport");
+    expect(viewCovarianceWGSL).toContain(
+      "local_to_view * covariance_local * transpose(local_to_view)",
+    );
   });
 });
 

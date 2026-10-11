@@ -1,6 +1,6 @@
 import {
   Matrix4,
-  PerspectiveCamera,
+  Camera,
   Scene,
   StorageBufferAttribute,
   Vector3,
@@ -25,7 +25,7 @@ export class ObjectFrameState {
   private readonly cameraLocalPosition = new Vector3();
 
   constructor(
-    private readonly camera: PerspectiveCamera,
+    private readonly camera: Camera,
     private readonly store: GaussianRenderStore,
     gaussianCount: number,
   ) {
@@ -82,10 +82,7 @@ export class ObjectFrameState {
   }
 }
 
-function isEffectivelyVisible(
-  cloud: GaussianCloud,
-  camera: PerspectiveCamera,
-): boolean {
+function isEffectivelyVisible(cloud: GaussianCloud, camera: Camera): boolean {
   if (!cloud.layers.test(camera.layers)) return false;
   let current = cloud as GaussianCloud["parent"] | GaussianCloud;
   let root: GaussianCloud["parent"] | GaussianCloud = cloud;
