@@ -57,3 +57,58 @@ export function tileContributionWGSL(names: TileContributionNames): string {
         ${onHit}
       }`;
 }
+
+/** One image-boundary contract used by count, emission, subpixel and raster kernels.
+ * A periodic Gaussian contributes at most once per tile/pixel. At a pixel the
+ * minimum quadratic distance selects the strongest periodic image, including
+ * tilted footprints wider than a period.
+ */
+export const boundaryDeltaWGSL = /* wgsl */ `
+fn gaussian_boundary_delta(pixel: vec2<f32>, center: vec2<f32>, conic: vec3<f32>, viewport: vec2<f32>, boundary_axis: u32) -> vec2<f32> {
+  var canonical_center = center;
+  if (boundary_axis == 1u) { canonical_center.x -= floor(center.x / viewport.x) * viewport.x; }
+  if (boundary_axis == 2u) { canonical_center.y -= floor(center.y / viewport.y) * viewport.y; }
+  var delta = pixel - canonical_center;
+  if (boundary_axis == 1u) {
+    let optimum = -conic.y * delta.y / conic.x;
+    delta.x -= floor((delta.x - optimum) / viewport.x + 0.5) * viewport.x;
+  }
+  if (boundary_axis == 2u) {
+    let optimum = -conic.y * delta.x / conic.z;
+    delta.y -= floor((delta.y - optimum) / viewport.y + 0.5) * viewport.y;
+  }
+  return delta;
+}
+`;
+
+export function boundaryTileContributionWGSL(): string {
+  const test = tileContributionWGSL({
+    center: "image_center",
+    conic: "conic",
+    powerThreshold: "power_threshold",
+    tileX: "tile.x",
+    tileY: "tile.y",
+    onHit: "return true;",
+  });
+  return /* wgsl */ `
+fn gaussian_boundary_tile_hit(center: vec2<f32>, conic: vec3<f32>, power_threshold: f32, radius: vec2<f32>, tile: vec2<i32>, viewport: vec2<f32>, boundary_axis: u32) -> bool {
+  var canonical_center = center;
+  var first_image = 0i;
+  var last_image = 0i;
+  if (boundary_axis != 0u) {
+    let axis = boundary_axis - 1u;
+    let period = viewport[axis];
+    canonical_center[axis] -= floor(center[axis] / period) * period;
+    let tile_start = f32(tile[axis]) * ${TILE_SIZE}.0;
+    first_image = i32(ceil((tile_start - radius[axis] - canonical_center[axis]) / period));
+    last_image = i32(floor((tile_start + ${TILE_SIZE}.0 + radius[axis] - canonical_center[axis]) / period));
+  }
+  for (var image = first_image; image <= last_image; image++) {
+    var image_center = canonical_center;
+    if (boundary_axis != 0u) { image_center[boundary_axis - 1u] += f32(image) * viewport[boundary_axis - 1u]; }
+${test}
+  }
+  return false;
+}
+`;
+}

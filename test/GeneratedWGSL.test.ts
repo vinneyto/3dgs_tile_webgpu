@@ -1,3 +1,4 @@
+import { buildCompute } from "./helpers/buildCompute";
 import { rasterDepthNodes } from "../sandbox/src/rasterDepthNodes";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -6,15 +7,17 @@ import {
   StorageBufferAttribute,
   StorageTexture,
   type WebGPURenderer,
-  WGSLNodeBuilder,
 } from "three/webgpu";
 import {
-  context,
   float,
+  Fn,
   perspectiveDepthToViewZ,
   texture,
   uniform,
   vec3,
+  vec4,
+  mat4,
+  bool,
 } from "three/tsl";
 
 import { GaussianData } from "../src/renderer/GaussianData";
@@ -24,6 +27,15 @@ import { packedStore } from "./helpers/packedStore";
 import {
   createDefaultGaussianNodeSlots,
   gaussianColor,
+  gaussianPositionLocal,
+  gaussianPositionWorld,
+  gaussianPositionView,
+  gaussianCovarianceView,
+  gaussianScreenPosition,
+  gaussianPassViewport,
+  rasterAccumulatedAlpha,
+  rasterOutputDepth,
+  rasterOutputValid,
   gaussianIndex,
   rasterGaussianIndex,
   rasterObjectId,
@@ -35,6 +47,7 @@ import {
   rasterUV,
   rasterViewDepth,
 } from "../src/renderer/nodes/GaussianContextNodes";
+import { gaussianProjectionResult } from "../src/renderer/nodes/GaussianProjectionNodes";
 import { FrameUniforms } from "../src/renderer/pipeline/FrameUniforms";
 import { ObjectFrameState } from "../src/renderer/pipeline/ObjectFrameState";
 import { ProjectionStage } from "../src/renderer/pipeline/ProjectionStage";
@@ -165,9 +178,7 @@ describe("generated Gaussian WGSL", () => {
     );
     const emitChunksSource = buildCompute(rasterInternals.chunks.emitNode);
 
-    expect(projectionSource).toContain(
-      "project_gaussian_covariance_compensated",
-    );
+    expect(projectionSource).toContain("perspective_gaussian_projection");
     expect(projectionSource).toContain("count_contributing_tiles");
     expect(projectionSource).toContain("subpixel_has_sample");
     expect(rasterSource).toContain("compact_morton_bits_16");
@@ -304,6 +315,141 @@ describe("generated Gaussian WGSL", () => {
     expect(rasterSource).toContain("0.25");
     expect(rasterSource).toContain("vec3<f32>");
     expect(chunkSource).toContain("0.25");
+  });
+
+  it("feeds resolved source overrides and view covariance to a custom projection without perspective rejection", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.gaussianPositionLocalNode = gaussianPositionLocal.add(
+      vec3(11, 12, 13),
+    );
+    nodes.gaussianPositionWorldNode = gaussianPositionWorld.add(
+      vec3(21, 22, 23),
+    );
+    nodes.gaussianScaleNode = vec3(2, 3, 4);
+    nodes.gaussianRotationNode = vec4(0, 0, 1, 0);
+    nodes.gaussianProjectionNode = gaussianProjectionResult(
+      gaussianPositionView.xy.add(gaussianPassViewport.mul(0.5)),
+      gaussianPositionView.length(),
+      vec3(
+        gaussianCovarianceView.mul(vec3(1, 0, 0)).x,
+        gaussianCovarianceView.mul(vec3(1, 0, 0)).y,
+        gaussianCovarianceView.mul(vec3(0, 1, 0)).y,
+      ),
+    );
+    const source = buildPipeline(nodes).projectionSource;
+    expect(source).not.toContain("perspective_gaussian_projection");
+    expect(source).not.toContain("clip.w");
+    expect(source).toMatch(
+      /gaussianViewPosition = [^;]*gaussianPositionWorldValue/,
+    );
+    expect(source).toMatch(
+      /gaussian_view_covariance\( gaussianScaleValue, gaussianRotationValue,/,
+    );
+    expect(source).toMatch(
+      /gaussian_projection_result\([^;]*gaussianViewPosition[^;]*gaussianCovarianceViewValue/s,
+    );
+    expect(source).toContain("vec3<f32>( 11.0, 12.0, 13.0 )");
+    expect(source).toContain("vec3<f32>( 21.0, 22.0, 23.0 )");
+    expect(source).toContain("gaussian_projection_is_valid");
+  });
+
+  it("rejects derived and unavailable contexts at the projection root", () => {
+    for (const center of [gaussianScreenPosition, rasterUV]) {
+      const nodes = createDefaultGaussianNodeSlots();
+      nodes.gaussianProjectionNode = gaussianProjectionResult(
+        center,
+        float(2),
+        vec3(1, 0, 1),
+      );
+      expect(() => buildPipeline(nodes)).toThrow(/accessor/);
+    }
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.gaussianProjectionNode = mat4(
+      vec4(rasterOutputDepth),
+      vec4(0),
+      vec4(0),
+      vec4(0),
+    );
+    expect(() => buildPipeline(nodes)).toThrow(/accessor/);
+  });
+
+  it("rejects unavailable accessors inside deferred Fn graphs", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.gaussianProjectionNode = Fn(() =>
+      gaussianProjectionResult(gaussianScreenPosition, float(2), vec3(1, 0, 1)),
+    )();
+    expect(() => buildPipeline(nodes)).toThrow(/not available/);
+    nodes.gaussianProjectionNode =
+      createDefaultGaussianNodeSlots().gaussianProjectionNode;
+    nodes.rasterOutputDepthNode = Fn(() => rasterViewDepth)();
+    expect(() =>
+      buildPipeline(nodes, true, false, "float32", false, true),
+    ).toThrow(/not available/);
+  });
+
+  it("finalizes linear scalar output once after direct accumulation and chunk composition", () => {
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.rasterOutputDepthNode = rasterOutputDepth.mul(17);
+    nodes.rasterOutputValidNode = rasterOutputValid.and(
+      rasterAccumulatedAlpha.greaterThan(0.7),
+    );
+    const { rasterSource, chunkSource, compositeSource } = buildPipeline(
+      nodes,
+      true,
+      false,
+      "float32",
+      false,
+      true,
+    );
+    for (const source of [rasterSource, compositeSource]) {
+      expect(source).toContain("rasterOutputDepthValue = 0.0;");
+      expect(source).toMatch(
+        /if \( \( rasterAccumulatedAlphaValue > 0\.0 \) \) \{\s+rasterOutputDepthValue =/,
+      );
+      expect(source).toContain("rasterOutputDepthValue * 17.0");
+      expect(source).toContain("rasterEncodedDepthValue");
+      expect(source).toContain("3.402823");
+      expect(source).toMatch(/rasterEncodedDepth = \w+\.nodeUniform\d+;/);
+      expect(source).not.toContain(" / ( nodeUniform");
+    }
+    expect(chunkSource).not.toContain("rasterEncodedDepthValue");
+    expect(chunkSource).not.toContain("17.0");
+  });
+
+  it("rejects candidate accessors in final outputs and final outputs in candidate graphs", () => {
+    for (const field of [
+      "rasterOutputDepthNode",
+      "rasterOutputValidNode",
+    ] as const) {
+      const nodes = createDefaultGaussianNodeSlots();
+      nodes[field] =
+        field === "rasterOutputDepthNode"
+          ? rasterViewDepth
+          : rasterViewDepth.greaterThan(0);
+      expect(() =>
+        buildPipeline(nodes, true, false, "float32", false, true),
+      ).toThrow(/not available/);
+    }
+    const nodes = createDefaultGaussianNodeSlots();
+    nodes.rasterAlphaNode = rasterAccumulatedAlpha;
+    expect(() => buildPipeline(nodes)).toThrow(/accessor/);
+    nodes.rasterAlphaNode = float(1);
+    nodes.rasterOutputValidNode = bool(false);
+    expect(
+      buildPipeline(nodes, true, false, "float32", false, true).rasterSource,
+    ).toContain("false");
+  });
+
+  it("uses shared boundary rules in projection and both raster paths", () => {
+    const { projectionSource, rasterSource, chunkSource } = buildPipeline(
+      createDefaultGaussianNodeSlots(),
+    );
+    expect(projectionSource).toContain("gaussian_boundary_tile_hit");
+    expect(projectionSource).toContain("boundary_axis == 1u");
+    for (const source of [rasterSource, chunkSource]) {
+      expect(source).toContain("gaussian_boundary_delta");
+      expect(source).toContain("let optimum = -conic.y * delta.y / conic.x");
+    }
   });
 
   it("loads external scene depth once per pixel before Gaussian iteration", () => {
@@ -448,6 +594,7 @@ function buildPipeline(
   rasterStats = false,
   mode: "float32" | "packed16" = "float32",
   activeSlots = false,
+  outputDepth = false,
 ) {
   const data = oneGaussian(activeSlots);
   const { store } = packedStore(data);
@@ -475,7 +622,7 @@ function buildPipeline(
     attribute(new Uint32Array(4)),
     attribute(new Uint32Array(8)),
     new StorageTexture(16, 16),
-    null,
+    outputDepth ? new StorageTexture(16, 16) : null,
     frame,
     null,
     8_192,
@@ -491,35 +638,11 @@ function buildPipeline(
     rasterSource: buildCompute(
       (rasterizer as unknown as { computeNode: unknown }).computeNode,
     ),
+    compositeSource: buildCompute((rasterizer as any).compositeNode),
     chunkSource: buildCompute(
       (rasterizer as unknown as { chunkComputeNode: unknown }).chunkComputeNode,
     ),
   };
-}
-
-function buildCompute(computeNode: unknown): string {
-  const renderer = {
-    backend: {
-      isWebGPUBackend: true,
-      utils: { getTextureSampleData: () => ({ primarySamples: 1 }) },
-    },
-    contextNode: context({}),
-    coordinateSystem: 2000,
-    getRenderTarget: () => null,
-    getPixelRatio: () => 1,
-    getDrawingBufferSize: () => ({ width: 16, height: 16 }),
-    hasFeature: () => false,
-    hasCompatibility: () => false,
-  };
-  const builder = new WGSLNodeBuilder(
-    computeNode as never,
-    renderer as never,
-  ) as unknown as {
-    build(): void;
-    computeShader: string;
-  };
-  builder.build();
-  return builder.computeShader;
 }
 
 function attribute(array: Float32Array | Uint32Array): StorageBufferAttribute {

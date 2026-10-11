@@ -85,6 +85,7 @@ export {
 export {
   GaussianPass,
   type AntialiasMode,
+  type GaussianBoundaryPolicy,
   type DepthSortMode,
   type GaussianPassDebugInfo,
   type GaussianPassDebugListener,
@@ -101,6 +102,17 @@ export {
 } from "./renderer/GaussianPass";
 export { gaussianPass } from "./renderer/createGaussianPass";
 export {
+  gaussianPositionView,
+  gaussianCovarianceView,
+  gaussianPassViewMatrix,
+  gaussianPassProjectionMatrix,
+  gaussianPassViewport,
+  gaussianPassDepthRange,
+  gaussianPassFilterVariance,
+  rasterAccumulatedDepth,
+  rasterAccumulatedAlpha,
+  rasterOutputDepth,
+  rasterOutputValid,
   gaussianIndex,
   gaussianObjectId,
   gaussianPositionLocal,
@@ -145,3 +157,10 @@ export type {
 export type { BuffersActivatedPayload } from "./streaming-backend/payloads/BuffersActivatedPayload";
 
 export type { PrefetchCacheCommand } from "./streaming-backend/commands/PrefetchCacheCommand";
+
+export {
+  gaussianProjectionResult,
+  gaussianViewCovariance,
+  perspectiveGaussianProjection,
+} from "./renderer/nodes/GaussianProjectionNodes";
+export type { GaussianRenderStore } from "./renderer/GaussianRenderStore";

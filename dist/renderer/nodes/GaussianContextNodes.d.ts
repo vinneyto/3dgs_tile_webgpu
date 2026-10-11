@@ -31,7 +31,20 @@ export declare const rasterGaussianColor: import("three/webgpu").PropertyNode<"v
 export declare const rasterGaussianOpacity: import("three/webgpu").PropertyNode<"float">;
 export declare const rasterPower: import("three/webgpu").PropertyNode<"float">;
 export declare const rasterWeight: import("three/webgpu").PropertyNode<"float">;
+export declare const gaussianPositionView: import("three/webgpu").PropertyNode<"vec3">;
+export declare const gaussianCovarianceView: import("three/webgpu").PropertyNode<"mat3">;
+export declare const gaussianPassViewMatrix: import("three/webgpu").PropertyNode<"mat4">;
+export declare const gaussianPassProjectionMatrix: import("three/webgpu").PropertyNode<"mat4">;
+export declare const gaussianPassViewport: import("three/webgpu").PropertyNode<"vec2">;
+export declare const gaussianPassDepthRange: import("three/webgpu").PropertyNode<"vec2">;
+export declare const gaussianPassFilterVariance: import("three/webgpu").PropertyNode<"float">;
+export declare const passContextNodes: Set<Node>;
+export declare const rasterAccumulatedDepth: import("three/webgpu").PropertyNode<"float">;
+export declare const rasterAccumulatedAlpha: import("three/webgpu").PropertyNode<"float">;
+export declare const rasterOutputDepth: import("three/webgpu").PropertyNode<"float">;
+export declare const rasterOutputValid: import("three/webgpu").PropertyNode<"bool">;
 export interface GaussianProjectionNodeSlots {
+    gaussianProjectionNode: Node;
     gaussianPositionLocalNode: Node;
     gaussianPositionWorldNode: Node;
     gaussianScaleNode: Node;
@@ -41,6 +54,8 @@ export interface GaussianProjectionNodeSlots {
     gaussianVisibilityNode: Node;
 }
 export interface GaussianRasterNodeSlots {
+    rasterOutputDepthNode: Node;
+    rasterOutputValidNode: Node;
     rasterPixelValueNode: Node;
     rasterBreakNode: Node;
     rasterColorNode: Node;
@@ -53,5 +68,8 @@ export declare const projectionContextNodes: Set<Node>;
 export declare const rasterContextNodes: Set<Node>;
 export declare const rasterPixelContextNodes: Set<Node>;
 export declare const rasterBreakContextNodes: Set<Node>;
-export declare function validateGaussianNodeDomain(node: Node, allowed: ReadonlySet<Node>, domain: "projection" | "raster"): void;
+export declare const rasterOutputContextNodes: Set<Node>;
+export declare function validateGaussianNodeDomain(node: Node, allowed: ReadonlySet<Node>, domain: "projection" | "raster" | "final-output"): void;
 export declare function validateGaussianNodeAccess(node: Node, allowed: ReadonlySet<Node>, field: string): void;
+/** Guard deferred Fn bodies as well as graphs visible to traverse(). */
+export declare function resolveGaussianNode(node: Node, overrides: Map<any, () => any>): any;

@@ -1,5 +1,6 @@
 import {
   FloatType,
+  Camera,
   HalfFloatType,
   NearestFilter,
   NoColorSpace,
@@ -33,6 +34,8 @@ import {
 import { resolveRadixBackend } from "./pipeline/radixBackend";
 import type {
   AntialiasMode,
+  GaussianBoundaryPolicy,
+  GaussianRenderDomain,
   DepthSortMode,
   GaussianPassDebugInfo,
   GaussianPassDebugListener,
@@ -42,6 +45,8 @@ import type {
   GaussianPassStats,
   ResolvedRadixBackend,
 } from "./pipeline/types";
+
+import { cameraDepthRange } from "./pipeline/FrameUniforms";
 
 const drawingBufferSize = new Vector2();
 const enum DirtyStage {
@@ -55,6 +60,9 @@ const enum DirtyStage {
  * A multi-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
  */
 export class GaussianPass extends PassNode {
+  readonly dataMode: "managed" | "external";
+  private fixedSize: { width: number; height: number } | null = null;
+  private readonly renderDomain: GaussianRenderDomain;
   readonly gaussianStore: GaussianRenderStore;
   readonly redrawStrategy: GaussianPassRedrawStrategy;
   readonly depthSortMode: DepthSortMode;
@@ -81,6 +89,8 @@ export class GaussianPass extends PassNode {
   private pipeline: TiledGaussianPipeline | null = null;
   private pipelineLayoutVersion = -1;
   private readonly nodeSlots = createDefaultGaussianNodeSlots();
+  private readonly defaultProjectionNode =
+    this.nodeSlots.gaussianProjectionNode;
   private dirtyStages = DirtyStage.None;
   private frameDirty = true;
   private successfulRenderCount = 0;
@@ -92,7 +102,7 @@ export class GaussianPass extends PassNode {
 
   constructor(
     renderer: WebGPURenderer,
-    camera: PerspectiveCamera,
+    camera: Camera,
     gaussianStore: GaussianRenderStore,
     options: GaussianPassOptions = {},
   ) {
@@ -160,6 +170,19 @@ export class GaussianPass extends PassNode {
       intersectionCapacity ?? WORKGROUP_SIZE * 65_535,
     );
 
+    this.dataMode = options.dataMode ?? "managed";
+    if (this.dataMode !== "managed" && this.dataMode !== "external")
+      throw new RangeError('dataMode must be "managed" or "external"');
+    this.renderDomain = {
+      depthRange: null,
+      filterVariance: 0.3,
+      invalidDepthValue: 1,
+      boundaryPolicy: "clip",
+    };
+    this.depthRange = options.depthRange ?? null;
+    this.filterVariance = options.filterVariance ?? 0.3;
+    this.invalidDepthValue = options.invalidDepthValue ?? 1;
+    this.boundaryPolicy = options.boundaryPolicy ?? "clip";
     this.name = "GaussianPass";
     this.ownerRenderer = renderer;
     this.gaussianStore = gaussianStore;
@@ -223,18 +246,23 @@ export class GaussianPass extends PassNode {
       this.depthTexture = null;
     }
 
+    if (options.fixedSize)
+      this.setFixedSize(options.fixedSize.width, options.fixedSize.height);
+
     // The store processes loads independently; the pass enables render output.
     const device = (
       renderer.backend as unknown as { device?: GPUDevice } | undefined
     )?.device;
-    if (device) {
+    if (device && this.dataMode === "managed") {
       renderer.getDrawingBufferSize(drawingBufferSize);
       const scale = this.getResolutionScale();
       this.gaussianStore.setFrontendCapabilities(
         frontendCapabilities(device),
         camera,
-        Math.max(1, Math.floor(drawingBufferSize.x * scale)),
-        Math.max(1, Math.floor(drawingBufferSize.y * scale)),
+        this.fixedSize?.width ??
+          Math.max(1, Math.floor(drawingBufferSize.x * scale)),
+        this.fixedSize?.height ??
+          Math.max(1, Math.floor(drawingBufferSize.y * scale)),
       );
     }
   }
@@ -262,7 +290,9 @@ export class GaussianPass extends PassNode {
   override setSize(width: number, height: number): void {
     const previousWidth = this.renderTarget.width;
     const previousHeight = this.renderTarget.height;
-    super.setSize(width, height);
+    if (this.fixedSize)
+      this.renderTarget.setSize(this.fixedSize.width, this.fixedSize.height);
+    else super.setSize(width, height);
     this.depthTexture?.setSize(
       this.renderTarget.width,
       this.renderTarget.height,
@@ -301,6 +331,118 @@ export class GaussianPass extends PassNode {
       throw new Error("GaussianPass color output node is unavailable");
     }
     return this.getColorNode();
+  }
+
+  /** Exact output resolution. Call useDrawingBufferSize() to restore automatic sizing. */
+  setFixedSize(width: number, height: number): this {
+    if (
+      !Number.isSafeInteger(width) ||
+      !Number.isSafeInteger(height) ||
+      width < 1 ||
+      height < 1
+    )
+      throw new RangeError(
+        "fixedSize width/height must be positive safe integers",
+      );
+    this.fixedSize = { width, height };
+    this.setSize(width, height);
+    this.invalidate();
+    return this;
+  }
+
+  useDrawingBufferSize(): this {
+    this.fixedSize = null;
+    this.invalidate();
+    return this;
+  }
+
+  get depthRange(): readonly [number, number] | null {
+    return this.renderDomain.depthRange;
+  }
+  set depthRange(value: readonly [number, number] | null) {
+    if (
+      value &&
+      (!Number.isFinite(value[0]) ||
+        !Number.isFinite(value[1]) ||
+        value[0] <= 0 ||
+        Math.fround(value[0]) <= 0 ||
+        value[1] <= value[0] ||
+        !Number.isFinite(Math.fround(value[1])) ||
+        Math.fround(value[0]) >= Math.fround(value[1]))
+    )
+      throw new RangeError(
+        "depthRange must contain finite positive increasing float32 values",
+      );
+    this.renderDomain.depthRange = value
+      ? Object.freeze([value[0], value[1]] as const)
+      : null;
+    this.invalidate();
+  }
+
+  get filterVariance(): number {
+    return this.renderDomain.filterVariance;
+  }
+  set filterVariance(value: number) {
+    if (
+      !Number.isFinite(value) ||
+      value < 0 ||
+      !Number.isFinite(Math.fround(value))
+    )
+      throw new RangeError("filterVariance must be finite and nonnegative");
+    this.renderDomain.filterVariance = value;
+    this.invalidate();
+  }
+
+  get invalidDepthValue(): number {
+    return this.renderDomain.invalidDepthValue;
+  }
+  set invalidDepthValue(value: number) {
+    if (
+      Number.isNaN(value) ||
+      (Number.isFinite(value) && !Number.isFinite(Math.fround(value)))
+    )
+      throw new RangeError(
+        "invalidDepthValue must be representable as float32 and cannot be NaN",
+      );
+    this.renderDomain.invalidDepthValue = value;
+    this.invalidate();
+  }
+
+  get boundaryPolicy(): GaussianBoundaryPolicy {
+    return this.renderDomain.boundaryPolicy;
+  }
+  set boundaryPolicy(value: GaussianBoundaryPolicy) {
+    if (value !== "clip" && value !== "repeat-x" && value !== "repeat-y")
+      throw new RangeError(
+        'boundaryPolicy must be "clip", "repeat-x", or "repeat-y"',
+      );
+    this.renderDomain.boundaryPolicy = value;
+    // One uniform is shared by every dependent stage; no graph rebuild needed.
+    this.invalidate();
+  }
+
+  get gaussianProjectionNode(): Node {
+    return this.nodeSlots.gaussianProjectionNode;
+  }
+  set gaussianProjectionNode(node: Node) {
+    this.setProjectionNode("gaussianProjectionNode", node);
+  }
+  get rasterOutputDepthNode(): Node {
+    return this.nodeSlots.rasterOutputDepthNode;
+  }
+  set rasterOutputDepthNode(node: Node) {
+    this.setRasterNode("rasterOutputDepthNode", node);
+  }
+  get rasterOutputValidNode(): Node {
+    return this.nodeSlots.rasterOutputValidNode;
+  }
+  set rasterOutputValidNode(node: Node) {
+    this.setRasterNode("rasterOutputValidNode", node);
+  }
+
+  /** Encode the pass before subsequent renderer.compute/render calls on this renderer. No readback. */
+  render(): void {
+    this.updateBefore({ renderer: this.ownerRenderer } as unknown as NodeFrame);
   }
 
   get gaussianPositionLocalNode(): Node {
@@ -433,9 +575,12 @@ export class GaussianPass extends PassNode {
         "GaussianPass must be rendered by the WebGPURenderer passed to its constructor",
       );
     }
-    if (!(this.camera instanceof PerspectiveCamera)) {
+    if (
+      this.nodeSlots.gaussianProjectionNode === this.defaultProjectionNode &&
+      !(this.camera instanceof PerspectiveCamera)
+    ) {
       throw new TypeError(
-        "GaussianPass currently requires a PerspectiveCamera",
+        "The default GaussianPass projection requires a PerspectiveCamera; set gaussianProjectionNode for other cameras",
       );
     }
 
@@ -443,11 +588,12 @@ export class GaussianPass extends PassNode {
     const drawingBufferWidth = Math.max(1, Math.floor(drawingBufferSize.x));
     const drawingBufferHeight = Math.max(1, Math.floor(drawingBufferSize.y));
     const resolutionScale = this.getResolutionScale();
-    const width = Math.max(1, Math.floor(drawingBufferWidth * resolutionScale));
-    const height = Math.max(
-      1,
-      Math.floor(drawingBufferHeight * resolutionScale),
-    );
+    const width =
+      this.fixedSize?.width ??
+      Math.max(1, Math.floor(drawingBufferWidth * resolutionScale));
+    const height =
+      this.fixedSize?.height ??
+      Math.max(1, Math.floor(drawingBufferHeight * resolutionScale));
     if (
       this.renderTarget.width !== width ||
       this.renderTarget.height !== height
@@ -455,12 +601,13 @@ export class GaussianPass extends PassNode {
       this.setSize(drawingBufferWidth, drawingBufferHeight);
     }
     const device = webGpuDevice(renderer);
-    this.gaussianStore.setFrontendCapabilities(
-      frontendCapabilities(device),
-      this.camera,
-      width,
-      height,
-    );
+    if (this.dataMode === "managed")
+      this.gaussianStore.setFrontendCapabilities(
+        frontendCapabilities(device),
+        this.camera,
+        width,
+        height,
+      );
     if (this.pipelineDevice !== null && this.pipelineDevice !== device) {
       this.pipeline?.dispose();
       this.pipeline = null;
@@ -479,7 +626,10 @@ export class GaussianPass extends PassNode {
     }
 
     if (!this.gaussianStore.hasPackedData) return undefined;
-    const lodUpdate = this.gaussianStore.updateLod(this.camera);
+    const lodUpdate =
+      this.dataMode === "managed"
+        ? this.gaussianStore.updateLod(this.camera)
+        : { appliedBatches: 0, pending: false, clouds: [] };
     if (
       this.redrawStrategy === "auto" &&
       this.autoInputsChanged(width, height)
@@ -521,6 +671,7 @@ export class GaussianPass extends PassNode {
         this.rasterTransmittanceThreshold,
         this.rasterStats,
         this.depthAlphaThreshold,
+        this.renderDomain,
       );
       this.pipelineDevice = device;
       this.pipelineLayoutVersion = this.gaussianStore.layoutVersion;
@@ -628,6 +779,7 @@ export class GaussianPass extends PassNode {
   private setProjectionNode(
     key: keyof Pick<
       GaussianNodeSlots,
+      | "gaussianProjectionNode"
       | "gaussianPositionLocalNode"
       | "gaussianPositionWorldNode"
       | "gaussianScaleNode"
@@ -647,6 +799,8 @@ export class GaussianPass extends PassNode {
   private setRasterNode(
     key: keyof Pick<
       GaussianNodeSlots,
+      | "rasterOutputDepthNode"
+      | "rasterOutputValidNode"
       | "rasterPixelValueNode"
       | "rasterBreakNode"
       | "rasterColorNode"
@@ -668,13 +822,14 @@ export class GaussianPass extends PassNode {
   private autoInputsChanged(width: number, height: number): boolean {
     const snapshot = this.autoSnapshot;
     if (snapshot === null) return true;
-    const camera = this.camera as PerspectiveCamera;
+    const camera = this.camera;
+    const range = this.depthRange ?? cameraDepthRange(camera);
     camera.updateWorldMatrix(true, false);
     if (
       snapshot.width !== width ||
       snapshot.height !== height ||
-      snapshot.cameraNear !== camera.near ||
-      snapshot.cameraFar !== camera.far ||
+      snapshot.cameraNear !== range[0] ||
+      snapshot.cameraFar !== range[1] ||
       snapshot.cameraLayers !== camera.layers.mask ||
       snapshot.storeContentVersion !== this.gaussianStore.contentVersion ||
       !matrixEquals(
@@ -708,13 +863,14 @@ export class GaussianPass extends PassNode {
     width: number,
     height: number,
   ): AutoRedrawSnapshot {
-    const camera = this.camera as PerspectiveCamera;
+    const camera = this.camera;
+    const range = this.depthRange ?? cameraDepthRange(camera);
     camera.updateWorldMatrix(true, false);
     return {
       width,
       height,
-      cameraNear: camera.near,
-      cameraFar: camera.far,
+      cameraNear: range[0],
+      cameraFar: range[1],
       cameraLayers: camera.layers.mask,
       projectionMatrix: [...camera.projectionMatrix.elements],
       cameraMatrixWorldInverse: [...camera.matrixWorldInverse.elements],
@@ -761,7 +917,7 @@ function matrixEquals(
 
 function isEffectivelyVisible(
   cloud: GaussianRenderStore["clouds"][number],
-  camera: PerspectiveCamera,
+  camera: Camera,
 ): boolean {
   if (!cloud.layers.test(camera.layers)) return false;
   let current: typeof cloud.parent | typeof cloud = cloud;
@@ -782,6 +938,7 @@ function assertNode(node: Node, field: string): void {
 
 export type {
   AntialiasMode,
+  GaussianBoundaryPolicy,
   DepthSortMode,
   GaussianPassDebugInfo,
   GaussianPassDebugListener,

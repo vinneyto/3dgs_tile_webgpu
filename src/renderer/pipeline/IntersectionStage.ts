@@ -91,6 +91,8 @@ export class IntersectionStage {
     this.emitNode = emitKernel({
       rank: instanceIndex,
       tiles: uvec2(frame.tilesX, frame.tilesY),
+      viewport: frame.viewport.xy,
+      boundary_axis: frame.boundaryAxis,
       capacity: uint(capacity),
       sorted_gaussians: storage(
         sortedGaussiansAttribute,

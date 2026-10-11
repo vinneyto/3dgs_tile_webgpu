@@ -1,10 +1,13 @@
-import { PassNode, PerspectiveCamera, StorageTexture, type Node, type NodeBuilder, type NodeFrame, type ColorSpace, type Texture, type WebGPURenderer } from "three/webgpu";
+import { Camera, PassNode, StorageTexture, type Node, type NodeBuilder, type NodeFrame, type ColorSpace, type Texture, type WebGPURenderer } from "three/webgpu";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
-import type { AntialiasMode, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassResources, GaussianPassStats, ResolvedRadixBackend } from "./pipeline/types";
+import type { AntialiasMode, GaussianBoundaryPolicy, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassResources, GaussianPassStats, ResolvedRadixBackend } from "./pipeline/types";
 /**
  * A multi-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
  */
 export declare class GaussianPass extends PassNode {
+    readonly dataMode: "managed" | "external";
+    private fixedSize;
+    private readonly renderDomain;
     readonly gaussianStore: GaussianRenderStore;
     readonly redrawStrategy: GaussianPassRedrawStrategy;
     readonly depthSortMode: DepthSortMode;
@@ -30,6 +33,7 @@ export declare class GaussianPass extends PassNode {
     private pipeline;
     private pipelineLayoutVersion;
     private readonly nodeSlots;
+    private readonly defaultProjectionNode;
     private dirtyStages;
     private frameDirty;
     private successfulRenderCount;
@@ -38,7 +42,7 @@ export declare class GaussianPass extends PassNode {
     private pipelineDevice;
     private disposed;
     private unsubscribeStore;
-    constructor(renderer: WebGPURenderer, camera: PerspectiveCamera, gaussianStore: GaussianRenderStore, options?: GaussianPassOptions);
+    constructor(renderer: WebGPURenderer, camera: Camera, gaussianStore: GaussianRenderStore, options?: GaussianPassOptions);
     /** Resolved after the first render when omitted from GaussianPassOptions. */
     get intersectionCapacity(): number;
     getTexture(name: string): Texture;
@@ -50,6 +54,25 @@ export declare class GaussianPass extends PassNode {
     /** Color-managed output in Three.js' linear working color space. */
     getColorNode(): Node;
     setup(builder: NodeBuilder): Node;
+    /** Exact output resolution. Call useDrawingBufferSize() to restore automatic sizing. */
+    setFixedSize(width: number, height: number): this;
+    useDrawingBufferSize(): this;
+    get depthRange(): readonly [number, number] | null;
+    set depthRange(value: readonly [number, number] | null);
+    get filterVariance(): number;
+    set filterVariance(value: number);
+    get invalidDepthValue(): number;
+    set invalidDepthValue(value: number);
+    get boundaryPolicy(): GaussianBoundaryPolicy;
+    set boundaryPolicy(value: GaussianBoundaryPolicy);
+    get gaussianProjectionNode(): Node;
+    set gaussianProjectionNode(node: Node);
+    get rasterOutputDepthNode(): Node;
+    set rasterOutputDepthNode(node: Node);
+    get rasterOutputValidNode(): Node;
+    set rasterOutputValidNode(node: Node);
+    /** Encode the pass before subsequent renderer.compute/render calls on this renderer. No readback. */
+    render(): void;
     get gaussianPositionLocalNode(): Node;
     set gaussianPositionLocalNode(node: Node);
     get gaussianPositionWorldNode(): Node;
@@ -95,4 +118,4 @@ export declare class GaussianPass extends PassNode {
     private autoInputsChanged;
     private captureAutoSnapshot;
 }
-export type { AntialiasMode, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassDebugSnapshot, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassProfileStats, GaussianPassResources, GaussianPassStats, GaussianTileLoadStats, GaussianTileCapStats, RadixBackend, ResolvedRadixBackend, } from "./pipeline/types";
+export type { AntialiasMode, GaussianBoundaryPolicy, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassDebugSnapshot, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassProfileStats, GaussianPassResources, GaussianPassStats, GaussianTileLoadStats, GaussianTileCapStats, RadixBackend, ResolvedRadixBackend, } from "./pipeline/types";

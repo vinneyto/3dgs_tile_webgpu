@@ -5,7 +5,7 @@ import {
   TILE_SIZE,
   WORKGROUP_SIZE,
 } from "../pipeline/constants";
-import { tileContributionWGSL } from "./tileContribution";
+import { boundaryTileContributionWGSL } from "./tileContribution";
 
 export const prepareDispatchWGSL = /* wgsl */ `
 fn prepare_dispatch(
@@ -39,26 +39,12 @@ fn prepare_dispatch(
 `;
 
 export const emitIntersectionsWGSL = (() => {
-  const emitContributingTile = tileContributionWGSL({
-    center: "center",
-    conic: "conic",
-    powerThreshold: "power_threshold",
-    tileX: "tile_x",
-    tileY: "tile_y",
-    onHit: /* wgsl */ `
-        if (local_index < reserved_count) {
-          let destination = (*intersection_offsets)[rank] + local_index;
-          if (destination < capacity) {
-            let tile_id = u32(tile_y) * tiles.x + u32(tile_x);
-            (*records)[destination] = vec2<u32>(tile_id, gaussian_id);
-          }
-        }
-        local_index++;`,
-  });
   return /* wgsl */ `
 fn emit_intersections(
   rank: u32,
   tiles: vec2<u32>,
+  viewport: vec2<f32>,
+  boundary_axis: u32,
   capacity: u32,
   sorted_gaussians: ptr<storage, array<vec2<u32>>, read>,
   projected_mean: ptr<storage, array<vec4<f32>>, read>,
@@ -79,19 +65,30 @@ fn emit_intersections(
   let power_threshold = log(mean.w * 255.0);
   let max_tile_x = i32(tiles.x) - 1;
   let max_tile_y = i32(tiles.y) - 1;
-  let tile_min = vec2<i32>(
+  var tile_min = vec2<i32>(
     clamp(i32(floor((center.x - radius.x) / ${TILE_SIZE}.0)), 0, max_tile_x),
     clamp(i32(floor((center.y - radius.y) / ${TILE_SIZE}.0)), 0, max_tile_y)
   );
-  let tile_max = vec2<i32>(
+  var tile_max = vec2<i32>(
     clamp(i32(floor((center.x + radius.x) / ${TILE_SIZE}.0)), 0, max_tile_x),
     clamp(i32(floor((center.y + radius.y) / ${TILE_SIZE}.0)), 0, max_tile_y)
   );
+  if (boundary_axis == 1u) { tile_min.x = 0; tile_max.x = max_tile_x; }
+  if (boundary_axis == 2u) { tile_min.y = 0; tile_max.y = max_tile_y; }
   let reserved_count = (*tile_counts)[rank];
   var local_index = 0u;
   for (var tile_y = tile_min.y; tile_y <= tile_max.y; tile_y++) {
     for (var tile_x = tile_min.x; tile_x <= tile_max.x; tile_x++) {
-${emitContributingTile}
+      if (gaussian_boundary_tile_hit(center, conic.xyz, power_threshold, radius, vec2<i32>(tile_x, tile_y), viewport, boundary_axis)) {
+        if (local_index < reserved_count) {
+          let destination = (*intersection_offsets)[rank] + local_index;
+          if (destination < capacity) {
+            let tile_id = u32(tile_y) * tiles.x + u32(tile_x);
+            (*records)[destination] = vec2<u32>(tile_id, gaussian_id);
+          }
+        }
+        local_index++;
+      }
     }
   }
 
@@ -107,5 +104,6 @@ ${emitContributingTile}
   }
   return 0u;
 }
+${boundaryTileContributionWGSL()}
 `;
 })();

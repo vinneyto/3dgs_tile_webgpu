@@ -165,3 +165,7 @@ exposes the reservation without a GPU readback.
 ### Testing model additions in the sandbox
 
 Run `npm run sandbox`. **Open cloud** replaces the scene; **Add cloud** loads a file into the existing Store/Pass and places it beside the primary cloud without moving the camera. Add the same model twice to exercise the reserved capacity, then add more to exercise a staged layout growth. Existing clouds should retain their detail during preparation; the new cloud should appear only with its target cut. Zoom out if the added cloud is outside the current view.
+
+## Rendering extensions
+
+See [GaussianPass rendering extensions](docs/render-extensions.md) for custom TSL projection/scalar-output roots, fixed resolution, periodic image boundaries, externally managed passes and GPU consumer ordering.

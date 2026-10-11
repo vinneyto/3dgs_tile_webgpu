@@ -5,7 +5,30 @@ export type AntialiasMode = "compensated" | "classic";
 export type RadixBackend = "auto" | "subgroup" | "workgroup";
 export type ResolvedRadixBackend = Exclude<RadixBackend, "auto">;
 export type GaussianPassRedrawStrategy = "always" | "auto" | "never";
+export type GaussianBoundaryPolicy = "clip" | "repeat-x" | "repeat-y";
+/** Shared uniform configuration; values are owned by one pass. */
+export interface GaussianRenderDomain {
+    depthRange: readonly [number, number] | null;
+    filterVariance: number;
+    invalidDepthValue: number;
+    boundaryPolicy: GaussianBoundaryPolicy;
+}
 export interface GaussianPassOptions {
+    /** "external" consumes the shared draw set without capability/camera/LOD backend calls. Default "managed". */
+    dataMode?: "managed" | "external";
+    /** Exact output pixels, independent of drawing buffer, DPR and resolutionScale. */
+    fixedSize?: {
+        width: number;
+        height: number;
+    };
+    /** Positive scalar range for default clipping and packed16 sorting; defaults to camera near/far. */
+    depthRange?: readonly [number, number];
+    /** Additive projected covariance variance in pixels squared. Default 0.3. */
+    filterVariance?: number;
+    /** Shared clipping/periodic policy for support, tiles and samples. Default "clip". */
+    boundaryPolicy?: GaussianBoundaryPolicy;
+    /** Invalid scalar output value. Default 1; use Infinity with linear finite outputs. */
+    invalidDepthValue?: number;
     /** Controls when Gaussian kernels run. Defaults to "always" for backwards compatibility. */
     redrawStrategy?: GaussianPassRedrawStrategy;
     /** Early termination threshold for remaining transmittance; finite and in (0, 1). Default 0.0001. */
@@ -18,7 +41,7 @@ export interface GaussianPassOptions {
     intersectionCapacity?: number;
     /** RGBA clear color composited behind the cloud. Defaults to transparent black. */
     background?: readonly [number, number, number, number];
-    /** Create opacity-weighted perspective depth exposed as pass.getTextureNode("depth"). */
+    /** Create a float32 scalar texture; default encoding is opacity-weighted perspective depth exposed as pass.getTextureNode("depth"). */
     outputDepth?: boolean;
     /** Minimum accumulated Gaussian alpha required to emit depth. Defaults to 0.95. */
     depthAlphaThreshold?: number;

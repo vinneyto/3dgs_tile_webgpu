@@ -1,4 +1,4 @@
-import type { PerspectiveCamera, StorageTexture, WebGPURenderer } from "three/webgpu";
+import type { Camera, StorageTexture, WebGPURenderer } from "three/webgpu";
 import type { GaussianData } from "../GaussianData";
 import type { GaussianRenderStore } from "../GaussianRenderStore";
 import type { GaussianNodeSlots, GaussianProjectionNodeSlots, GaussianRasterNodeSlots } from "../nodes/GaussianContextNodes";
@@ -11,7 +11,7 @@ import { ProjectionStage } from "./ProjectionStage";
 import { ProfileDiagnosticsStage } from "./ProfileDiagnosticsStage";
 import { RadixSorter } from "./RadixSorter";
 import { VisibleGaussianStage } from "./VisibleGaussianStage";
-import type { AntialiasMode, DepthSortMode, GaussianPassDebugInfo, GaussianPassResources, GaussianPassStats, ResolvedRadixBackend } from "./types";
+import type { AntialiasMode, GaussianRenderDomain, DepthSortMode, GaussianPassDebugInfo, GaussianPassResources, GaussianPassStats, ResolvedRadixBackend } from "./types";
 export declare class TiledGaussianPipeline {
     private readonly renderer;
     private readonly data;
@@ -46,7 +46,7 @@ export declare class TiledGaussianPipeline {
     private tileStageRebuilds;
     private tileCapacity;
     private chunkWorkspace;
-    constructor(renderer: WebGPURenderer, camera: PerspectiveCamera, data: GaussianData, store: GaussianRenderStore, mode: DepthSortMode, antialiasMode: AntialiasMode, capacity: number, background: readonly [number, number, number, number], profileKernels: boolean, maxRasterizedSplatsPerTile: number | null, rasterChunkSize: number | null, subpixelSampleCulling: boolean, radixBackend: ResolvedRadixBackend, nodes: GaussianNodeSlots, rasterTransmittanceThreshold?: number, rasterStats?: boolean, depthAlphaThreshold?: number);
+    constructor(renderer: WebGPURenderer, camera: Camera, data: GaussianData, store: GaussianRenderStore, mode: DepthSortMode, antialiasMode: AntialiasMode, capacity: number, background: readonly [number, number, number, number], profileKernels: boolean, maxRasterizedSplatsPerTile: number | null, rasterChunkSize: number | null, subpixelSampleCulling: boolean, radixBackend: ResolvedRadixBackend, nodes: GaussianNodeSlots, rasterTransmittanceThreshold?: number, rasterStats?: boolean, depthAlphaThreshold?: number, domain?: GaussianRenderDomain);
     prepareFrame(width: number, height: number, colorTexture: StorageTexture, depthTexture: StorageTexture | null): void;
     render(): void;
     rebuildProjection(nodes: GaussianProjectionNodeSlots): void;
