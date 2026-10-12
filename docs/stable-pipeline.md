@@ -24,18 +24,17 @@ that every possible configuration shares one shader.
 
 ## Warmup
 
-Configure custom roots first, then warm the actual pass before model preparation:
+Automatic explicit warmup is temporarily disabled in Camera Path. Model loading
+and renderer readiness do not call or wait for `pass.warmup()`. The current API
+uses real zero-work dispatches, which Chrome warns about; substituting a one-workgroup
+dispatch could run unprepared kernels and is not a valid fix. A public compile-only
+compute path needs separate investigation before automatic warmup is restored.
+Compatible compute-node reuse and dynamic buffer growth remain enabled.
 
-```ts
-const pass = gaussianPass(renderer, camera, store, { outputDepth: true });
-// Set custom projection/raster roots here, if needed.
-const [buffer] = await Promise.all([
-  fetch(modelUrl).then((response) => response.arrayBuffer()),
-  pass.warmup(),
-]);
-const cloud = await store.loadBuffer(buffer, { fileName: modelUrl });
-scene.add(cloud);
-```
+The opt-in `warmup()` API is retained for compatibility and experiments. Configure
+custom roots before an explicit experimental call. Do not add it to a normal
+loading flow. First-use compilation can now increase the first render's duration;
+this tradeoff should be measured independently of LOD publications.
 
 `warmup()` initializes the renderer, builds the stage graph using one-slot source
 and intersection resources, and submits every reserved kernel with zero work.
@@ -78,13 +77,19 @@ scan/radix boundaries, viewport and intersection growth, smaller-layout reuse,
 source leases and targeted schema changes.
 
 For GPU verification, run `npm run dev` and open
-`/scripts/stable-pipeline-qa.html` in a WebGPU browser. The synthetic test warms a
-pass, adds 600 and 800 Gaussians to its first model, grows intersection resources,
-changes resolution across a radix-pass parity boundary, and compares every color
-and depth value with a fresh fixed-capacity pass. `ok: true` requires identical
-outputs, visible geometry, unchanged shader-build/module/pipeline counters and
-no uncaptured GPU error. It deliberately uses the workgroup radix backend for
-portability. Run hardware acceptance on the production subgroup backend too.
+`/scripts/stable-pipeline-qa.html` in a WebGPU browser. By default it uses no
+explicit warmup, records direct zero dispatches and first-frame CPU encoding /
+confirmation duration, then adds 600 and 800 Gaussians, grows intersections and
+changes resolution. `ok: true` requires stable node identities, no rebuild of
+already used nodes, identical visible color/depth to a fresh pass and no GPU
+error or direct zero dispatch. Previously inactive reserved kernels may compile
+on first use; their counters can increase without rebuilding any existing node.
+
+For the legacy opt-in comparison, append `?warmup=1`. That mode still uses real
+zero dispatches and warns in Chrome, but also verifies that all reserved shader
+build/module/pipeline counters stay unchanged after warmup. Both modes use the
+workgroup radix backend for portability. Timing is driver/hardware-specific;
+repeat on production hardware and the production subgroup backend.
 
 Debug info exposes `resourceUpdates`, `bufferReplacements` and
 `shaderVariantChanges` separately from stage rebuild counters. Buffer replacement

@@ -198,16 +198,6 @@ export class GaussianEngine {
         wasm.__wbg_gaussianengine_free(ptr, 0);
     }
     /**
-     * @returns {any}
-     */
-    nextPayload() {
-        const ret = wasm.gaussianengine_nextPayload(this.__wbg_ptr);
-        if (ret[2]) {
-            throw takeFromExternrefTable0(ret[1]);
-        }
-        return takeFromExternrefTable0(ret[0]);
-    }
-    /**
      * @param {any} config
      */
     constructor(config) {
@@ -218,6 +208,16 @@ export class GaussianEngine {
         this.__wbg_ptr = ret[0] >>> 0;
         GaussianEngineFinalization.register(this, this.__wbg_ptr, this);
         return this;
+    }
+    /**
+     * @returns {any}
+     */
+    timings() {
+        const ret = wasm.gaussianengine_timings(this.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * Compatibility collecting API; production streams through begin/nextPayload.
@@ -251,8 +251,8 @@ export class GaussianEngine {
     /**
      * @returns {any}
      */
-    timings() {
-        const ret = wasm.gaussianengine_timings(this.__wbg_ptr);
+    nextPayload() {
+        const ret = wasm.gaussianengine_nextPayload(this.__wbg_ptr);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }

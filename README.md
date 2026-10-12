@@ -19,9 +19,23 @@ Loads can finish before `GaussianPass` exists. The pass subsequently sends its f
 
 `standard` reserves a camera-independent complete coarse cut of every cloud. The coarse cuts use approximately 1/32 of the shared capacity, with at least one representative per tree when capacity permits. They are selected by spatial feature size, so unbalanced trees do not need a fixed common depth. These records remain pinned while details replace them in the draw cut. Remaining capacity refines branches by projected feature size, radial camera distance and angular importance; lower numeric cloud priorities receive detail capacity first. A preparation halo surrounds the frustum and priority fades continuously outside it, instead of dropping to zero at the edge. Distant offscreen branches eventually return to coarse representatives. `none` skips trees and uses remaining capacity for source Gaussians in source order.
 
-LOD is asymmetric: a branch can refine immediately above a weighted projected size of one pixel, while an already refined branch must stay below `0.7` pixels for `400` ms before coarsening. Re-entering the hysteresis band cancels its pending downgrade. Finest branches collapse first; their ancestors follow at intervals of `100` ms. A backend deadline drives a one-shot client timer, so coarsening completes after the camera stops without polling every frame. Capacity pressure may override retention; the pinned-plus-active union always fits the negotiated GPU budget. History resets when a tree is rebuilt or its mipmap mode changes.
+LOD is asymmetric: branches refine immediately above a weighted projected size
+of one pixel; committed detail is retained in the `0.7`–`1` hysteresis band.
+Weak branches share one `400` ms stabilization deadline for the latest view.
+After that deadline, selection computes the complete final downgrade target in
+one pass, preserving ancestors required by strong descendants, and publishes it
+atomically once its records and indices are ready. It does not collapse one tree
+level per visible tick. A separate revision-checked `recheck-lod` command settles
+a stationary view; `prefetch-cache` only fills inactive resources. Capacity
+pressure can force coarsening within the negotiated budget.
 
-These defaults can be tuned in `BackendConfig.lod`: `downgradeDelayMs`, `downgradeStepMs`, `downgradeThreshold` and `frustumMargin` (default `0.15` in normalized clip coordinates). Setting `downgradeDelayMs: 0` disables temporal retention; `downgradeThreshold: 1` also removes the pixel hysteresis band. These settings affect standard mipmaps only. Coarsening switches complete cuts atomically; it does not blend parent and child Gaussians together.
+Tune `BackendConfig.lod.downgradeDelayMs`, `downgradeThreshold` and
+`frustumMargin` (default `0.15`). `downgradeStepMs` is accepted for compatibility
+but no longer controls visible transitions. A new view restarts the shared grace;
+zero delay disables temporal retention. Tree/mipmap changes reset history.
+History records completed activations, rather than an unuploaded candidate.
+See [LOD stabilization and warmup policy](docs/lod-stabilization.md) for revision
+semantics, diagnostics and the remaining visual acceptance criteria.
 
 Rust maintains a stable `(cloud object ID, tree generation, node ID) → GPU slot` map and reverse owners. Leaving the frustum changes the active draw cut, without releasing the resident record. New details use free slots first, then evict unrequested LRU records under pressure. Pinned records and the requested cut cannot be evicted. Allocated capacity includes headroom for additions and does not change with camera movement. Adding within the reservation keeps the same layout and Three.js attributes; growing an unchanged schema preserves resident rows and transfers only changed records. Allocation headroom also increases workspace memory, within device binding limits. Rebuilding a tree increments its generation; source edits in `none` retain source-index identities. Snapshot resolution changes preserve GPU slots.
 
@@ -62,7 +76,6 @@ const camera = new PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 10000);
 const scene = new Scene();
 const store = new GaussianStore();
 const pass = gaussianPass(renderer, camera, store);
-await pass.warmup();
 const pipeline = new RenderPipeline(renderer);
 pipeline.outputNode = pass;
 renderer.setAnimationLoop(() => pipeline.render());
@@ -86,8 +99,9 @@ scene.add(cloud);
 Supported formats: PLY (binary, compressed SuperSplat, scalar ASCII), SPLAT, KSPLAT, SPZ, ZIP SOG v1/v2 with PNG/WebP textures, and self-contained RAD. Set `format` explicitly or supply `fileName` for formats without identifying magic, such as SPLAT. URL loads use the URL as the filename hint. A loose SOG `meta.json` plus separate texture URLs and external RAD chunks are not supported by this buffer-loading interface.
 
 Compatible layout/capacity changes preserve compute nodes and pipelines. See
-[stable compute resources and warmup](docs/stable-pipeline.md) for parallel
-download/preparation, shader variants and GPU regression checks.
+[stable compute resources and warmup](docs/stable-pipeline.md) for resource
+lifetimes, shader variants and GPU regression checks. Automatic explicit warmup
+is temporarily disabled; first-use shader compilation happens during rendering.
 
 `store.loadBuffer(buffer, { fileName: file.name, ...options })` transfers the input buffer to the worker. Do not reuse it after the call. The same ownership rule applies to `writeAttributeRange` data.
 

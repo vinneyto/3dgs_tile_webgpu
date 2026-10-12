@@ -23,6 +23,14 @@ export interface BackendMetrics {
   prefetchPending?: boolean;
   /** Re-evaluate a deferred downgrade even when the camera is stationary. */
   lodRecheckAfterMs?: number;
+  cameraRevision?: number;
+  candidateRevision?: number;
+  candidateCameraRevision?: number;
+  publishedCutRevision?: number;
+  /** Counts completed target cuts, rather than upload packets. */
+  publishedCuts?: number;
+  selectionReason?: string;
+  selectionBudget?: number;
 }
 
 export interface BackendResponse {

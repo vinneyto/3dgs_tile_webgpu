@@ -517,11 +517,15 @@ fn row_cloud() -> Vec<u8> {
     AntiSplatEncoder::new(a).encode().unwrap()
 }
 fn camera(e: &mut Engine, x: f32, half_width: f32) -> Vec<Payload> {
+    let revision = e.timings.camera_revision + 1;
+    camera_revision(e, x, half_width, revision)
+}
+fn camera_revision(e: &mut Engine, x: f32, half_width: f32, revision: u32) -> Vec<Payload> {
     let mut world = glam::Mat4::IDENTITY;
     world.w_axis.x = x;
     let mut projection = glam::Mat4::IDENTITY;
     projection.x_axis.x = 1.0 / half_width;
-    apply(e,json!({"type":"set-camera","sceneRevision":2,"worldMatrix":world.to_cols_array(),"projectionMatrix":projection.to_cols_array(),"viewportWidth":1024,"viewportHeight":1024}),&[]).unwrap()
+    apply(e,json!({"type":"set-camera","sceneRevision":revision,"worldMatrix":world.to_cols_array(),"projectionMatrix":projection.to_cols_array(),"viewportWidth":1024,"viewportHeight":1024}),&[]).unwrap()
 }
 fn patch_slots(out: &[Payload]) -> std::collections::BTreeSet<usize> {
     out.iter()
@@ -1357,4 +1361,141 @@ fn a_load_under_pressure_preserves_the_old_cut_until_all_replacement_rows_arrive
     assert_eq!(r.layout, layout);
     assert!(r.active <= r.capacity);
     assert!(r.active > 100);
+}
+
+#[test]
+fn stationary_camera_commits_one_final_downgrade_and_prefetch_never_selects_it() {
+    let mut config = Config::default();
+    config.lod.downgrade_delay_ms = 30.;
+    let mut e = Engine::new(config).unwrap();
+    compact_handshake(&mut e, 10000);
+    camera(&mut e, 2., 0.1);
+    let mut r = Replica::default();
+    r.receive(&load(&mut e, "row", &row_cloud(), json!({})).unwrap());
+    for _ in 0..100 {
+        r.receive(&apply(&mut e, json!({"type":"prefetch-cache"}), &[]).unwrap());
+        if !e.timings.prefetch_pending {
+            break;
+        }
+    }
+    let detailed = r.active_slots.clone();
+    assert_eq!(r.active, 5);
+    r.receive(&camera(&mut e, 1000., 0.1));
+    let revision = e.timings.camera_revision;
+    let candidate = e.timings.candidate_revision;
+    assert_eq!(r.active_slots, detailed);
+    std::thread::sleep(std::time::Duration::from_millis(35));
+    let background = apply(&mut e, json!({"type":"prefetch-cache"}), &[]).unwrap();
+    assert!(!background
+        .iter()
+        .any(|p| matches!(p, Payload::BuffersActivated { .. })));
+    assert_eq!(e.timings.candidate_revision, candidate);
+    r.receive(&background);
+    assert_eq!(r.active_slots, detailed);
+    let final_cut = apply(
+        &mut e,
+        json!({"type":"recheck-lod", "cameraRevision":revision}),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(e.timings.cache_misses, 0);
+    assert_eq!(e.timings.published_cuts, 1);
+    assert_eq!(e.timings.lod_recheck_after_ms, None);
+    assert_eq!(
+        final_cut
+            .iter()
+            .filter(|p| matches!(p, Payload::BuffersActivated { commit: true, .. }))
+            .count(),
+        1
+    );
+    assert!(!final_cut
+        .iter()
+        .any(|p| matches!(p, Payload::BuffersPatched { .. })));
+    r.receive(&final_cut);
+    assert_eq!(r.active, 1);
+    for _ in 0..5 {
+        assert!(apply(
+            &mut e,
+            json!({"type":"recheck-lod", "cameraRevision":revision}),
+            &[]
+        )
+        .unwrap()
+        .is_empty());
+        assert_eq!(e.timings.published_cuts, 0);
+    }
+}
+
+#[test]
+fn newer_camera_restarts_grace_and_stale_recheck_cannot_publish() {
+    let mut config = Config::default();
+    config.lod.downgrade_delay_ms = 30.;
+    let mut e = Engine::new(config).unwrap();
+    compact_handshake(&mut e, 10000);
+    camera(&mut e, 2., 0.1);
+    load(&mut e, "row", &row_cloud(), json!({})).unwrap();
+    camera(&mut e, 1000., 0.1);
+    let obsolete = e.timings.camera_revision;
+    std::thread::sleep(std::time::Duration::from_millis(35));
+    camera(&mut e, 1001., 0.1);
+    let current = e.timings.camera_revision;
+    let candidate = e.timings.candidate_revision;
+    assert!(apply(
+        &mut e,
+        json!({"type":"recheck-lod", "cameraRevision":obsolete}),
+        &[]
+    )
+    .unwrap()
+    .is_empty());
+    assert_eq!(e.timings.candidate_revision, candidate);
+    assert_eq!(e.timings.selection_reason, "stale-lod-recheck");
+    assert!(apply(
+        &mut e,
+        json!({"type":"recheck-lod", "cameraRevision":current}),
+        &[]
+    )
+    .unwrap()
+    .is_empty());
+    assert!(e.timings.lod_recheck_after_ms.unwrap() > 0.);
+    std::thread::sleep(std::time::Duration::from_millis(35));
+    apply(
+        &mut e,
+        json!({"type":"recheck-lod", "cameraRevision":current}),
+        &[],
+    )
+    .unwrap();
+    assert_eq!(e.timings.published_cuts, 1);
+    assert_eq!(e.timings.lod_recheck_after_ms, None);
+}
+
+#[test]
+fn a_streamed_candidate_becomes_history_only_at_its_final_commit() {
+    let mut e = Engine::new(
+        serde_json::from_value(json!({"streaming":{"maxUploadBytesPerUpdate":28}})).unwrap(),
+    )
+    .unwrap();
+    compact_handshake(&mut e, 10000);
+    camera(&mut e, 2., 0.1);
+    let previous = e.timings.published_cut_revision;
+    let c = serde_json::from_value(
+        json!({"type":"load-cloud-from-buffer","cloudId":"row","options":{"format":"splat"}}),
+    )
+    .unwrap();
+    e.begin(c, &row_cloud()).unwrap();
+    let target = e.timings.candidate_revision;
+    assert_eq!(e.timings.published_cut_revision, previous);
+    while let Some(payload) = e.next_payload() {
+        let final_cut = matches!(
+            payload,
+            Payload::BuffersActivated {
+                commit: true,
+                mipmap_pending: false,
+                ..
+            }
+        );
+        assert_eq!(
+            e.timings.published_cut_revision,
+            if final_cut { target } else { previous }
+        );
+    }
+    assert_eq!(e.timings.published_cut_revision, target);
 }
