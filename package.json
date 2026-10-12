@@ -22,6 +22,7 @@
     "README.md",
     "docs/render-extensions.md",
     "docs/dynamic-intersections.md",
+    "docs/stable-pipeline.md",
     "scripts/build-wasm.mjs",
     "THIRD_PARTY_NOTICES.md",
     "rust/Cargo.toml",

@@ -1,6 +1,6 @@
 import { Camera, PassNode, StorageTexture, type Node, type NodeBuilder, type NodeFrame, type ColorSpace, type Texture, type WebGPURenderer } from "three/webgpu";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
-import type { AntialiasMode, GaussianBoundaryPolicy, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassResources, GaussianPassStats, GaussianPassOutputStatus, ResolvedRadixBackend } from "./pipeline/types";
+import type { AntialiasMode, GaussianBoundaryPolicy, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassResources, GaussianPassStats, GaussianPassOutputStatus, GaussianPassWarmupOptions, ResolvedRadixBackend } from "./pipeline/types";
 /**
  * A multi-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
  */
@@ -46,6 +46,11 @@ export declare class GaussianPass extends PassNode {
     private pendingCapacity;
     private resetOutput;
     private checkAllocation;
+    private warmupPromise;
+    private warmupPipeline;
+    private warmupGeneration;
+    private warmupPending;
+    private warmupReserve;
     private resolvedIntersectionCapacity;
     private readonly debugListeners;
     private workingColorNode;
@@ -122,6 +127,10 @@ export declare class GaussianPass extends PassNode {
     invalidate(): void;
     set needsUpdate(value: boolean);
     updateBefore(frame: NodeFrame): boolean | undefined;
+    private createPipeline;
+    /** Prepare all compatible compute variants on tiny resources before loading models. */
+    warmup(options?: GaussianPassWarmupOptions): Promise<void>;
+    private prepareWarmup;
     /** Last confirmed GPU result. Freshness is conservative until asynchronous feedback arrives. */
     getOutputStatus(): GaussianPassOutputStatus;
     private failAllocation;
@@ -141,4 +150,4 @@ export declare class GaussianPass extends PassNode {
     private autoInputsChanged;
     private captureAutoSnapshot;
 }
-export type { AntialiasMode, GaussianBoundaryPolicy, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassDebugSnapshot, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassProfileStats, GaussianPassOutputStatus, GaussianPassResources, GaussianPassStats, GaussianTileLoadStats, GaussianTileCapStats, RadixBackend, ResolvedRadixBackend, } from "./pipeline/types";
+export type { AntialiasMode, GaussianBoundaryPolicy, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassDebugSnapshot, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassProfileStats, GaussianPassWarmupOptions, GaussianPassOutputStatus, GaussianPassResources, GaussianPassStats, GaussianTileLoadStats, GaussianTileCapStats, RadixBackend, ResolvedRadixBackend, } from "./pipeline/types";

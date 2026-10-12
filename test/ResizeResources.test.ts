@@ -61,7 +61,7 @@ describe("viewport resource reuse", () => {
       offsets.addEventListener("dispose", oldOffsetsDisposed);
       pipeline.prepareFrame(1024, 512, color, depth);
       expect(pipeline.getDebugInfo().tileCapacity).toBe(2048);
-      expect(pipeline.getDebugInfo().tileStageRebuilds).toBe(2);
+      expect(pipeline.getDebugInfo().tileStageRebuilds).toBe(1);
       expect(internals(pipeline).chunkWorkspace).toBe(workspace);
       expect(oldOffsetsDisposed).toHaveBeenCalledOnce();
       expect(disposed).not.toHaveBeenCalled();
@@ -110,14 +110,16 @@ describe("viewport resource reuse", () => {
       }
     ).levels;
     expect(levels.map((level) => level.runtimeLength.value)).toEqual([
-      300_001, 586, 2,
+      300_001, 586, 2, 0, 0,
     ]);
     length = 2;
     compute.mockClear();
     stage.encode(renderer);
-    expect(levels.map((level) => level.runtimeLength.value)).toEqual([2, 1, 1]);
+    expect(levels.map((level) => level.runtimeLength.value)).toEqual([
+      2, 0, 0, 0, 0,
+    ]);
     expect(levels.map((level) => level.runtimeBlockCount.value)).toEqual([
-      1, 1, 1,
+      1, 0, 0, 0, 0,
     ]);
     for (const [, dispatch] of compute.mock.calls)
       expect(dispatch).toEqual([1, 1, 1]);

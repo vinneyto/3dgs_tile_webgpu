@@ -1,3 +1,5 @@
+import { uniform } from "three/tsl";
+import { StorageBindings } from "./StorageBindings";
 import type {
   IndirectStorageBufferAttribute,
   StorageBufferAttribute,
@@ -9,18 +11,22 @@ import { maxRasterChunkTasks } from "../kernels/rasterChunks";
 /** Large chunk buffers depend on intersection capacity, not viewport size. */
 export class RasterChunkWorkspace {
   private readonly attributes = new AttributePool();
-  readonly taskCapacity: number;
-  readonly tasks: StorageBufferAttribute;
+  taskCapacity: number;
+  tasks: StorageBufferAttribute;
   readonly dispatch: IndirectStorageBufferAttribute;
-  readonly partialData: StorageBufferAttribute;
+  partialData: StorageBufferAttribute;
+  readonly taskCapacityNode = uniform(1, "uint");
   readonly partialStride: number;
 
   constructor(
     intersectionCapacity: number,
-    chunkSize: number,
+    private readonly chunkSize: number,
     outputDepth: boolean,
+    bindings = new StorageBindings(),
   ) {
+    this.attributes.bindings = bindings;
     this.taskCapacity = maxRasterChunkTasks(intersectionCapacity, chunkSize);
+    this.taskCapacityNode.value = this.taskCapacity;
     this.tasks = this.attributes.createUint(
       "3dgs.raster-chunk-tasks",
       this.taskCapacity,
@@ -34,6 +40,17 @@ export class RasterChunkWorkspace {
       "3dgs.raster-chunk-partials",
       this.taskCapacity * WORKGROUP_SIZE * this.partialStride,
     );
+  }
+
+  resize(capacity: number): void {
+    const tasks = maxRasterChunkTasks(capacity, this.chunkSize);
+    this.tasks = this.attributes.grow(this.tasks, tasks);
+    this.partialData = this.attributes.grow(
+      this.partialData,
+      tasks * WORKGROUP_SIZE * this.partialStride,
+    );
+    this.taskCapacity = this.tasks.count;
+    this.taskCapacityNode.value = this.taskCapacity;
   }
 
   dispose(): void {

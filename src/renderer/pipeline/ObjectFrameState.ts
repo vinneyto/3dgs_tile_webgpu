@@ -1,3 +1,4 @@
+import { StorageBindings } from "./StorageBindings";
 import {
   Matrix4,
   Camera,
@@ -14,11 +15,11 @@ export const OBJECT_FRAME_VEC4S = 10;
 
 /** Camera-specific object transforms shared by every Gaussian of one cloud. */
 export class ObjectFrameState {
-  readonly attribute: StorageBufferAttribute;
+  attribute: StorageBufferAttribute;
 
-  private readonly values: Float32Array;
-  private readonly frameComponentOffset: number;
-  private readonly frameComponentCount: number;
+  private values: Float32Array;
+  private frameComponentOffset: number;
+  private frameComponentCount: number;
   private readonly modelView = new Matrix4();
   private readonly inverseModel = new Matrix4();
   private readonly cameraWorldPosition = new Vector3();
@@ -28,6 +29,7 @@ export class ObjectFrameState {
     private readonly camera: Camera,
     private readonly store: GaussianRenderStore,
     gaussianCount: number,
+    private readonly bindings = new StorageBindings(),
   ) {
     this.frameComponentOffset = gaussianCount * 4;
     this.frameComponentCount = store.objectCapacity * OBJECT_FRAME_VEC4S * 4;
@@ -36,6 +38,41 @@ export class ObjectFrameState {
     );
     this.attribute = new StorageBufferAttribute(this.values, 4);
     this.attribute.name = "3dgs.object-frame-state";
+  }
+
+  get slotCapacity(): number {
+    return this.frameComponentOffset / 4;
+  }
+
+  resize(gaussianCount: number): void {
+    const currentObjects = this.frameComponentCount / (OBJECT_FRAME_VEC4S * 4);
+    const objectCount =
+      this.store.objectCapacity > currentObjects
+        ? Math.max(this.store.objectCapacity, currentObjects * 2)
+        : currentObjects;
+    const maximumSlots =
+      this.bindings.maximumCount(4) - objectCount * OBJECT_FRAME_VEC4S;
+    if (gaussianCount > maximumSlots)
+      throw new RangeError("Object state exceeds device binding size");
+    const slotCapacity =
+      gaussianCount > this.slotCapacity
+        ? Math.min(maximumSlots, Math.max(gaussianCount, this.slotCapacity * 2))
+        : this.slotCapacity;
+    const offset = slotCapacity * 4;
+    const count = objectCount * OBJECT_FRAME_VEC4S * 4;
+    if (
+      offset === this.frameComponentOffset &&
+      count === this.frameComponentCount
+    )
+      return;
+    const previous = this.attribute;
+    this.values = new Float32Array(offset + count);
+    this.attribute = new StorageBufferAttribute(this.values, 4);
+    this.attribute.name = previous.name;
+    this.frameComponentOffset = offset;
+    this.frameComponentCount = count;
+    this.bindings.replace(previous, this.attribute);
+    this.bindings.retire(previous);
   }
 
   update(): void {
@@ -54,7 +91,7 @@ export class ObjectFrameState {
   }
 
   dispose(): void {
-    this.attribute.dispose();
+    this.bindings.retire(this.attribute);
   }
 
   private writeCloud(cloud: GaussianCloud): void {

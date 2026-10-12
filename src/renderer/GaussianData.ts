@@ -70,6 +70,8 @@ export class GaussianData {
 
   private readonly ownsBuffers: boolean;
   private disposed = false;
+  private retainCount = 0;
+  private disposeRequested = false;
 
   constructor(buffers: GaussianBuffers, options: GaussianDataOptions) {
     if (!Number.isInteger(options.count) || options.count <= 0) {
@@ -234,8 +236,21 @@ export class GaussianData {
     return () => this.activeListeners.delete(listener);
   }
 
+  retain(): void {
+    if (this.disposed) throw new Error("GaussianData has been disposed");
+    this.retainCount++;
+  }
+
+  release(): void {
+    if (this.retainCount === 0) throw new Error("GaussianData lease underflow");
+    this.retainCount--;
+    if (this.retainCount === 0 && this.disposeRequested) this.dispose();
+  }
+
   dispose(): void {
     if (this.disposed) return;
+    this.disposeRequested = true;
+    if (this.retainCount > 0) return;
     this.disposed = true;
     this.activeListeners.clear();
     if (this.ownsShBuffer) this.shCoefficients.dispose();

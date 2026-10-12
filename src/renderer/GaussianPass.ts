@@ -20,6 +20,7 @@ import {
   type WebGPURenderer,
 } from "three/webgpu";
 import { colorSpaceToWorking, storage } from "three/tsl";
+import { GaussianData } from "./GaussianData";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
 import type { FrontendCapabilities } from "../streaming-backend/FrontendCapabilities";
 import {
@@ -45,6 +46,7 @@ import type {
   GaussianPassResources,
   GaussianPassStats,
   GaussianPassOutputStatus,
+  GaussianPassWarmupOptions,
   ResolvedRadixBackend,
 } from "./pipeline/types";
 
@@ -117,6 +119,11 @@ export class GaussianPass extends PassNode {
   private pendingCapacity: number | null = null;
   private resetOutput = true;
   private checkAllocation = true;
+  private warmupPromise: Promise<void> | null = null;
+  private warmupPipeline: TiledGaussianPipeline | null = null;
+  private warmupGeneration = -1;
+  private warmupPending = false;
+  private warmupReserve = false;
   private resolvedIntersectionCapacity = 0;
   private readonly debugListeners = new Set<GaussianPassDebugListener>();
   private workingColorNode: Node | null = null;
@@ -337,6 +344,10 @@ export class GaussianPass extends PassNode {
       previousWidth !== this.renderTarget.width ||
       previousHeight !== this.renderTarget.height
     ) {
+      // RenderTarget resize recreates the GPU texture without replacing its
+      // JS object. Version it so existing compute storage bindings refresh.
+      this.colorTexture.needsUpdate = true;
+      if (this.depthTexture) this.depthTexture.needsUpdate = true;
       this.frameDirty = true;
       this.resetOutput = true;
       this.outputVersion = 0;
@@ -693,45 +704,50 @@ export class GaussianPass extends PassNode {
       this.frameDirty = true;
     }
     const data = this.gaussianStore.getPackedData();
-    if (
-      this.pipeline === null ||
-      this.pipelineLayoutVersion !== this.gaussianStore.layoutVersion
-    ) {
+    if (data.count > WORKGROUP_SIZE * 65_535)
+      throw new RangeError(
+        "Gaussian count exceeds the one-dimensional projection dispatch limit",
+      );
+    if (this.pipeline === null) {
       this.feedbackGeneration++;
       this.pendingCapacity = null;
-      this.pipeline?.dispose();
-      if (data.count > WORKGROUP_SIZE * 65_535) {
-        throw new RangeError(
-          "Gaussian count exceeds the one-dimensional projection dispatch limit",
-        );
-      }
-      this.pipeline = new TiledGaussianPipeline(
-        renderer,
-        this.camera,
-        data,
-        this.gaussianStore,
-        this.depthSortMode,
-        this.antialiasMode,
-        this.intersectionCapacity,
-        this.background,
-        this.profileKernels,
-        this.maxRasterizedSplatsPerTile,
-        this.rasterChunkSize,
-        this.subpixelSampleCulling,
-        this.radixBackend,
-        this.nodeSlots,
-        this.rasterTransmittanceThreshold,
-        this.rasterStats,
-        this.depthAlphaThreshold,
-        this.renderDomain,
-        this.outputState,
-      );
+      this.pipeline = this.createPipeline(data);
       this.checkAllocation = true;
       this.pipelineDevice = device;
       this.pipelineLayoutVersion = this.gaussianStore.layoutVersion;
       this.dirtyStages = DirtyStage.None;
       this.frameDirty = true;
-    } else if (this.dirtyStages !== DirtyStage.None) {
+    } else if (
+      this.pipelineLayoutVersion !== this.gaussianStore.layoutVersion
+    ) {
+      this.feedbackGeneration++;
+      this.pendingCapacity = null;
+      try {
+        this.pipeline.updateData(data);
+      } catch (error) {
+        this.failAllocation(String(error));
+        return undefined;
+      }
+      this.pipelineLayoutVersion = this.gaussianStore.layoutVersion;
+      this.checkAllocation = true;
+      this.frameDirty = true;
+    }
+    if (this.warmupReserve) {
+      this.resolvedIntersectionCapacity = this.capacityPolicy.initial;
+      try {
+        this.pipeline.resizeIntersections(
+          this.intersectionCapacity,
+          this.colorTexture,
+          this.depthTexture,
+        );
+      } catch (error) {
+        this.failAllocation(String(error));
+        return undefined;
+      }
+      this.warmupReserve = false;
+      this.checkAllocation = true;
+    }
+    if (this.dirtyStages !== DirtyStage.None) {
       if ((this.dirtyStages & DirtyStage.Projection) !== 0) {
         this.pipeline.rebuildProjection(this.nodeSlots);
       }
@@ -831,6 +847,142 @@ export class GaussianPass extends PassNode {
       for (const listener of this.debugListeners) listener(snapshot);
     }
     return undefined;
+  }
+
+  private createPipeline(
+    data: GaussianData,
+    capacity = this.intersectionCapacity,
+  ): TiledGaussianPipeline {
+    return new TiledGaussianPipeline(
+      this.ownerRenderer,
+      this.camera,
+      data,
+      this.gaussianStore,
+      this.depthSortMode,
+      this.antialiasMode,
+      capacity,
+      this.background,
+      this.profileKernels,
+      this.maxRasterizedSplatsPerTile,
+      this.rasterChunkSize,
+      this.subpixelSampleCulling,
+      this.radixBackend,
+      this.nodeSlots,
+      this.rasterTransmittanceThreshold,
+      this.rasterStats,
+      this.depthAlphaThreshold,
+      this.renderDomain,
+      this.outputState,
+    );
+  }
+
+  /** Prepare all compatible compute variants on tiny resources before loading models. */
+  warmup(options: GaussianPassWarmupOptions = {}): Promise<void> {
+    if (this.disposed)
+      return Promise.reject(new Error("GaussianPass has been disposed"));
+    if (
+      this.warmupPromise &&
+      (this.warmupPending ||
+        this.pipeline === null ||
+        (this.pipeline === this.warmupPipeline &&
+          this.pipeline.getShaderGeneration() === this.warmupGeneration &&
+          this.dirtyStages === DirtyStage.None))
+    )
+      return this.warmupPromise;
+    this.warmupPending = true;
+    const promise = this.prepareWarmup(options)
+      .catch((error: unknown) => {
+        if (this.warmupPromise === promise) this.warmupPromise = null;
+        throw error;
+      })
+      .finally(() => {
+        this.warmupPending = false;
+      });
+    this.warmupPromise = promise;
+    return this.warmupPromise;
+  }
+
+  private async prepareWarmup(
+    options: GaussianPassWarmupOptions,
+  ): Promise<void> {
+    await this.ownerRenderer.init();
+    if (this.disposed) return;
+    const device = webGpuDevice(this.ownerRenderer);
+    if (this.capacityPolicy === null) {
+      this.capacityPolicy = new IntersectionCapacityPolicy(
+        this.capacityOptions,
+        device.limits,
+        this.rasterChunkSize,
+        this.outputDepth,
+      );
+      this.resolvedIntersectionCapacity = this.capacityPolicy.initial;
+    }
+    if (this.pipeline === null) {
+      const known = this.gaussianStore.hasPackedData
+        ? this.gaussianStore.getPackedData()
+        : null;
+      const geometry =
+        options.geometryFormat ?? known?.geometryFormat ?? "compact";
+      const sh = options.shFormat ?? known?.shFormat ?? "rgb8e8";
+      const activeSlots =
+        options.activeSlots ?? (known ? Boolean(known.activeSlots) : true);
+      const data = new GaussianData(
+        {
+          means: new StorageBufferAttribute(new Float32Array(4), 4),
+          scalesOpacity: new StorageBufferAttribute(
+            geometry === "compact" ? new Uint32Array(2) : new Float32Array(4),
+            geometry === "compact" ? 2 : 4,
+          ),
+          rotations: new StorageBufferAttribute(
+            geometry === "compact" ? new Uint32Array(1) : new Float32Array(4),
+            geometry === "compact" ? 1 : 4,
+          ),
+          shCoefficients: new StorageBufferAttribute(
+            sh === "rgb8e8" ? new Uint32Array(2) : new Float32Array(8),
+            sh === "rgb8e8" ? 1 : 4,
+          ),
+        },
+        {
+          count: 1,
+          geometryFormat: geometry,
+          shFormat: sh,
+          activeSlots: activeSlots ? new Uint32Array() : undefined,
+          ownsBuffers: true,
+        },
+      );
+      this.pipeline = this.createPipeline(data, 1);
+      data.dispose(); // The projection's lease keeps it alive until replacement.
+      this.pipelineDevice = device;
+      this.pipelineLayoutVersion = -1;
+      this.warmupReserve = true;
+      this.resolvedIntersectionCapacity = 1;
+      this.dirtyStages = DirtyStage.None;
+      this.ownerRenderer.initRenderTarget(this.renderTarget);
+      this.pipeline.prepareFrame(1, 1, this.colorTexture, this.depthTexture);
+    }
+    if ((this.dirtyStages & DirtyStage.Projection) !== 0)
+      this.pipeline.rebuildProjection(this.nodeSlots);
+    if ((this.dirtyStages & DirtyStage.Rasterizer) !== 0)
+      this.pipeline.rebuildRasterizer(this.nodeSlots);
+    this.dirtyStages = DirtyStage.None;
+    const pipeline = this.pipeline;
+    this.warmupPipeline = pipeline;
+    this.warmupGeneration = pipeline.getShaderGeneration();
+    device.pushErrorScope("validation");
+    device.pushErrorScope("out-of-memory");
+    try {
+      await pipeline.warmup(() => this.disposed || this.pipeline !== pipeline);
+    } finally {
+      const errors = await Promise.all([
+        device.popErrorScope(),
+        device.popErrorScope(),
+      ]);
+      const error = errors.find((error) => error !== null);
+      if (error && !this.disposed && this.pipeline === pipeline) {
+        this.failAllocation(error.message);
+        throw new Error(error.message);
+      }
+    }
   }
 
   /** Last confirmed GPU result. Freshness is conservative until asynchronous feedback arrives. */
@@ -1159,6 +1311,7 @@ export type {
   GaussianPassOptions,
   GaussianPassRedrawStrategy,
   GaussianPassProfileStats,
+  GaussianPassWarmupOptions,
   GaussianPassOutputStatus,
   GaussianPassResources,
   GaussianPassStats,

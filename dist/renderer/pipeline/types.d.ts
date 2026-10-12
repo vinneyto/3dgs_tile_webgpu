@@ -140,6 +140,10 @@ export interface GaussianPassDebugInfo {
     tileStageRebuilds: number;
     /** Reserved tile slots; only exceeding this capacity rebuilds tile stages. */
     tileCapacity: number;
+    /** Compatible resource transactions; these do not rebuild compute graphs. */
+    resourceUpdates?: number;
+    bufferReplacements?: number;
+    shaderVariantChanges?: number;
     radixPasses: number;
     depthRadixPasses: number;
     tileRadixPasses: number;
@@ -196,4 +200,10 @@ export interface GaussianPassOutputStatus {
     growthDurationMs: number;
     intersectionBufferBytes: number;
     error: string | null;
+}
+/** Types selected for an explicit warmup before the Store supplies its first layout. */
+export interface GaussianPassWarmupOptions {
+    geometryFormat?: "compact" | "float32";
+    shFormat?: "rgb8e8" | "float32";
+    activeSlots?: boolean;
 }

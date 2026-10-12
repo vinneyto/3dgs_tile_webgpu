@@ -7,8 +7,6 @@ import type {
 import {
   instanceIndex,
   invocationLocalIndex,
-  storage,
-  uint,
   uniform,
   wgslFn,
   workgroupArray,
@@ -19,115 +17,126 @@ import {
   suffixMinBlocksWGSL,
 } from "../kernels/tileOffsets";
 import { AttributePool } from "./AttributePool";
+import { StorageBindings } from "./StorageBindings";
 import { SCAN_BLOCK_ITEMS, WORKGROUP_SIZE } from "./constants";
 
 interface SuffixMinLevel {
   length: number;
   runtimeLength: ReturnType<typeof uniform>;
   runtimeBlockCount: ReturnType<typeof uniform>;
-  blockCount: number;
   values: StorageBufferAttribute;
+  mins: StorageBufferAttribute;
   scanNode: ComputeNode;
   addNode?: ComputeNode;
 }
-
 export class SuffixMinStage {
   private readonly attributes = new AttributePool();
   private readonly levels: SuffixMinLevel[] = [];
-
+  private capacity: number;
   constructor(
     values: StorageBufferAttribute,
     length: number,
     private readonly getLength?: () => number,
+    bindings = new StorageBindings(),
   ) {
-    const scanKernel = wgslFn<Record<string, Node>>(suffixMinBlocksWGSL);
-    const addKernel = wgslFn<Record<string, Node>>(addSuffixBlockMinsWGSL);
-    let levelValues = values;
-    let levelLength = length;
-
-    while (true) {
-      const level = this.levels.length;
-      const blockCount = Math.ceil(levelLength / SCAN_BLOCK_ITEMS);
-      const blockMins = this.attributes.createUint(
-        `3dgs.tile-offset-mins-${level}`,
-        blockCount,
+    this.attributes.bindings = bindings;
+    this.capacity = length;
+    let levelValues = values,
+      levelLength = length;
+    for (let index = 0; index < 5; index++) {
+      const blocks = Math.max(1, Math.ceil(levelLength / SCAN_BLOCK_ITEMS));
+      const mins = this.attributes.createUint(
+        `3dgs.tile-offset-mins-${index}`,
+        blocks,
       );
-      const runtimeLength = uniform(levelLength, "uint");
-      const runtimeBlockCount = uniform(blockCount, "uint");
-      const scanNode = scanKernel({
+      const runtimeLength = uniform(levelLength, "uint"),
+        runtimeBlockCount = uniform(blocks, "uint");
+      const scanNode = wgslFn<Record<string, Node>>(suffixMinBlocksWGSL)({
         lane: invocationLocalIndex,
         group_id: workgroupId.x,
-        length: getLength ? runtimeLength : uint(levelLength),
-        values: storage(levelValues, "uint", levelLength),
-        block_mins: storage(blockMins, "uint", blockCount),
+        length: runtimeLength,
+        values: this.attributes.storage(levelValues, "uint", levelLength),
+        block_mins: this.attributes.storage(mins, "uint", blocks),
         scratch: workgroupArray("uint", SCAN_BLOCK_ITEMS),
       })
         .computeKernel([WORKGROUP_SIZE])
-        .setName(`3DGS tile offset suffix scan WGSL ${level}`);
+        .setName(`3DGS tile offset suffix scan WGSL ${index}`);
       this.levels.push({
         length: levelLength,
         runtimeLength,
         runtimeBlockCount,
-        blockCount,
         values: levelValues,
+        mins,
         scanNode,
       });
-      if (blockCount <= 1) break;
-      levelValues = blockMins;
-      levelLength = blockCount;
+      levelValues = mins;
+      levelLength = blocks;
     }
-
-    for (let level = 0; level < this.levels.length - 1; level++) {
-      const current = this.levels[level]!;
-      const parent = this.levels[level + 1]!;
-      current.addNode = addKernel({
+    for (let index = 0; index < this.levels.length - 1; index++) {
+      const current = this.levels[index]!,
+        parent = this.levels[index + 1]!;
+      current.addNode = wgslFn<Record<string, Node>>(addSuffixBlockMinsWGSL)({
         index: instanceIndex,
-        length: getLength ? current.runtimeLength : uint(current.length),
-        block_count: getLength
-          ? current.runtimeBlockCount
-          : uint(parent.length),
-        values: storage(current.values, "uint", current.length),
-        block_suffix_mins: storage(
-          parent.values,
-          "uint",
-          parent.length,
-        ).toReadOnly(),
+        length: current.runtimeLength,
+        block_count: current.runtimeBlockCount,
+        values: this.attributes.storage(current.values, "uint", current.length),
+        block_suffix_mins: this.attributes
+          .storage(parent.values, "uint", parent.length)
+          .toReadOnly(),
       })
-        .compute(current.length, [WORKGROUP_SIZE])
-        .setName(`3DGS tile add suffix block mins WGSL ${level}`);
+        .computeKernel([WORKGROUP_SIZE])
+        .setName(`3DGS tile add suffix block mins WGSL ${index}`);
     }
   }
-
-  encode(renderer: WebGPURenderer): void {
-    let length = this.getLength?.();
+  resize(values: StorageBufferAttribute, length: number): void {
+    this.capacity = Math.max(this.capacity, length);
+    let capacity = this.capacity,
+      current = values;
     for (const level of this.levels) {
-      const activeLength = length ?? level.length;
-      const blocks = Math.max(1, Math.ceil(activeLength / SCAN_BLOCK_ITEMS));
-      level.runtimeLength.value = activeLength;
+      this.attributes.rebind(level.values, current);
+      level.values = current;
+      level.length = capacity;
+      const blocks = Math.max(1, Math.ceil(capacity / SCAN_BLOCK_ITEMS));
+      level.mins = this.attributes.grow(level.mins, blocks);
+      current = level.mins;
+      capacity = blocks;
+    }
+  }
+  encode(renderer: WebGPURenderer): void {
+    let length = this.getLength?.() ?? this.capacity,
+      active = 0;
+    for (const level of this.levels) {
+      const blocks = Math.max(1, Math.ceil(length / SCAN_BLOCK_ITEMS));
+      level.runtimeLength.value = length;
       level.runtimeBlockCount.value = blocks;
       renderer.compute(level.scanNode, [blocks, 1, 1]);
-      if (length !== undefined) length = blocks;
+      active++;
+      if (blocks === 1) break;
+      length = blocks;
     }
-    for (let level = this.levels.length - 2; level >= 0; level--) {
-      const current = this.levels[level]!;
-      if (this.getLength) {
-        renderer.compute(current.addNode!, [
-          Math.max(
-            1,
-            Math.ceil(Number(current.runtimeLength.value) / WORKGROUP_SIZE),
-          ),
+    for (const level of this.levels.slice(active)) {
+      level.runtimeLength.value = 0;
+      level.runtimeBlockCount.value = 0;
+    }
+    for (let index = active - 2; index >= 0; index--) {
+      const level = this.levels[index]!;
+      renderer.compute(level.addNode!, [
+        Math.max(
           1,
-          1,
-        ]);
-      } else renderer.compute(current.addNode!);
+          Math.ceil(Number(level.runtimeLength.value) / WORKGROUP_SIZE),
+        ),
+        1,
+        1,
+      ]);
     }
   }
-
+  getComputeNodes(): ComputeNode[] {
+    return this.levels.flatMap((level) =>
+      level.addNode ? [level.scanNode, level.addNode] : [level.scanNode],
+    );
+  }
   dispose(): void {
-    for (const level of this.levels) {
-      level.scanNode.dispose();
-      level.addNode?.dispose();
-    }
+    for (const node of this.getComputeNodes()) node.dispose();
     this.attributes.dispose();
   }
 }

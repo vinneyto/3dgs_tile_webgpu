@@ -62,6 +62,7 @@ const camera = new PerspectiveCamera(50, innerWidth / innerHeight, 0.01, 10000);
 const scene = new Scene();
 const store = new GaussianStore();
 const pass = gaussianPass(renderer, camera, store);
+await pass.warmup();
 const pipeline = new RenderPipeline(renderer);
 pipeline.outputNode = pass;
 renderer.setAnimationLoop(() => pipeline.render());
@@ -83,6 +84,10 @@ scene.add(cloud);
 ```
 
 Supported formats: PLY (binary, compressed SuperSplat, scalar ASCII), SPLAT, KSPLAT, SPZ, ZIP SOG v1/v2 with PNG/WebP textures, and self-contained RAD. Set `format` explicitly or supply `fileName` for formats without identifying magic, such as SPLAT. URL loads use the URL as the filename hint. A loose SOG `meta.json` plus separate texture URLs and external RAD chunks are not supported by this buffer-loading interface.
+
+Compatible layout/capacity changes preserve compute nodes and pipelines. See
+[stable compute resources and warmup](docs/stable-pipeline.md) for parallel
+download/preparation, shader variants and GPU regression checks.
 
 `store.loadBuffer(buffer, { fileName: file.name, ...options })` transfers the input buffer to the worker. Do not reuse it after the call. The same ownership rule applies to `writeAttributeRange` data.
 

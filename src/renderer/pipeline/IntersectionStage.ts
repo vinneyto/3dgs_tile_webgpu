@@ -1,3 +1,4 @@
+import { StorageBindings } from "./StorageBindings";
 import type {
   ComputeNode,
   IndirectStorageBufferAttribute,
@@ -5,14 +6,7 @@ import type {
   StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
-import {
-  instanceIndex,
-  storage,
-  uint,
-  uvec2,
-  uniform,
-  wgslFn,
-} from "three/tsl";
+import { instanceIndex, uvec2, uniform, wgslFn } from "three/tsl";
 import {
   emitIntersectionsWGSL,
   prepareDispatchWGSL,
@@ -37,6 +31,7 @@ export class IntersectionStage {
   private readonly outputNode: ComputeNode;
   readonly rasterDispatch: IndirectStorageBufferAttribute;
   private readonly emitDispatch: IndirectStorageBufferAttribute;
+  private readonly capacityNode = uniform(1, "uint");
   private readonly attempt = uniform(0, "uint");
   private readonly resetValid = uniform(0, "uint");
   readonly outputState: StorageBufferAttribute;
@@ -44,7 +39,7 @@ export class IntersectionStage {
   constructor(
     private readonly renderer: WebGPURenderer,
     gaussianCount: number,
-    private readonly capacity: number,
+    private capacity: number,
     sortedGaussiansAttribute: StorageBufferAttribute,
     visibleDispatch: DispatchResources,
     tileCountsAttribute: StorageBufferAttribute,
@@ -54,7 +49,10 @@ export class IntersectionStage {
     projectedColorAttribute: StorageBufferAttribute,
     frame: FrameUniforms,
     outputState?: StorageBufferAttribute,
+    bindings = new StorageBindings(),
   ) {
+    this.attributes.bindings = bindings;
+    this.capacityNode.value = capacity;
     this.dispatch = {
       state: this.attributes.createUint("3dgs.dispatch-state", 1, 4),
       radixBlock: this.attributes.createIndirect("3dgs.radix-block-dispatch"),
@@ -82,31 +80,37 @@ export class IntersectionStage {
       ),
     };
 
-    const tileCounts = storage(
-      tileCountsAttribute,
-      "uint",
-      gaussianCount,
-    ).toReadOnly();
-    const intersectionOffsets = storage(
-      intersectionOffsetsAttribute,
-      "uint",
-      gaussianCount,
-    ).toReadOnly();
-    const visibleState = storage(
-      visibleDispatch.state,
-      "uvec4",
-      1,
-    ).toReadOnly();
+    const tileCounts = this.attributes
+      .storage(tileCountsAttribute, "uint", gaussianCount)
+      .toReadOnly();
+    const intersectionOffsets = this.attributes
+      .storage(intersectionOffsetsAttribute, "uint", gaussianCount)
+      .toReadOnly();
+    const visibleState = this.attributes
+      .storage(visibleDispatch.state, "uvec4", 1)
+      .toReadOnly();
     const prepareKernel = wgslFn<Record<string, Node>>(prepareDispatchWGSL);
     this.prepareNode = prepareKernel({
       item_count_state: visibleState,
-      capacity: uint(capacity),
+      capacity: this.capacityNode,
       tile_counts: tileCounts,
       intersection_offsets: intersectionOffsets,
-      state: storage(this.dispatch.state, "uvec4", 1),
-      radix_block_dispatch: storage(this.dispatch.radixBlock, "uvec4", 1),
-      radix_reduce_dispatch: storage(this.dispatch.radixReduce, "uvec4", 1),
-      linear_dispatch: storage(this.dispatch.linear, "uvec4", 1),
+      state: this.attributes.storage(this.dispatch.state, "uvec4", 1),
+      radix_block_dispatch: this.attributes.storage(
+        this.dispatch.radixBlock,
+        "uvec4",
+        1,
+      ),
+      radix_reduce_dispatch: this.attributes.storage(
+        this.dispatch.radixReduce,
+        "uvec4",
+        1,
+      ),
+      linear_dispatch: this.attributes.storage(
+        this.dispatch.linear,
+        "uvec4",
+        1,
+      ),
     })
       .compute(1)
       .setName("3DGS prepare intersection indirect dispatch WGSL");
@@ -114,11 +118,13 @@ export class IntersectionStage {
     this.outputNode = wgslFn<Record<string, Node>>(
       prepareIntersectionOutputWGSL,
     )({
-      state: storage(this.dispatch.state, "uvec4", 1).toReadOnly(),
+      state: this.attributes
+        .storage(this.dispatch.state, "uvec4", 1)
+        .toReadOnly(),
       visible_state: visibleState,
-      emit_dispatch: storage(this.emitDispatch, "uvec4", 1),
-      raster_dispatch: storage(this.rasterDispatch, "uvec4", 1),
-      output_state: storage(this.outputState, "uvec4", 1),
+      emit_dispatch: this.attributes.storage(this.emitDispatch, "uvec4", 1),
+      raster_dispatch: this.attributes.storage(this.rasterDispatch, "uvec4", 1),
+      output_state: this.attributes.storage(this.outputState, "uvec4", 1),
       tiles: uvec2(frame.tilesX, frame.tilesY),
       attempt: this.attempt,
       reset_valid: this.resetValid,
@@ -132,31 +138,27 @@ export class IntersectionStage {
       tiles: uvec2(frame.tilesX, frame.tilesY),
       viewport: frame.viewport.xy,
       boundary_axis: frame.boundaryAxis,
-      capacity: uint(capacity),
-      sorted_gaussians: storage(
-        sortedGaussiansAttribute,
-        "uvec2",
-        gaussianCount,
-      ).toReadOnly(),
-      projected_mean: storage(
-        projectedMeanAttribute,
-        "vec4",
-        gaussianCount,
-      ).toReadOnly(),
-      projected_conic: storage(
-        projectedConicAttribute,
-        "vec4",
-        gaussianCount,
-      ).toReadOnly(),
-      projected_color: storage(
-        projectedColorAttribute,
-        "vec4",
-        gaussianCount,
-      ).toReadOnly(),
+      capacity: this.capacityNode,
+      sorted_gaussians: this.attributes
+        .storage(sortedGaussiansAttribute, "uvec2", gaussianCount)
+        .toReadOnly(),
+      projected_mean: this.attributes
+        .storage(projectedMeanAttribute, "vec4", gaussianCount)
+        .toReadOnly(),
+      projected_conic: this.attributes
+        .storage(projectedConicAttribute, "vec4", gaussianCount)
+        .toReadOnly(),
+      projected_color: this.attributes
+        .storage(projectedColorAttribute, "vec4", gaussianCount)
+        .toReadOnly(),
       tile_counts: tileCounts,
       intersection_offsets: intersectionOffsets,
       visible_state: visibleState,
-      records: storage(this.buffers.recordsA, "uvec2", capacity),
+      records: this.attributes.storage(
+        this.buffers.recordsA,
+        "uvec2",
+        capacity,
+      ),
     })
       .computeKernel([WORKGROUP_SIZE])
       .setName("3DGS emit depth-ordered intersections WGSL");
@@ -165,6 +167,24 @@ export class IntersectionStage {
   }
 
   private readonly visibleLinearDispatch: DispatchResources;
+
+  resize(capacity: number): void {
+    this.buffers.recordsA = this.attributes.grow(
+      this.buffers.recordsA,
+      capacity,
+      false,
+    );
+    this.buffers.recordsB = this.attributes.grow(
+      this.buffers.recordsB,
+      capacity,
+      false,
+    );
+    this.capacity = capacity;
+    this.capacityNode.value = capacity;
+  }
+  getComputeNodes(): ComputeNode[] {
+    return [this.prepareNode, this.outputNode, this.emitNode];
+  }
 
   encode(attempt = 1, resetValid = false): void {
     this.attempt.value = attempt;
@@ -175,6 +195,7 @@ export class IntersectionStage {
   }
 
   async readStats(): Promise<GaussianPassStats> {
+    const capacity = this.capacity;
     const [intersectionResult, visibleResult] = await Promise.all([
       this.renderer.getArrayBufferAsync(this.dispatch.state),
       this.renderer.getArrayBufferAsync(this.visibleLinearDispatch.state),
@@ -185,7 +206,7 @@ export class IntersectionStage {
       visibleGaussianCount: visibleValues[0] ?? 0,
       intersectionCount: values[0] ?? 0,
       requestedIntersections: values[1] ?? 0,
-      intersectionCapacity: this.capacity,
+      intersectionCapacity: capacity,
       overflow: (values[3] ?? 0) !== 0,
       profile: null,
     };
