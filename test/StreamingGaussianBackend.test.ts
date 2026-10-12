@@ -831,6 +831,7 @@ describe("streaming backend request protocol", () => {
       await store.whenRenderReady(cloud);
       expect(cloud.gaussianCount).toBe(5);
       const layout = store.layoutVersion;
+      const responseStart = port.responses.length;
       camera.position.x = 1000;
       store.updateLod(camera);
       await vi.waitFor(
@@ -853,7 +854,21 @@ describe("streaming backend request protocol", () => {
       await vi.waitFor(() => expect(cloud.gaussianCount).toBe(1), {
         interval: 5,
       });
-      expect(port.commands.some((c) => c.type === "prefetch-cache")).toBe(true);
+      expect(port.commands.some((c) => c.type === "recheck-lod")).toBe(true);
+      const publications = port.responses
+        .slice(responseStart)
+        .filter(
+          (r) =>
+            r.payload?.type === "buffers-activated" &&
+            r.payload.commit &&
+            !r.payload.mipmapPending,
+        );
+      expect(publications).toHaveLength(1);
+      expect(publications[0]!.payload).toMatchObject({ reason: "lod-recheck" });
+      expect(publications[0]!.metrics).toMatchObject({
+        cacheMisses: 0,
+        publishedCuts: 1,
+      });
       expect(store.layoutVersion).toBe(layout);
       port.responses.length = 0;
       camera.position.x = 0;

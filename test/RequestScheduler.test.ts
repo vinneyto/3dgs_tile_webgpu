@@ -78,29 +78,36 @@ class ManualBackend implements GaussianBackend {
 }
 
 describe("SerialRequestScheduler", () => {
-  it("runs queued camera commands before cache prefetch", async () => {
-    const backend = new ManualBackend();
-    const scheduler = new SerialRequestScheduler(backend);
-    scheduler.start();
-    const command = (id: string) =>
-      createSetCameraCommand(id, 1, matrix, matrix, 16, 16);
-    const first = command("first");
-    const a = scheduler.schedule(first);
-    const warming = scheduler.schedule({ type: "prefetch-cache", id: "warm" });
-    const camera = command("camera");
-    const b = scheduler.schedule(camera);
-    backend.answer(first, true);
-    await a;
-    await Promise.resolve();
-    expect(backend.sent.at(-1)?.id).toBe("camera");
-    backend.answer(camera, true);
-    await b;
-    await Promise.resolve();
-    expect(backend.sent.at(-1)?.id).toBe("warm");
-    backend.answer(backend.sent.at(-1)!, true);
-    await warming;
-    scheduler.dispose();
-  });
+  it.each(["prefetch-cache", "recheck-lod"] as const)(
+    "runs queued camera commands before %s",
+    async (background) => {
+      const backend = new ManualBackend();
+      const scheduler = new SerialRequestScheduler(backend);
+      scheduler.start();
+      const command = (id: string) =>
+        createSetCameraCommand(id, 1, matrix, matrix, 16, 16);
+      const first = command("first");
+      const a = scheduler.schedule(first);
+      const warming = scheduler.schedule(
+        background === "prefetch-cache"
+          ? { type: background, id: "warm" }
+          : { type: background, id: "warm", cameraRevision: 1 },
+      );
+      const camera = command("camera");
+      const b = scheduler.schedule(camera);
+      backend.answer(first, true);
+      await a;
+      await Promise.resolve();
+      expect(backend.sent.at(-1)?.id).toBe("camera");
+      backend.answer(camera, true);
+      await b;
+      await Promise.resolve();
+      expect(backend.sent.at(-1)?.id).toBe("warm");
+      backend.answer(backend.sent.at(-1)!, true);
+      await warming;
+      scheduler.dispose();
+    },
+  );
 
   it("runs loads before handshake, and waits for the final response", async () => {
     const backend = new ManualBackend();
@@ -358,4 +365,87 @@ describe("GaussianStore packing settings", () => {
     await retry;
     store.dispose();
   });
+});
+
+it("does not recheck an older camera while a newer view is queued", async () => {
+  vi.useFakeTimers();
+  const backend = new ManualBackend();
+  const store = new GaussianStore(backend);
+  const camera = new PerspectiveCamera();
+  const metrics = (
+    revision: number,
+    delay?: number,
+  ): NonNullable<BackendResponse["metrics"]> => ({
+    cameraRevision: revision,
+    lodRecheckAfterMs: delay,
+    computeMs: 0,
+    selectionMs: 0,
+    slotMappingMs: 0,
+    packingMs: 0,
+    streamCopyMs: 0,
+    uploadWaitMs: 0,
+    uploadedBytes: 0,
+    uploadBatches: 0,
+    residentGaussians: 0,
+    activeGaussians: 0,
+    pinnedGaussians: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    evictedGaussians: 0,
+  });
+  try {
+    store.setFrontendCapabilities(capabilities, camera, 16, 16);
+    const cap = backend.sent[0]!;
+    backend.emit({
+      command: cap,
+      durationMs: 0,
+      isFinal: false,
+      payload: {
+        type: "capabilities-accepted",
+        protocolVersion: 2,
+        supportsLodRecheck: true,
+      },
+    });
+    backend.emit({
+      command: cap,
+      durationMs: 0,
+      isFinal: true,
+      metrics: metrics(1),
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    store.updateLod(camera);
+    const first = backend.sent.at(-1)!;
+    expect(first.type).toBe("set-camera");
+    camera.position.x = 10;
+    store.updateLod(camera);
+    backend.emit({
+      command: first,
+      durationMs: 0,
+      isFinal: true,
+      metrics: metrics(2, 10),
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(backend.sent.filter((c) => c.type === "recheck-lod")).toHaveLength(
+      0,
+    );
+    const latest = backend.sent.at(-1)!;
+    expect(latest.type).toBe("set-camera");
+    backend.emit({
+      command: latest,
+      durationMs: 0,
+      isFinal: true,
+      metrics: metrics(3, 10),
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(backend.sent.at(-1)).toMatchObject({
+      type: "recheck-lod",
+      cameraRevision: 3,
+    });
+    expect(backend.sent.filter((c) => c.type === "recheck-lod")).toHaveLength(
+      1,
+    );
+  } finally {
+    store.dispose();
+    vi.useRealTimers();
+  }
 });

@@ -9,6 +9,8 @@ export interface GaussianMipmapSelectionStats {
 }
 export type GaussianStoreSlotRange = SlotRange;
 export interface GaussianStorePackStats {
+    /** Latest view requested locally; backend may still be draining an older transaction. */
+    readonly requestedCameraRevision?: number;
     readonly backendMetrics?: BackendMetrics;
     readonly layoutVersion?: number;
     readonly fullRebuild: boolean;

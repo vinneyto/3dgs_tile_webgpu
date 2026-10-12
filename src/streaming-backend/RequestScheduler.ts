@@ -65,9 +65,15 @@ export class SerialRequestScheduler implements RequestScheduler {
 
       const pending = { command, resolve, reject };
       const prefetch = this.queue.findIndex(
-        (p) => p.command.type === "prefetch-cache",
+        (p) =>
+          p.command.type === "prefetch-cache" ||
+          p.command.type === "recheck-lod",
       );
-      if (command.type !== "prefetch-cache" && prefetch >= 0)
+      if (
+        command.type !== "prefetch-cache" &&
+        command.type !== "recheck-lod" &&
+        prefetch >= 0
+      )
         this.queue.splice(prefetch, 0, pending);
       else this.queue.push(pending);
       this.pump();

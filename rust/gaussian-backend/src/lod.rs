@@ -1,41 +1,52 @@
 use crate::protocol::LodConfig;
-use ahash::{AHashMap, AHashSet};
+use ahash::AHashSet;
 use glam::{Vec3, Vec4};
 
-/// History belongs to a tree generation, independent of its resident GPU slots.
+/// Refined state describes the committed cut, never a preparation candidate.
 #[derive(Default)]
 pub(crate) struct LodHistory {
     refined: AHashSet<usize>,
-    downgrade_at: AHashMap<usize, f64>,
+    required: AHashSet<usize>,
+    weak: AHashSet<usize>,
+    stable_at: f64,
 }
 impl LodHistory {
-    pub fn score(
+    pub fn prepare(
         &mut self,
-        node: usize,
-        raw: f32,
-        children: &[usize],
+        parents: &[Option<usize>],
         config: &LodConfig,
-        now: f64,
-    ) -> f32 {
-        if !self.refined.contains(&node) || raw >= config.downgrade_threshold {
-            self.downgrade_at.remove(&node);
-            // A previously refined branch stays refined in the hysteresis band.
-            return if self.refined.contains(&node) {
-                raw.max(1.0001)
-            } else {
-                raw
-            };
+        stable_at: f64,
+        mut raw_score: impl FnMut(usize) -> f32,
+    ) {
+        self.stable_at = stable_at;
+        self.weak.clear();
+        self.required.clear();
+        // Keep the hysteresis band, including ancestors needed to reach strong
+        // committed descendants. Weak levels share the camera's one deadline.
+        for &node in &self.refined {
+            if raw_score(node) < config.downgrade_threshold {
+                continue;
+            }
+            let mut current = Some(node);
+            while let Some(i) = current {
+                if !self.required.insert(i) {
+                    break;
+                }
+                current = parents[i];
+            }
         }
-        let deadline = self
-            .downgrade_at
-            .entry(node)
-            .or_insert(now + config.downgrade_delay_ms);
-        if config.downgrade_delay_ms > 0.0 && children.iter().any(|c| self.refined.contains(c)) {
-            // Collapse the finest branches first, then their parents on later ticks.
-            *deadline = deadline.max(now + config.downgrade_step_ms);
+    }
+
+    pub fn score(&mut self, node: usize, raw: f32, now: f64) -> f32 {
+        if !self.refined.contains(&node) {
+            return raw;
         }
-        if now < *deadline {
-            1.0001
+        if self.required.contains(&node) {
+            return raw.max(1.0001);
+        }
+        if now < self.stable_at {
+            self.weak.insert(node);
+            raw.max(1.0001)
         } else {
             raw
         }
@@ -52,33 +63,12 @@ impl LodHistory {
                 parent = parents[i];
             }
         }
-        // Capacity pressure may coarsen a branch before its grace period ends.
-        self.downgrade_at.retain(|node, _| refined.contains(node));
-        // A weak ancestor cannot collapse while a descendant still needs detail.
-        // Wait for a new view change, rather than waking indefinitely for that ancestor.
-        let stable: Vec<_> = refined
-            .iter()
-            .filter(|node| !self.downgrade_at.contains_key(node))
-            .copied()
-            .collect();
-        for node in stable {
-            let mut parent = parents[node];
-            while let Some(i) = parent {
-                if self.downgrade_at.remove(&i).is_none() {
-                    break;
-                }
-                parent = parents[i];
-            }
-        }
+        self.weak.retain(|node| refined.contains(node));
         self.refined = refined;
     }
 
     pub fn recheck_after(&self, now: f64) -> Option<f64> {
-        self.downgrade_at
-            .values()
-            .copied()
-            .reduce(f64::min)
-            .map(|deadline| (deadline - now).max(1.0))
+        (!self.weak.is_empty()).then(|| (self.stable_at - now).max(1.0))
     }
 }
 
@@ -114,44 +104,54 @@ pub(crate) fn frustum_weight(
 mod tests {
     use super::*;
     #[test]
-    fn upgrades_are_immediate_and_only_continuously_weak_detail_downgrades() {
-        let config = LodConfig::default();
+    fn hysteresis_and_one_deadline_keep_detail_until_the_camera_settles() {
+        let c = LodConfig::default();
+        let parents = [None, Some(0), Some(0)];
         let mut h = LodHistory::default();
-        assert_eq!(h.score(0, 1.2, &[1, 2], &config, 0.), 1.2);
-        h.commit(&[1, 2], &[None, Some(0), Some(0)]);
-        assert!(h.score(0, 0.8, &[1, 2], &config, 100.) > 1.);
+        h.prepare(&parents, &c, 400., |_| 1.2);
+        assert_eq!(h.score(0, 1.2, 0.), 1.2);
+        h.commit(&[1, 2], &parents);
+        h.prepare(&parents, &c, 500., |_| 0.8);
+        assert!(h.score(0, 0.8, 100.) > 1.);
         assert_eq!(h.recheck_after(100.), None);
-        assert!(h.score(0, 0., &[1, 2], &config, 200.) > 1.);
+        h.prepare(&parents, &c, 600., |_| 0.);
+        assert!(h.score(0, 0., 200.) > 1.);
         assert_eq!(h.recheck_after(200.), Some(400.));
-        assert!(h.score(0, 0., &[1, 2], &config, 599.) > 1.);
-        // Returning into the hysteresis band cancels the old downgrade deadline.
-        assert!(h.score(0, 0.8, &[1, 2], &config, 600.) > 1.);
+        assert!(h.score(0, 0., 599.) > 1.);
+        // A new camera view restarts the shared grace, and the band cancels it.
+        h.prepare(&parents, &c, 1000., |_| 0.8);
+        assert!(h.score(0, 0.8, 600.) > 1.);
         assert_eq!(h.recheck_after(600.), None);
-        assert!(h.score(0, 0., &[1, 2], &config, 700.) > 1.);
-        assert_eq!(h.score(0, 0., &[1, 2], &config, 1100.), 0.);
-        h.commit(&[0], &[None, Some(0), Some(0)]);
+        h.prepare(&parents, &c, 1100., |_| 0.);
+        assert!(h.score(0, 0., 700.) > 1.);
+        assert_eq!(h.score(0, 0., 1100.), 0.);
+        h.commit(&[0], &parents);
         assert_eq!(h.recheck_after(1100.), None);
-        assert_eq!(h.score(0, 1.2, &[1, 2], &config, 1101.), 1.2);
+        assert_eq!(h.score(0, 1.2, 1101.), 1.2);
     }
     #[test]
-    fn downgrade_collapses_one_tree_level_per_step_and_budget_can_override_history() {
+    fn all_weak_levels_collapse_at_the_same_deadline_and_history_waits_for_commit() {
         let c = LodConfig::default();
-        let parents = [None, Some(0), Some(0), Some(1), Some(1)];
+        let parents = [None, Some(0), Some(0), Some(1), Some(1), Some(3), Some(3)];
         let mut h = LodHistory::default();
-        h.commit(&[2, 3, 4], &parents);
-        assert!(h.score(0, 0., &[1, 2], &c, 0.) > 1.);
-        assert!(h.score(1, 0., &[3, 4], &c, 0.) > 1.);
-        assert!(h.score(0, 0., &[1, 2], &c, 400.) > 1.);
-        assert_eq!(h.score(1, 0., &[3, 4], &c, 400.), 0.);
-        h.commit(&[1, 2], &parents);
-        assert_eq!(h.recheck_after(400.), Some(100.));
-        assert!(h.score(0, 0., &[1, 2], &c, 499.) > 1.);
-        assert_eq!(h.score(0, 0., &[1, 2], &c, 500.), 0.);
+        h.commit(&[2, 4, 5, 6], &parents);
+        h.prepare(&parents, &c, 400., |_| 0.);
+        for node in [0, 1, 3] {
+            assert!(h.score(node, 0., 399.) > 1.);
+        }
+        assert_eq!(h.recheck_after(399.), Some(1.));
+        // No mandatory child-first ticks or intermediate committed cuts.
+        for node in [0, 1, 3] {
+            assert_eq!(h.score(node, 0., 400.), 0.);
+        }
+        assert!(h.refined.contains(&3));
         h.commit(&[0], &parents);
-        assert_eq!(h.recheck_after(500.), None);
-        h.commit(&[2, 3, 4], &parents);
-        h.score(1, 0., &[3, 4], &c, 600.);
-        // A forced budget cut discards pending timers rather than retaining extra slots.
+        assert!(h.refined.is_empty());
+        assert_eq!(h.recheck_after(400.), None);
+        // Capacity may force an earlier coherent cut without retaining timers.
+        h.commit(&[2, 4, 5, 6], &parents);
+        h.prepare(&parents, &c, 1000., |_| 0.);
+        h.score(3, 0., 600.);
         h.commit(&[0], &parents);
         assert_eq!(h.recheck_after(600.), None);
     }
@@ -190,19 +190,19 @@ mod tests {
         }
     }
     #[test]
-    fn a_weak_ancestor_with_required_descendant_detail_does_not_poll_forever() {
+    fn strong_descendants_protect_weak_ancestors_without_an_endless_recheck() {
         let c = LodConfig::default();
         let parents = [None, Some(0), Some(0), Some(1), Some(1)];
         let mut h = LodHistory::default();
         h.commit(&[2, 3, 4], &parents);
-        assert!(h.score(0, 0., &[1, 2], &c, 0.) > 1.);
-        assert_eq!(h.score(1, 2., &[3, 4], &c, 0.), 2.);
-        h.commit(&[2, 3, 4], &parents);
-        assert_eq!(h.recheck_after(0.), None);
-        // A later view makes the descendant weak too: normal delayed coarsening resumes.
-        h.score(0, 0., &[1, 2], &c, 100.);
-        h.score(1, 0., &[3, 4], &c, 100.);
-        h.commit(&[2, 3, 4], &parents);
-        assert_eq!(h.recheck_after(100.), Some(400.));
+        h.prepare(&parents, &c, 400., |i| if i == 1 { 2. } else { 0. });
+        assert!(h.score(0, 0., 0.) > 1.);
+        assert!(h.score(0, 0., 1000.) > 1.);
+        assert_eq!(h.recheck_after(1000.), None);
+        h.prepare(&parents, &c, 1400., |_| 0.);
+        h.score(0, 0., 1000.);
+        h.score(1, 0., 1000.);
+        assert_eq!(h.recheck_after(1000.), Some(400.));
+        assert_eq!(h.score(0, 0., 1400.), 0.);
     }
 }

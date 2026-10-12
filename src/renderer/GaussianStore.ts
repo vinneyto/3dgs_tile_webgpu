@@ -123,6 +123,8 @@ export class GaussianStore implements GaussianRenderStore {
   private packStats: GaussianStorePackStats | null = null;
   private disposed = false;
   private prefetchSupported = false;
+  private lodRecheckSupported = false;
+  private requestedCameraRevision = 0;
   private prefetchScheduled = false;
   private lodRecheckTimer: ReturnType<typeof setTimeout> | null = null;
   private awaitingCapabilities = false;
@@ -169,7 +171,12 @@ export class GaussianStore implements GaussianRenderStore {
     return this.data !== null && !this.awaitingCapabilities;
   }
   get lastPackStats(): GaussianStorePackStats | null {
-    return this.packStats;
+    return this.packStats
+      ? {
+          ...this.packStats,
+          requestedCameraRevision: this.requestedCameraRevision,
+        }
+      : null;
   }
   get lastCommandError(): Error | null {
     return this.commandError;
@@ -356,6 +363,8 @@ export class GaussianStore implements GaussianRenderStore {
       viewportWidth,
       viewportHeight,
     );
+    this.requestedCameraRevision = command.sceneRevision;
+    this.clearLodRecheck();
     this.capabilitiesAcknowledged.set(command.id, false);
     const rejectCapabilities = (error: unknown): void => {
       this.frontendCapabilities = previous;
@@ -429,6 +438,7 @@ export class GaussianStore implements GaussianRenderStore {
     const cameraChanged = cameraKey !== this.lastCameraView;
     if (cameraChanged || changedTransforms.length > 0) {
       const sceneRevision = ++this.revision;
+      this.clearLodRecheck();
       for (const [cloudId, worldMatrix] of changedTransforms) {
         this.submit(
           createSetCloudTransformCommand(
@@ -441,6 +451,7 @@ export class GaussianStore implements GaussianRenderStore {
         this.lastCloudTransforms.set(cloudId, JSON.stringify(worldMatrix));
       }
       if (cameraChanged) {
+        this.requestedCameraRevision = sceneRevision;
         this.submit(
           createSetCameraCommand(
             crypto.randomUUID(),
@@ -554,6 +565,17 @@ export class GaussianStore implements GaussianRenderStore {
 
   private readonly handleResponse = (response: BackendResponse): void => {
     if (this.disposed) return;
+    // Custom integrations may submit camera commands directly to the public
+    // scheduler. Adopt their newer accepted revision, while a locally queued
+    // newer view still wins over an older in-flight response.
+    const acceptedCameraRevision = response.metrics?.cameraRevision;
+    if (
+      acceptedCameraRevision !== undefined &&
+      acceptedCameraRevision > this.requestedCameraRevision
+    ) {
+      this.requestedCameraRevision = acceptedCameraRevision;
+      this.revision = Math.max(this.revision, acceptedCameraRevision);
+    }
     if (
       this.capabilitiesAcknowledged.has(response.command.id) &&
       response.payload?.type === "capabilities-accepted" &&
@@ -561,13 +583,16 @@ export class GaussianStore implements GaussianRenderStore {
     ) {
       this.capabilitiesAcknowledged.set(response.command.id, true);
     }
-    if (response.payload?.type === "capabilities-accepted")
+    if (response.payload?.type === "capabilities-accepted") {
       this.prefetchSupported = response.payload.supportsCachePrefetch === true;
+      this.lodRecheckSupported = response.payload.supportsLodRecheck === true;
+    }
     if (response.payload)
       this.handlePayload(response.payload, response.command.id);
     if (response.metrics && this.packStats)
       this.packStats = {
         ...this.packStats,
+        requestedCameraRevision: this.requestedCameraRevision,
         backendMetrics: response.metrics,
         planningMs: response.metrics.selectionMs,
         slotUpdateMs:
@@ -598,7 +623,10 @@ export class GaussianStore implements GaussianRenderStore {
       if (!response.error && response.metrics?.prefetchPending)
         this.schedulePrefetch();
       if (!response.error)
-        this.scheduleLodRecheck(response.metrics?.lodRecheckAfterMs);
+        this.scheduleLodRecheck(
+          response.metrics?.lodRecheckAfterMs,
+          response.metrics?.cameraRevision,
+        );
     }
   };
 
@@ -631,18 +659,33 @@ export class GaussianStore implements GaussianRenderStore {
     }, 0);
   }
 
-  private scheduleLodRecheck(delay?: number): void {
+  private clearLodRecheck(): void {
     if (this.lodRecheckTimer !== null) clearTimeout(this.lodRecheckTimer);
     this.lodRecheckTimer = null;
-    if (this.disposed || delay === undefined || !Number.isFinite(delay)) return;
+  }
+
+  private scheduleLodRecheck(delay?: number, cameraRevision?: number): void {
+    // Older in-flight responses may finish after a newer view was requested.
+    // Drain their transaction normally, but never schedule its obsolete target.
+    if (cameraRevision !== this.requestedCameraRevision) return;
+    this.clearLodRecheck();
+    if (
+      !this.lodRecheckSupported ||
+      this.disposed ||
+      delay === undefined ||
+      !Number.isFinite(delay)
+    )
+      return;
     this.lodRecheckTimer = setTimeout(
       () => {
         this.lodRecheckTimer = null;
-        if (this.disposed) return;
+        if (this.disposed || cameraRevision !== this.requestedCameraRevision)
+          return;
         this.submit({
-          type: "prefetch-cache",
+          type: "recheck-lod",
           id: crypto.randomUUID(),
-          latestKey: "prefetch-cache",
+          latestKey: "recheck-lod",
+          cameraRevision,
         });
       },
       Math.max(1, Math.ceil(delay)),

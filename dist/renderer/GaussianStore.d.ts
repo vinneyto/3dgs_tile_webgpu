@@ -52,6 +52,8 @@ export declare class GaussianStore implements GaussianRenderStore {
     private packStats;
     private disposed;
     private prefetchSupported;
+    private lodRecheckSupported;
+    private requestedCameraRevision;
     private prefetchScheduled;
     private lodRecheckTimer;
     private awaitingCapabilities;
@@ -91,6 +93,7 @@ export declare class GaussianStore implements GaussianRenderStore {
     private readonly handleFailure;
     private readonly handleResponse;
     private schedulePrefetch;
+    private clearLodRecheck;
     private scheduleLodRecheck;
     private handlePayload;
     private createData;

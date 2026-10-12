@@ -20,7 +20,7 @@ import { packedStore } from "../test/helpers/packedStore";
 
 window.runQa = async () => {
   const renderer = new WebGPURenderer();
-  renderer.setSize(64, 64);
+  renderer.setSize(16, 16);
   await renderer.init();
   const device = renderer.backend.device;
   const errors = [];
@@ -34,9 +34,27 @@ window.runQa = async () => {
   const build = WGSLNodeBuilder.prototype.build;
   WGSLNodeBuilder.prototype.build = function (...a) {
     builds++;
+    const node = this.object;
+    if (node?.isComputeNode) {
+      if (builtNodes.has(node.id)) existingNodesRebuilt++;
+      builtNodes.add(node.id);
+    }
     return build.apply(this, a);
   };
   let fixture, pass, reference;
+  const explicitWarmup = new URLSearchParams(location.search).has("warmup");
+  const dispatch = GPUComputePassEncoder.prototype.dispatchWorkgroups;
+  let zeroDispatches = 0;
+  GPUComputePassEncoder.prototype.dispatchWorkgroups = function (
+    x,
+    y = 1,
+    z = 1,
+  ) {
+    if (x === 0 || y === 0 || z === 0) zeroDispatches++;
+    return dispatch.call(this, x, y, z);
+  };
+  const builtNodes = new Set();
+  let existingNodesRebuilt = 0;
   const originalMethods = new Map();
   try {
     for (const [method, counter] of [
@@ -91,21 +109,27 @@ window.runQa = async () => {
       redrawStrategy: "auto",
       intersectionReadbackInterval: 0,
     });
-    await pass.warmup({ geometryFormat: "float32" });
-    const graph = pass.pipeline;
-    const ids = graph.getComputeNodes().map((n) => n.id);
-    const warmed = counts(),
-      records = [];
+    if (explicitWarmup) await pass.warmup({ geometryFormat: "float32" });
     fixture.request();
+    const records = [];
+    let firstEncodedFrameMs;
+    const confirmationStart = performance.now();
     const settle = async () => {
       for (let i = 0; i < 8; i++) {
+        const start = performance.now();
         pass.render();
+        if (firstEncodedFrameMs === undefined)
+          firstEncodedFrameMs = performance.now() - start;
         await pass.readStats();
         await new Promise((r) => setTimeout(r, 5));
         if (pass.getOutputStatus().fresh) break;
       }
     };
     await settle();
+    const firstConfirmedFrameMs = performance.now() - confirmationStart;
+    const graph = pass.pipeline;
+    const ids = graph.getComputeNodes().map((n) => n.id);
+    const warmed = counts();
     records.push({
       phase: "first",
       counts: counts(),
@@ -188,16 +212,26 @@ window.runQa = async () => {
     const stableNodes =
       pass.pipeline === graph &&
       graph.getComputeNodes().every((n, i) => n.id === ids[i]);
-    const stablePipelines = records.every(
-      (r) =>
-        r.counts.builds === warmed.builds &&
-        r.counts.modules === warmed.modules &&
-        r.counts.pipelines === warmed.pipelines,
-    );
+    const stablePipelines =
+      !explicitWarmup ||
+      records.every(
+        (r) =>
+          r.counts.builds === warmed.builds &&
+          r.counts.modules === warmed.modules &&
+          r.counts.pipelines === warmed.pipelines,
+      );
+    const existingNodesRebuiltBeforeReference = existingNodesRebuilt;
     const result = {
+      explicitWarmup,
+      zeroDispatches,
+      firstEncodedFrameMs,
+      firstConfirmedFrameMs,
+      existingNodesRebuilt: existingNodesRebuiltBeforeReference,
       ok:
         stableNodes &&
         stablePipelines &&
+        existingNodesRebuiltBeforeReference === 0 &&
+        (explicitWarmup || zeroDispatches === 0) &&
         maxDifference === 0 &&
         maxAlpha > 0 &&
         minDepth < 1 &&
@@ -212,6 +246,7 @@ window.runQa = async () => {
     };
     return result;
   } finally {
+    GPUComputePassEncoder.prototype.dispatchWorkgroups = dispatch;
     WGSLNodeBuilder.prototype.build = build;
     for (const [method, original] of originalMethods) device[method] = original;
     pass?.dispose();

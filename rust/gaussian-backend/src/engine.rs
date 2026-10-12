@@ -472,6 +472,13 @@ pub struct EngineTimings {
     pub cache_misses: usize,
     pub evicted_gaussians: usize,
     pub prefetch_pending: bool,
+    pub camera_revision: u32,
+    pub candidate_revision: u32,
+    pub candidate_camera_revision: u32,
+    pub published_cut_revision: u32,
+    pub published_cuts: u32,
+    pub selection_reason: String,
+    pub selection_budget: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lod_recheck_after_ms: Option<f64>,
 }
@@ -517,6 +524,10 @@ pub struct Engine {
     projection: Mat4,
     viewport: [u32; 2],
     scene_revision: u32,
+    camera_revision: u32,
+    selection_revision: u32,
+    published_cut_revision: u32,
+    view_stable_at: f64,
     layout_version: u32,
     content_version: u32,
     packed: Option<Packed>,
@@ -554,6 +565,7 @@ impl Engine {
                 ensure!(bytes >= 4, "Upload batch must allow at least four bytes");
             }
         }
+        let view_stable_at = clock_ms() + config.lod.downgrade_delay_ms;
         Ok(Self {
             config,
             clouds: BTreeMap::new(),
@@ -563,6 +575,10 @@ impl Engine {
             projection: Mat4::IDENTITY,
             viewport: [1, 1],
             scene_revision: 0,
+            camera_revision: 0,
+            selection_revision: 0,
+            published_cut_revision: 0,
+            view_stable_at,
             layout_version: 0,
             content_version: 0,
             packed: None,
@@ -585,10 +601,42 @@ impl Engine {
             self.pending_upload.is_none(),
             "Previous upload must be drained"
         );
-        self.timings = EngineTimings::default();
+        self.timings = EngineTimings {
+            camera_revision: self.camera_revision,
+            candidate_revision: self.selection_revision,
+            candidate_camera_revision: self.camera_revision,
+            published_cut_revision: self.published_cut_revision,
+            active_gaussians: self.packed.as_ref().map_or(0, |p| p.count),
+            resident_gaussians: self.packed.as_ref().map_or(0, |p| p.slots.to_slot.len()),
+            selection_reason: match &command {
+                Command::Camera(_) => "camera",
+                Command::Recheck(_) => "lod-recheck",
+                Command::Prefetch => "cache-prefetch",
+                Command::Load(_) => "load",
+                Command::Unload(_) => "unload",
+                Command::Capabilities(_) => "capabilities",
+                _ => "content-change",
+            }
+            .into(),
+            ..Default::default()
+        };
         let mut output = Vec::new();
         match command {
             Command::Prefetch => return self.prefetch(),
+            Command::Recheck(c) => {
+                let now = clock_ms();
+                self.timings.lod_recheck_after_ms = self.lod_recheck_after(now);
+                if c.camera_revision != self.camera_revision {
+                    self.timings.selection_reason = "stale-lod-recheck".into();
+                    return Ok(Vec::new());
+                }
+                return if self.timings.lod_recheck_after_ms.is_some() && now >= self.view_stable_at
+                {
+                    self.pack()
+                } else {
+                    Ok(Vec::new())
+                };
+            }
             Command::Load(c) => {
                 ensure!(!self.clouds.contains_key(&c.cloud_id), "Duplicate cloud");
                 let options = c.options.unwrap_or_default();
@@ -687,19 +735,32 @@ impl Engine {
             }
             Command::Transform(c) => {
                 let world = matrix(&c.world_matrix, true)?;
-                self.clouds
-                    .get_mut(&c.cloud_id)
-                    .context("Unknown cloud")?
-                    .world = world;
+                let cloud = self.clouds.get_mut(&c.cloud_id).context("Unknown cloud")?;
+                if cloud.world != world {
+                    self.view_stable_at = clock_ms() + self.config.lod.downgrade_delay_ms;
+                }
+                cloud.world = world;
                 self.scene_revision = self.scene_revision.max(c.scene_revision);
             }
             Command::Camera(c) => {
+                if c.scene_revision < self.camera_revision {
+                    self.timings.selection_reason = "stale-camera".into();
+                    return Ok(Vec::new());
+                }
                 ensure!(
                     c.viewport_width > 0 && c.viewport_height > 0,
                     "Viewport must be positive"
                 );
                 let world = matrix(&c.world_matrix, true)?;
                 let projection = matrix(&c.projection_matrix, false)?;
+                if self.camera_world != world
+                    || self.projection != projection
+                    || self.viewport != [c.viewport_width, c.viewport_height]
+                {
+                    self.view_stable_at = clock_ms() + self.config.lod.downgrade_delay_ms;
+                }
+                self.camera_revision = c.scene_revision;
+                self.timings.camera_revision = self.camera_revision;
                 self.camera_world = world;
                 self.projection = projection;
                 self.viewport = [c.viewport_width, c.viewport_height];
@@ -728,6 +789,14 @@ impl Engine {
                 for (id, world) in transforms {
                     self.clouds.get_mut(id).unwrap().world = world;
                 }
+                if self.camera_world != world
+                    || self.projection != projection
+                    || self.viewport != [c.viewport_width, c.viewport_height]
+                {
+                    self.view_stable_at = clock_ms() + self.config.lod.downgrade_delay_ms;
+                }
+                self.camera_revision = c.scene_revision;
+                self.timings.camera_revision = self.camera_revision;
                 self.camera_world = world;
                 self.projection = projection;
                 self.viewport = [c.viewport_width, c.viewport_height];
@@ -736,6 +805,7 @@ impl Engine {
                 output.push(Payload::CapabilitiesAccepted {
                     protocol_version: 2,
                     supports_cache_prefetch: true,
+                    supports_lod_recheck: true,
                 });
             }
             Command::Write(c) => {
@@ -883,12 +953,9 @@ impl Engine {
                     .max(view.z_axis.truncate().length());
                 let pixels = self.projection.y_axis.y.abs() * self.viewport[1] as f32 * 0.5;
                 let clip = self.projection * view;
-                let mut history = cloud.lod_history.borrow_mut();
-                let indices = cut_from(
-                    tree,
-                    base,
-                    allowance,
-                    |i| {
+                let mut raw_scores = AHashMap::new();
+                let mut raw_score = |i: usize| {
+                    *raw_scores.entry(i).or_insert_with(|| {
                         let (center, feature) = cloud.tree_features[i];
                         let clip_w = (clip * center.extend(1.0)).w;
                         let weight = frustum_weight(
@@ -907,19 +974,25 @@ impl Engine {
                         } else {
                             size * pixels
                         };
-                        history.score(
-                            i,
-                            projected * weight,
-                            &tree.inner.children[i],
-                            &self.config.lod,
-                            now,
-                        )
-                    },
+                        projected * weight
+                    })
+                };
+                let mut history = cloud.lod_history.borrow_mut();
+                history.prepare(
+                    &cloud.tree_parents,
+                    &self.config.lod,
+                    self.view_stable_at,
+                    &mut raw_score,
+                );
+                let indices = cut_from(
+                    tree,
+                    base,
+                    allowance,
+                    |i| history.score(i, raw_score(i), now),
                     |_| true,
                     1.0,
                     true,
                 );
-                history.commit(&indices, &cloud.tree_parents);
                 let extra = indices
                     .iter()
                     .filter(|i| base.binary_search(i).is_err())
@@ -988,6 +1061,10 @@ impl Engine {
         } else {
             required.saturating_mul(2).min(budget).max(1)
         };
+        self.selection_revision += 1;
+        self.timings.candidate_revision = self.selection_revision;
+        self.timings.candidate_camera_revision = self.camera_revision;
+        self.timings.selection_budget = capacity.min(available).max(1);
         let selection_now = clock_ms();
         let (selected, pinned, states) = self.select(capacity.min(available).max(1), selection_now);
         self.timings.lod_recheck_after_ms = self.lod_recheck_after(selection_now);
@@ -1307,7 +1384,7 @@ impl Engine {
         if !cap.supports_partial_buffer_updates {
             self.layout_version += 1;
             self.content_version += 1;
-            return Ok(vec![Payload::BuffersReplaced {
+            let payload = Payload::BuffersReplaced {
                 scene_revision: self.scene_revision,
                 layout_version: self.layout_version,
                 content_version: self.content_version,
@@ -1323,7 +1400,9 @@ impl Engine {
                 sh_format: "rgb8e8".into(),
                 attributes: packed.attributes.clone(),
                 clouds: packed.clouds.clone(),
-            }]);
+            };
+            self.commit_cut();
+            return Ok(vec![payload]);
         }
         let bytes_per_slot: usize = packed
             .attributes
@@ -1391,13 +1470,6 @@ impl Engine {
     fn prefetch(&mut self) -> Result<Vec<Payload>> {
         let now = clock_ms();
         self.timings.lod_recheck_after_ms = self.lod_recheck_after(now);
-        if self
-            .timings
-            .lod_recheck_after_ms
-            .is_some_and(|delay| delay <= 1.0)
-        {
-            return self.pack();
-        }
         let Some(cap) = &self.capabilities else {
             return Ok(Vec::new());
         };
@@ -1505,6 +1577,27 @@ impl Engine {
         }
         Ok(Vec::new())
     }
+    fn commit_cut(&mut self) {
+        let Some(packed) = &self.packed else {
+            return;
+        };
+        let mut cuts = AHashMap::<u32, Vec<usize>>::new();
+        for key in &packed.active {
+            cuts.entry(key.cloud_id).or_default().push(key.node_id);
+        }
+        for cloud in self.clouds.values() {
+            if cloud.tree.is_some() {
+                cloud.lod_history.borrow_mut().commit(
+                    cuts.get(&cloud.object_id).map_or(&[], |v| v.as_slice()),
+                    &cloud.tree_parents,
+                );
+            }
+        }
+        self.published_cut_revision = self.selection_revision;
+        self.timings.published_cut_revision = self.published_cut_revision;
+        self.timings.published_cuts += 1;
+        self.timings.lod_recheck_after_ms = self.lod_recheck_after(clock_ms());
+    }
     fn lod_recheck_after(&self, now: f64) -> Option<f64> {
         self.clouds
             .values()
@@ -1532,7 +1625,20 @@ impl Engine {
             let commit = end == a.removed.len() + a.added.len();
             let base = self.content_version;
             self.content_version += 1;
+            let publishes_target = commit && !a.pending;
             let payload = Payload::BuffersActivated {
+                camera_revision: self.camera_revision,
+                candidate_revision: self.selection_revision,
+                published_cut_revision: if publishes_target {
+                    self.selection_revision
+                } else {
+                    self.published_cut_revision
+                },
+                reason: if self.timings.evicted_gaussians > 0 {
+                    "capacity-pressure".into()
+                } else {
+                    self.timings.selection_reason.clone()
+                },
                 scene_revision: self.scene_revision,
                 layout_version: self.layout_version,
                 base_content_version: base,
@@ -1552,6 +1658,9 @@ impl Engine {
                 if plan.cursor == plan.slots.len() && plan.after.is_none() {
                     self.pending_upload = None;
                 }
+            }
+            if publishes_target {
+                self.commit_cut();
             }
             return Some(payload);
         }

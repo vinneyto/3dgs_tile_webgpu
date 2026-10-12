@@ -81,6 +81,8 @@ pub enum AttributeSource {
 pub enum Command {
     #[serde(rename = "prefetch-cache")]
     Prefetch,
+    #[serde(rename = "recheck-lod")]
+    Recheck(RecheckCommand),
     #[serde(rename = "load-cloud-from-buffer")]
     Load(LoadCommand),
     #[serde(rename = "unload-cloud")]
@@ -97,6 +99,11 @@ pub enum Command {
     Camera(CameraCommand),
     #[serde(rename = "set-frontend-capabilities")]
     Capabilities(CapabilitiesCommand),
+}
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecheckCommand {
+    pub camera_revision: u32,
 }
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -279,6 +286,7 @@ pub enum Payload {
     CapabilitiesAccepted {
         protocol_version: u32,
         supports_cache_prefetch: bool,
+        supports_lod_recheck: bool,
     },
     CloudLoaded {
         cloud_id: String,
@@ -327,6 +335,10 @@ pub enum Payload {
         clouds: Vec<CloudState>,
     },
     BuffersActivated {
+        camera_revision: u32,
+        candidate_revision: u32,
+        published_cut_revision: u32,
+        reason: String,
         scene_revision: u32,
         layout_version: u32,
         base_content_version: u32,

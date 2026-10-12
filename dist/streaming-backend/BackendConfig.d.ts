@@ -5,7 +5,7 @@ export interface BackendStreamingConfig {
 export interface BackendLodConfig {
     /** Hold weak existing detail before coarsening; default 400 ms. Zero disables the delay. */
     downgradeDelayMs?: number;
-    /** Interval between collapsing successive tree levels; default 100 ms. */
+    /** @deprecated Accepted for compatibility; downgrade levels now share one deadline. */
     downgradeStepMs?: number;
     /** Existing branches coarsen below this weighted pixel size; refinement starts above 1. Default 0.7. */
     downgradeThreshold?: number;

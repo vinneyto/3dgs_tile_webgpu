@@ -8,7 +8,8 @@
     <h1>Stable compute pipeline regression</h1>
     <p>
       Requires WebGPU. Loads three synthetic models, grows resources and changes
-      resolution, then compares color and depth with a fresh pass.
+      resolution, then compares color and depth with a fresh pass. Runs without
+      explicit warmup by default; add ?warmup=1 for the legacy comparison.
     </p>
     <button>Run</button>
     <pre></pre>

@@ -8,9 +8,11 @@ import type { WriteAttributeRangeCommand } from "./WriteAttributeRangeCommand";
 import type { SetCameraCommand } from "./SetCameraCommand";
 import type { SetFrontendCapabilitiesCommand } from "./SetFrontendCapabilitiesCommand";
 
+import type { RecheckLodCommand } from "./RecheckLodCommand";
 import type { PrefetchCacheCommand } from "./PrefetchCacheCommand";
 
 export type BackendCommand =
+  | RecheckLodCommand
   | PrefetchCacheCommand
   | LoadCloudCommand
   | LoadCloudFromBufferCommand

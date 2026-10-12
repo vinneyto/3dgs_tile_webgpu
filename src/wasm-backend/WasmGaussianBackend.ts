@@ -184,6 +184,7 @@ export class WasmGaussianBackend implements GaussianBackend {
             metrics.uploadedBytes += payload.activeSlots?.byteLength ?? 0;
           metrics.uploadBatches += 1;
         }
+        if (metrics) Object.assign(metrics, engine.timings());
         emit(payload);
         if (upload) {
           const waitStart = performance.now();
@@ -217,6 +218,7 @@ export class WasmGaussianBackend implements GaussianBackend {
       }
       this.active = null;
       this.activeId = null;
+      if (metrics) Object.assign(metrics, engine.timings());
       emit(undefined, undefined, true);
     } catch (e) {
       this.active = null;
