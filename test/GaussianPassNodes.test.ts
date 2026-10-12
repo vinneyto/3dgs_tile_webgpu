@@ -32,6 +32,7 @@ import { gaussianProjectionResult } from "../src/renderer/nodes/GaussianProjecti
 const TEST_LIMITS = {
   maxStorageBufferBindingSize: 1_073_741_824,
   maxBufferSize: 1_073_741_824,
+  maxComputeWorkgroupsPerDimension: 65_535,
   maxStorageBuffersPerShaderStage:
     TEST_FRONTEND.maxStorageBuffersPerShaderStage,
 };
@@ -130,7 +131,7 @@ describe("GaussianPass node slots", () => {
 
     expect(store.hasPackedData).toBe(true);
     expect(store.maxGaussians).toBeGreaterThan(0);
-    expect(pass.intersectionCapacity).toBe(16);
+    expect(pass.intersectionCapacity).toBe(262_144);
     expect(pipeline.render).toHaveBeenCalledOnce();
   });
 
@@ -644,6 +645,7 @@ function createRenderer(): WebGPURenderer {
     getDrawingBufferSize: (target: { set(x: number, y: number): unknown }) =>
       target.set(32, 32),
     initRenderTarget: vi.fn(),
+    getArrayBufferAsync: vi.fn(() => new Promise<ArrayBuffer>(() => {})),
   } as unknown as WebGPURenderer;
 }
 

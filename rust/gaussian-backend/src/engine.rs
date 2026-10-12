@@ -587,7 +587,6 @@ impl Engine {
         );
         self.timings = EngineTimings::default();
         let mut output = Vec::new();
-        let atomic_update = matches!(&command, Command::Load(_) | Command::Unload(_));
         match command {
             Command::Prefetch => return self.prefetch(),
             Command::Load(c) => {
@@ -751,7 +750,7 @@ impl Engine {
             }
         }
         if self.capabilities.is_some() {
-            output.extend(self.pack(atomic_update)?);
+            output.extend(self.pack()?);
         }
         Ok(output)
     }
@@ -946,7 +945,7 @@ impl Engine {
         }
         (selected, pinned, states)
     }
-    fn pack(&mut self, atomic_update: bool) -> Result<Vec<Payload>> {
+    fn pack(&mut self) -> Result<Vec<Payload>> {
         let cap = self.capabilities.as_ref().unwrap();
         let (degree, extra, mut budget) = self.validate_layout(cap, None)?;
         let selection_start = clock_ms();
@@ -1037,10 +1036,6 @@ impl Engine {
         let keys: Vec<_> = requested.iter().map(|s| s.key).collect();
         let old_active = packed.active.clone();
         let old_active_slots = packed.active_slots.clone();
-        let old_pinned: Vec<_> = pinned
-            .iter()
-            .filter_map(|s| packed.slots.to_slot.get(&s.key).map(|&slot| (s.key, slot)))
-            .collect();
         self.timings.cache_hits = selected
             .iter()
             .filter(|s| {
@@ -1217,35 +1212,16 @@ impl Engine {
             .map(|(_, &slot)| slot)
             .collect();
         let removed_active = retained_active_slots.len() != old_active_slots.len();
-        let needs_fallback = compatible
+        let replaces_active_slots = compatible
             && old_active
                 .iter()
                 .zip(&old_active_slots)
                 .filter(|(key, _)| clouds.contains_key(&key.cloud_id))
                 .any(|(key, &slot)| packed.slots.owners.get(slot).copied().flatten() != Some(*key));
-        let fallback_slots: Vec<_> = if needs_fallback && !atomic_update {
-            old_pinned
-                .iter()
-                .filter(|(key, slot)| {
-                    packed.slots.owners.get(*slot).copied().flatten() == Some(*key)
-                })
-                .map(|(_, slot)| *slot)
-                .chain(
-                    old_active
-                        .iter()
-                        .zip(&old_active_slots)
-                        .filter(|(key, slot)| {
-                            self.clouds
-                                .values()
-                                .any(|c| c.object_id == key.cloud_id && c.tree.is_none())
-                                && packed.slots.owners.get(**slot).copied().flatten() == Some(**key)
-                        })
-                        .map(|(_, &slot)| slot),
-                )
-                .collect()
-        } else {
-            retained_active_slots.clone()
-        };
+        // Slot replacement is transactional for every command, including camera
+        // and delayed LOD updates. Keep the displayed cut until the target rows
+        // and indices can be committed together; a coarse preparation cut here
+        // would flash on every cache eviction during camera movement.
         let make_activation = |from: &[usize], to: &[usize], clouds, pending| {
             // Byte masks avoid rebuilding two large hash tables on every cut.
             // Include the old layout's tail when capacity has been reduced.
@@ -1280,36 +1256,27 @@ impl Engine {
             .iter()
             .map(|s| packed.slots.to_slot[&s.key])
             .collect();
-        let before =
-            (compatible && (removed_active || (needs_fallback && !atomic_update))).then(|| {
-                let mut counts = AHashMap::<u32, usize>::new();
-                if atomic_update {
-                    for key in &old_active {
-                        if clouds.contains_key(&key.cloud_id) {
-                            *counts.entry(key.cloud_id).or_default() += 1;
-                        }
-                    }
-                } else {
-                    for &slot in &fallback_slots {
-                        *counts
-                            .entry(packed.slots.owners[slot].unwrap().cloud_id)
-                            .or_default() += 1;
-                    }
+        let before = (compatible && removed_active).then(|| {
+            let mut counts = AHashMap::<u32, usize>::new();
+            for key in &old_active {
+                if clouds.contains_key(&key.cloud_id) {
+                    *counts.entry(key.cloud_id).or_default() += 1;
                 }
-                let clouds = states
-                    .iter()
-                    .map(|state| CloudState {
-                        rendered_count: counts.get(&state.object_id).copied().unwrap_or(0),
-                        ..state.clone()
-                    })
-                    .collect();
-                make_activation(&old_active_slots, &fallback_slots, clouds, true)
-            });
-        let after =
-            (!compatible || active_changed || needs_fallback || states_changed).then(|| {
+            }
+            let clouds = states
+                .iter()
+                .map(|state| CloudState {
+                    rendered_count: counts.get(&state.object_id).copied().unwrap_or(0),
+                    ..state.clone()
+                })
+                .collect();
+            make_activation(&old_active_slots, &retained_active_slots, clouds, true)
+        });
+        let after = (!compatible || active_changed || replaces_active_slots || states_changed)
+            .then(|| {
                 make_activation(
                     if compatible {
-                        &fallback_slots
+                        &retained_active_slots
                     } else if preserve_existing {
                         &old_active_slots
                     } else {
@@ -1392,7 +1359,7 @@ impl Engine {
             cursor: 0,
             batch,
             activation_batch: (max_bytes / 4).max(1),
-            defer_patches: atomic_update && needs_fallback,
+            defer_patches: replaces_active_slots,
             before,
             after,
         });
@@ -1429,7 +1396,7 @@ impl Engine {
             .lod_recheck_after_ms
             .is_some_and(|delay| delay <= 1.0)
         {
-            return self.pack(false);
+            return self.pack();
         }
         let Some(cap) = &self.capabilities else {
             return Ok(Vec::new());

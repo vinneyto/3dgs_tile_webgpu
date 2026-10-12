@@ -1,4 +1,10 @@
-import type { Camera, StorageTexture, WebGPURenderer } from "three/webgpu";
+import type {
+  Camera,
+  ComputeNode,
+  StorageBufferAttribute,
+  StorageTexture,
+  WebGPURenderer,
+} from "three/webgpu";
 import type { GaussianData } from "../GaussianData";
 import type { GaussianRenderStore } from "../GaussianRenderStore";
 import type {
@@ -18,6 +24,7 @@ import { RadixSorter } from "./RadixSorter";
 import { TileOffsetBuilder } from "./TileOffsetBuilder";
 import { TileRasterizer } from "./TileRasterizer";
 import { VisibleGaussianStage } from "./VisibleGaussianStage";
+import { StorageBindings } from "./StorageBindings";
 import { TILE_SIZE } from "./constants";
 import type {
   AntialiasMode,
@@ -39,9 +46,12 @@ export class TiledGaussianPipeline {
   readonly depthSorter: RadixSorter;
   readonly orderedTiles: DepthOrderedTileStage;
   readonly scan: ExclusiveScanStage;
-  readonly intersections: IntersectionStage;
-  readonly sorter: RadixSorter;
+  intersections: IntersectionStage;
+  sorter: RadixSorter;
 
+  private readonly bindings: StorageBindings;
+  private resourceUpdates = 0;
+  private shaderGeneration = 0;
   private tileOffsets: TileOffsetBuilder | null = null;
   private rasterizer: TileRasterizer | null = null;
   private width = 0;
@@ -55,11 +65,11 @@ export class TiledGaussianPipeline {
   constructor(
     private readonly renderer: WebGPURenderer,
     camera: Camera,
-    private readonly data: GaussianData,
+    private data: GaussianData,
     store: GaussianRenderStore,
     private readonly mode: DepthSortMode,
     antialiasMode: AntialiasMode,
-    private readonly capacity: number,
+    private capacity: number,
     background: readonly [number, number, number, number],
     private readonly profileKernels: boolean,
     private readonly maxRasterizedSplatsPerTile: number | null,
@@ -71,9 +81,16 @@ export class TiledGaussianPipeline {
     private readonly rasterStats = false,
     private readonly depthAlphaThreshold = 0.95,
     domain?: GaussianRenderDomain,
+    private readonly outputState?: StorageBufferAttribute,
   ) {
+    this.bindings = new StorageBindings(renderer);
     this.frame = new FrameUniforms(camera, background, domain);
-    this.objects = new ObjectFrameState(camera, store, data.count);
+    this.objects = new ObjectFrameState(
+      camera,
+      store,
+      data.count,
+      this.bindings,
+    );
     this.frame.activeCount.value = data.activeCount;
     this.projection = new ProjectionStage(
       data,
@@ -82,6 +99,7 @@ export class TiledGaussianPipeline {
       antialiasMode,
       nodes,
       subpixelSampleCulling,
+      this.bindings,
     );
     this.profileDiagnostics =
       profileKernels || rasterStats
@@ -92,6 +110,7 @@ export class TiledGaussianPipeline {
             this.projection.projectedConic,
             this.frame,
             maxRasterizedSplatsPerTile,
+            this.bindings,
           )
         : null;
     this.visibleScan = new ExclusiveScanStage(
@@ -100,6 +119,7 @@ export class TiledGaussianPipeline {
       "visible",
       "projectedVisibility",
       () => this.data.activeCount,
+      this.bindings,
     );
     this.visible = new VisibleGaussianStage(
       renderer,
@@ -110,6 +130,7 @@ export class TiledGaussianPipeline {
       this.frame.viewport,
       this.frame.activeCount,
       () => this.data.activeCount,
+      this.bindings,
     );
     this.depthSorter = new RadixSorter(
       renderer,
@@ -118,6 +139,7 @@ export class TiledGaussianPipeline {
       this.visible.buffers,
       this.visible.dispatch,
       radixBackend,
+      this.bindings,
     );
     this.depthSorter.configure(mode === "float32" ? 32 : 16);
     this.orderedTiles = new DepthOrderedTileStage(
@@ -126,6 +148,7 @@ export class TiledGaussianPipeline {
       this.projection.tileCounts,
       this.depthSorter.sortedRecords,
       this.visible.dispatch,
+      this.bindings,
     );
     this.scan = new ExclusiveScanStage(
       this.orderedTiles.tileCounts,
@@ -133,11 +156,17 @@ export class TiledGaussianPipeline {
       "intersections",
       "uint",
       () => this.data.activeCount,
+      this.bindings,
     );
-    this.intersections = new IntersectionStage(
-      renderer,
-      data.count,
-      capacity,
+    this.intersections = this.createIntersections();
+    this.sorter = this.createSorter();
+  }
+
+  private createIntersections(): IntersectionStage {
+    return new IntersectionStage(
+      this.renderer,
+      this.data.count,
+      this.capacity,
       this.depthSorter.sortedRecords,
       this.visible.dispatch,
       this.orderedTiles.tileCounts,
@@ -146,15 +175,112 @@ export class TiledGaussianPipeline {
       this.projection.projectedConic,
       this.projection.projectedColor,
       this.frame,
+      this.outputState,
+      this.bindings,
     );
-    this.sorter = new RadixSorter(
-      renderer,
+  }
+
+  private createSorter(): RadixSorter {
+    return new RadixSorter(
+      this.renderer,
       "tile",
-      capacity,
+      this.capacity,
       this.intersections.buffers,
       this.intersections.dispatch,
-      radixBackend,
+      this.radixBackend,
+      this.bindings,
     );
+  }
+
+  compatible(data: GaussianData): boolean {
+    return this.projection.compatible(data);
+  }
+
+  getShaderGeneration(): number {
+    return this.shaderGeneration;
+  }
+
+  updateData(data: GaussianData): void {
+    const variantChanged = !this.compatible(data);
+    this.objects.resize(data.count);
+    this.projection.updateData(data, this.nodes);
+    if (variantChanged) this.shaderGeneration++;
+    this.visibleScan.resize(data.count);
+    this.visible.resize(data.count);
+    this.depthSorter.resize(data.count);
+    this.orderedTiles.resize(data.count);
+    this.scan.resize(data.count);
+    this.profileDiagnostics?.resize(data.count);
+    this.data = data;
+    this.frame.activeCount.value = data.activeCount;
+    this.updateRasterResources();
+    this.resourceUpdates++;
+  }
+
+  resizeIntersections(
+    capacity: number,
+    _color: StorageTexture,
+    _depth: StorageTexture | null,
+  ): void {
+    this.intersections.resize(capacity);
+    this.sorter.resize(capacity);
+    this.chunkWorkspace?.resize(capacity);
+    this.capacity = capacity;
+    this.updateRasterResources();
+    this.resourceUpdates++;
+  }
+
+  private updateRasterResources(): void {
+    this.rasterizer?.resize(
+      this.data.count,
+      this.capacity,
+      this.tileCapacity,
+      this.data.means,
+      this.projection.projectedMean,
+      this.projection.projectedConic,
+      this.projection.projectedColor,
+      this.tileOffsets!.offsets,
+    );
+    this.rasterizer?.setSortedRecords(this.sorter.sortedRecords);
+  }
+
+  getComputeNodes(): ComputeNode[] {
+    return [
+      this.projection,
+      this.profileDiagnostics,
+      this.visibleScan,
+      this.visible,
+      this.depthSorter,
+      this.orderedTiles,
+      this.scan,
+      this.intersections,
+      this.sorter,
+      this.tileOffsets,
+      this.rasterizer,
+    ].flatMap((stage) => stage?.getComputeNodes() ?? []);
+  }
+
+  /** Compile/bind every reserved stage with zero work, including inactive scan/radix levels. */
+  async warmup(isCancelled: () => boolean = () => false): Promise<void> {
+    const nodes = this.getComputeNodes();
+    const generation = this.shaderGeneration;
+    for (let index = 0; index < nodes.length; index++) {
+      if (isCancelled() || generation !== this.shaderGeneration) return;
+      this.renderer.compute(nodes[index]!, [0, 0, 0]);
+      if (index % 4 === 3)
+        await new Promise<void>((resolve) => {
+          if (
+            typeof requestAnimationFrame === "function" &&
+            typeof document !== "undefined" &&
+            document.visibilityState === "visible"
+          )
+            requestAnimationFrame(() => setTimeout(resolve, 0));
+          else setTimeout(resolve, 0);
+        });
+    }
+    const device = (this.renderer.backend as unknown as { device?: GPUDevice })
+      ?.device;
+    await device?.queue.onSubmittedWorkDone();
   }
 
   prepareFrame(
@@ -175,15 +301,27 @@ export class TiledGaussianPipeline {
     this.frame.update(width, height, tilesX, tilesY);
     this.frame.activeCount.value = this.data.activeCount;
     this.objects.update();
-    if (tilesX * tilesY > this.tileCapacity) {
+    if (this.tileOffsets === null || this.rasterizer === null) {
       this.rebuildTileStages(colorTexture, depthTexture);
+    } else if (tilesX * tilesY > this.tileCapacity) {
+      const capacity = 2 ** Math.ceil(Math.log2(tilesX * tilesY));
+      const previousSorted = this.sorter.sortedRecords;
+      this.sorter.configure(Math.ceil(Math.log2(capacity + 1)));
+      this.tileOffsets.setSortedRecords(
+        previousSorted,
+        this.sorter.sortedRecords,
+      );
+      this.tileOffsets.resize(capacity);
+      this.tileCapacity = capacity;
+      this.updateRasterResources();
+      this.resourceUpdates++;
     }
     if (this.tileOffsets === null || this.rasterizer === null) {
       throw new Error("TiledGaussianPipeline failed to create tile stages");
     }
   }
 
-  render(): void {
+  render(attempt = 1, resetValid = false): void {
     if (this.tileOffsets === null || this.rasterizer === null) {
       throw new Error(
         "TiledGaussianPipeline must be prepared before rendering",
@@ -196,7 +334,7 @@ export class TiledGaussianPipeline {
     this.depthSorter.encode(this.profileKernels);
     this.orderedTiles.encode();
     this.scan.encode(this.renderer);
-    this.intersections.encode();
+    this.intersections.encode(attempt, resetValid);
     this.sorter.encode(this.profileKernels);
     this.tileOffsets.encode();
     this.rasterizer.encode(this.tilesX, this.tilesY);
@@ -204,10 +342,12 @@ export class TiledGaussianPipeline {
 
   rebuildProjection(nodes: GaussianProjectionNodeSlots): void {
     this.projection.rebuild(nodes);
+    this.shaderGeneration++;
   }
 
   rebuildRasterizer(nodes: GaussianRasterNodeSlots): void {
     this.rasterizer?.rebuild(nodes);
+    this.shaderGeneration++;
   }
 
   async readStats(): Promise<GaussianPassStats> {
@@ -234,6 +374,9 @@ export class TiledGaussianPipeline {
       tilesY: this.tilesY,
       tileStageRebuilds: this.tileStageRebuilds,
       tileCapacity: this.tileCapacity,
+      resourceUpdates: this.resourceUpdates,
+      bufferReplacements: this.bindings.replacements,
+      shaderVariantChanges: this.shaderGeneration,
       radixPasses: this.depthSorter.passCount + this.sorter.passCount,
       depthRadixPasses: this.depthSorter.passCount,
       tileRadixPasses: this.sorter.passCount,
@@ -291,6 +434,7 @@ export class TiledGaussianPipeline {
         this.capacity,
         this.rasterChunkSize,
         depthTexture !== null,
+        this.bindings,
       );
     }
     this.tileOffsets?.dispose();
@@ -307,6 +451,7 @@ export class TiledGaussianPipeline {
       this.sorter.sortedRecords,
       this.intersections.dispatch,
       () => Number(this.frame.tileCount.value),
+      this.bindings,
     );
     this.rasterizer = new TileRasterizer(
       this.renderer,
@@ -330,6 +475,8 @@ export class TiledGaussianPipeline {
       this.rasterTransmittanceThreshold,
       this.depthAlphaThreshold,
       this.chunkWorkspace ?? undefined,
+      this.intersections.rasterDispatch,
+      this.bindings,
     );
     this.tileCapacity = tileCapacity;
     this.tileStageRebuilds++;

@@ -1,10 +1,11 @@
+import { StorageBindings } from "./StorageBindings";
 import type {
   ComputeNode,
   Node,
   StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
-import { instanceIndex, storage, uvec2, wgslFn } from "three/tsl";
+import { instanceIndex, uvec2, wgslFn } from "three/tsl";
 import {
   PROFILE_DIAGNOSTIC_WORKGROUP_SIZE,
   profileSubpixelCoverageWGSL,
@@ -20,7 +21,7 @@ import type { GaussianPassProfileStats } from "./types";
 
 export class ProfileDiagnosticsStage {
   private readonly attributes = new AttributePool();
-  private readonly zeroPixelFlags: StorageBufferAttribute;
+  private zeroPixelFlags: StorageBufferAttribute;
   private readonly computeNode: ComputeNode;
 
   constructor(
@@ -30,7 +31,9 @@ export class ProfileDiagnosticsStage {
     projectedConicAttribute: StorageBufferAttribute,
     private readonly frame: FrameUniforms,
     private readonly maxRasterizedSplatsPerTile: number | null,
+    bindings = new StorageBindings(),
   ) {
+    this.attributes.bindings = bindings;
     this.zeroPixelFlags = this.attributes.createUint(
       "3dgs.profile-zero-pixel-subpixel-flags",
       gaussianCount,
@@ -40,20 +43,28 @@ export class ProfileDiagnosticsStage {
       index: instanceIndex,
       gaussian_count: frame.activeCount,
       viewport: uvec2(frame.viewport.xy),
-      projected_mean: storage(
-        projectedMeanAttribute,
-        "vec4",
-        projectedMeanAttribute.count,
-      ).toReadOnly(),
-      projected_conic: storage(
-        projectedConicAttribute,
-        "vec4",
-        projectedConicAttribute.count,
-      ).toReadOnly(),
-      zero_pixel_flags: storage(this.zeroPixelFlags, "uint", gaussianCount),
+      projected_mean: this.attributes
+        .storage(projectedMeanAttribute, "vec4", projectedMeanAttribute.count)
+        .toReadOnly(),
+      projected_conic: this.attributes
+        .storage(projectedConicAttribute, "vec4", projectedConicAttribute.count)
+        .toReadOnly(),
+      zero_pixel_flags: this.attributes.storage(
+        this.zeroPixelFlags,
+        "uint",
+        gaussianCount,
+      ),
     })
       .compute(gaussianCount, [PROFILE_DIAGNOSTIC_WORKGROUP_SIZE])
       .setName("3DGS profile subpixel coverage WGSL");
+  }
+
+  resize(count: number): void {
+    this.zeroPixelFlags = this.attributes.grow(this.zeroPixelFlags, count);
+    this.computeNode.count = count;
+  }
+  getComputeNodes(): ComputeNode[] {
+    return [this.computeNode];
   }
 
   encode(): void {

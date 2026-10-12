@@ -58,10 +58,14 @@ export declare class GaussianData {
     get activeSlots(): Uint32Array | null;
     private readonly ownsBuffers;
     private disposed;
+    private retainCount;
+    private disposeRequested;
     constructor(buffers: GaussianBuffers, options: GaussianDataOptions);
     /** Prepare the back list incrementally; commit swaps typed arrays in O(1). */
     stageActivation(added: Uint32Array, removed: Uint32Array, commit: boolean): void;
     subscribeActiveSlots(listener: (range: ActiveSlotRange) => void): () => void;
+    retain(): void;
+    release(): void;
     dispose(): void;
     private validateVec4Attribute;
     private validateShAttribute;

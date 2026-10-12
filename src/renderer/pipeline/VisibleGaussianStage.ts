@@ -1,10 +1,11 @@
+import { StorageBindings } from "./StorageBindings";
 import type {
   ComputeNode,
   Node,
   StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
-import { instanceIndex, storage, uint, wgslFn } from "three/tsl";
+import { instanceIndex, uniform, wgslFn } from "three/tsl";
 import {
   compactVisibleWGSL,
   prepareVisibleDispatchWGSL,
@@ -24,6 +25,7 @@ export class VisibleGaussianStage {
   private readonly attributes = new AttributePool();
   private readonly prepareNode: ComputeNode;
   private readonly compactNode: ComputeNode;
+  private readonly logicalCount = uniform(0, "uint");
 
   constructor(
     private readonly renderer: WebGPURenderer,
@@ -34,7 +36,10 @@ export class VisibleGaussianStage {
     viewport: Node,
     activeCount?: Node,
     private readonly getActiveCount?: () => number,
+    bindings = new StorageBindings(),
   ) {
+    this.attributes.bindings = bindings;
+    this.logicalCount.value = gaussianCount;
     this.buffers = {
       recordsA: this.attributes.createUint(
         "3dgs.depth-records-a",
@@ -58,26 +63,34 @@ export class VisibleGaussianStage {
       linear: this.attributes.createIndirect("3dgs.visible-linear-dispatch"),
     };
 
-    const visibleOffsets = storage(
-      visibleOffsetsAttribute,
-      "uint",
-      gaussianCount,
-    ).toReadOnly();
+    const visibleOffsets = this.attributes
+      .storage(visibleOffsetsAttribute, "uint", gaussianCount)
+      .toReadOnly();
     const prepareKernel = wgslFn<Record<string, Node>>(
       prepareVisibleDispatchWGSL,
     );
     this.prepareNode = prepareKernel({
-      gaussian_count: activeCount ?? uint(gaussianCount),
-      projected_mean: storage(
-        projectedMeanAttribute,
-        "vec4",
-        gaussianCount,
-      ).toReadOnly(),
+      gaussian_count: activeCount ?? this.logicalCount,
+      projected_mean: this.attributes
+        .storage(projectedMeanAttribute, "vec4", gaussianCount)
+        .toReadOnly(),
       visible_offsets: visibleOffsets,
-      state: storage(this.dispatch.state, "uvec4", 1),
-      radix_block_dispatch: storage(this.dispatch.radixBlock, "uvec4", 1),
-      radix_reduce_dispatch: storage(this.dispatch.radixReduce, "uvec4", 1),
-      linear_dispatch: storage(this.dispatch.linear, "uvec4", 1),
+      state: this.attributes.storage(this.dispatch.state, "uvec4", 1),
+      radix_block_dispatch: this.attributes.storage(
+        this.dispatch.radixBlock,
+        "uvec4",
+        1,
+      ),
+      radix_reduce_dispatch: this.attributes.storage(
+        this.dispatch.radixReduce,
+        "uvec4",
+        1,
+      ),
+      linear_dispatch: this.attributes.storage(
+        this.dispatch.linear,
+        "uvec4",
+        1,
+      ),
     })
       .compute(1)
       .setName("3DGS prepare visible indirect dispatch WGSL");
@@ -87,18 +100,30 @@ export class VisibleGaussianStage {
     );
     this.compactNode = compactKernel({
       gid: instanceIndex,
-      gaussian_count: activeCount ?? uint(gaussianCount),
+      gaussian_count: activeCount ?? this.logicalCount,
       viewport,
       visible_offsets: visibleOffsets,
-      projected_mean: storage(
-        projectedMeanAttribute,
-        "vec4",
+      projected_mean: this.attributes
+        .storage(projectedMeanAttribute, "vec4", gaussianCount)
+        .toReadOnly(),
+      records: this.attributes.storage(
+        this.buffers.recordsA,
+        "uvec2",
         gaussianCount,
-      ).toReadOnly(),
-      records: storage(this.buffers.recordsA, "uvec2", gaussianCount),
+      ),
     })
       .compute(gaussianCount, [WORKGROUP_SIZE])
       .setName(`3DGS compact visible Gaussians WGSL (${mode})`);
+  }
+
+  resize(count: number): void {
+    this.buffers.recordsA = this.attributes.grow(this.buffers.recordsA, count);
+    this.buffers.recordsB = this.attributes.grow(this.buffers.recordsB, count);
+    this.logicalCount.value = count;
+    this.compactNode.count = count;
+  }
+  getComputeNodes(): ComputeNode[] {
+    return [this.prepareNode, this.compactNode];
   }
 
   encode(profileKernels = false): void {

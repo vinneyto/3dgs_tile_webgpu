@@ -1,5 +1,9 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { PerspectiveCamera, type WebGPURenderer } from "three/webgpu";
+import {
+  OrthographicCamera,
+  PerspectiveCamera,
+  type WebGPURenderer,
+} from "three/webgpu";
 import {
   GaussianStore,
   DEFAULT_BACKEND_CONFIG,
@@ -654,6 +658,95 @@ describe("streaming backend request protocol", () => {
     expect(second.gaussianCount).toBe(100);
     expect(first.gaussianCount).toBe(47);
     store.dispose();
+  });
+
+  it("keeps camera LOD attributes and indices together while active replacements wait for acknowledgement", async () => {
+    const port = new InMemoryWorker(false);
+    const store = new GaussianStore(
+      new WorkerStreamingGaussianBackend(
+        { streaming: { maxUploadBytesPerUpdate: 56 } },
+        port as unknown as Worker,
+      ),
+    );
+    const camera = new OrthographicCamera(-0.1, 0.1, 0.1, -0.1, -1, 1);
+    camera.updateMatrixWorld();
+    store.setFrontendCapabilities(
+      { ...capabilities, maxBufferSize: 224, maxStorageBufferBindingSize: 224 },
+      camera,
+      1024,
+      1024,
+    );
+    const text = new TextDecoder()
+      .decode(ply(0, 1, 2, 3, 4))
+      .replaceAll("10 0 0 0", "10 -3.912023 -3.912023 -3.912023");
+    const cloud = await store.loadBuffer(new TextEncoder().encode(text).buffer);
+    await store.whenRenderReady(cloud);
+    await vi.waitFor(() =>
+      expect(
+        port.responses.some(
+          (r) => r.command.type === "load-cloud-from-buffer" && r.isFinal,
+        ),
+      ).toBe(true),
+    );
+    let staged = false;
+    try {
+      for (const x of [1, 2, 3, 4, 0]) {
+        const data = store.getPackedData();
+        const means = data.means.array.slice();
+        const scales = data.scalesOpacity.array.slice();
+        const slots = data.activeSlots?.slice();
+        const count = data.activeCount;
+        const layout = store.layoutVersion;
+        port.responses.length = 0;
+        port.holdAcknowledgements = true;
+        camera.position.x = x;
+        camera.updateMatrixWorld();
+        const done = store.scheduler.schedule(
+          createSetCameraCommand(
+            `camera-${x}`,
+            x + 10,
+            camera.matrixWorld.elements.slice(),
+            camera.projectionMatrix.elements.slice(),
+            1024,
+            1024,
+          ),
+        );
+        void done.catch(() => {});
+        await vi.waitFor(() =>
+          expect(
+            port.responses.some((r) => r.payload !== undefined || r.isFinal),
+          ).toBe(true),
+        );
+        const deferred = port.responses.some(
+          (r) =>
+            r.payload?.type === "buffers-patched" &&
+            r.payload.deferUntilActivation,
+        );
+        if (deferred) {
+          staged = true;
+          expect(store.getPackedData()).toBe(data);
+          expect(store.layoutVersion).toBe(layout);
+          expect(data.means.array).toEqual(means);
+          expect(data.scalesOpacity.array).toEqual(scales);
+          expect(data.activeSlots).toEqual(slots);
+          expect(data.activeCount).toBe(count);
+        }
+        port.holdAcknowledgements = false;
+        port.acknowledge();
+        await done;
+        expect(store.getPackedData()).toBe(data);
+        expect(store.layoutVersion).toBe(layout);
+        if (staged) break;
+      }
+      expect(
+        staged,
+        "Fixture must exercise active camera slot replacement",
+      ).toBe(true);
+    } finally {
+      port.holdAcknowledgements = false;
+      port.acknowledge();
+      store.dispose();
+    }
   });
 
   it("removes only the disposed cloud while retaining survivor detail between upload acknowledgements", async () => {

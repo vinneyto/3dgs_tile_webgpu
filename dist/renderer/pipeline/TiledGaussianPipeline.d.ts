@@ -1,4 +1,4 @@
-import type { Camera, StorageTexture, WebGPURenderer } from "three/webgpu";
+import type { Camera, ComputeNode, StorageBufferAttribute, StorageTexture, WebGPURenderer } from "three/webgpu";
 import type { GaussianData } from "../GaussianData";
 import type { GaussianRenderStore } from "../GaussianRenderStore";
 import type { GaussianNodeSlots, GaussianProjectionNodeSlots, GaussianRasterNodeSlots } from "../nodes/GaussianContextNodes";
@@ -14,9 +14,9 @@ import { VisibleGaussianStage } from "./VisibleGaussianStage";
 import type { AntialiasMode, GaussianRenderDomain, DepthSortMode, GaussianPassDebugInfo, GaussianPassResources, GaussianPassStats, ResolvedRadixBackend } from "./types";
 export declare class TiledGaussianPipeline {
     private readonly renderer;
-    private readonly data;
+    private data;
     private readonly mode;
-    private readonly capacity;
+    private capacity;
     private readonly profileKernels;
     private readonly maxRasterizedSplatsPerTile;
     private readonly rasterChunkSize;
@@ -26,6 +26,7 @@ export declare class TiledGaussianPipeline {
     private readonly rasterTransmittanceThreshold;
     private readonly rasterStats;
     private readonly depthAlphaThreshold;
+    private readonly outputState?;
     readonly frame: FrameUniforms;
     readonly objects: ObjectFrameState;
     readonly projection: ProjectionStage;
@@ -35,8 +36,11 @@ export declare class TiledGaussianPipeline {
     readonly depthSorter: RadixSorter;
     readonly orderedTiles: DepthOrderedTileStage;
     readonly scan: ExclusiveScanStage;
-    readonly intersections: IntersectionStage;
-    readonly sorter: RadixSorter;
+    intersections: IntersectionStage;
+    sorter: RadixSorter;
+    private readonly bindings;
+    private resourceUpdates;
+    private shaderGeneration;
     private tileOffsets;
     private rasterizer;
     private width;
@@ -46,9 +50,19 @@ export declare class TiledGaussianPipeline {
     private tileStageRebuilds;
     private tileCapacity;
     private chunkWorkspace;
-    constructor(renderer: WebGPURenderer, camera: Camera, data: GaussianData, store: GaussianRenderStore, mode: DepthSortMode, antialiasMode: AntialiasMode, capacity: number, background: readonly [number, number, number, number], profileKernels: boolean, maxRasterizedSplatsPerTile: number | null, rasterChunkSize: number | null, subpixelSampleCulling: boolean, radixBackend: ResolvedRadixBackend, nodes: GaussianNodeSlots, rasterTransmittanceThreshold?: number, rasterStats?: boolean, depthAlphaThreshold?: number, domain?: GaussianRenderDomain);
+    constructor(renderer: WebGPURenderer, camera: Camera, data: GaussianData, store: GaussianRenderStore, mode: DepthSortMode, antialiasMode: AntialiasMode, capacity: number, background: readonly [number, number, number, number], profileKernels: boolean, maxRasterizedSplatsPerTile: number | null, rasterChunkSize: number | null, subpixelSampleCulling: boolean, radixBackend: ResolvedRadixBackend, nodes: GaussianNodeSlots, rasterTransmittanceThreshold?: number, rasterStats?: boolean, depthAlphaThreshold?: number, domain?: GaussianRenderDomain, outputState?: StorageBufferAttribute | undefined);
+    private createIntersections;
+    private createSorter;
+    compatible(data: GaussianData): boolean;
+    getShaderGeneration(): number;
+    updateData(data: GaussianData): void;
+    resizeIntersections(capacity: number, _color: StorageTexture, _depth: StorageTexture | null): void;
+    private updateRasterResources;
+    getComputeNodes(): ComputeNode[];
+    /** Compile/bind every reserved stage with zero work, including inactive scan/radix levels. */
+    warmup(isCancelled?: () => boolean): Promise<void>;
     prepareFrame(width: number, height: number, colorTexture: StorageTexture, depthTexture: StorageTexture | null): void;
-    render(): void;
+    render(attempt?: number, resetValid?: boolean): void;
     rebuildProjection(nodes: GaussianProjectionNodeSlots): void;
     rebuildRasterizer(nodes: GaussianRasterNodeSlots): void;
     readStats(): Promise<GaussianPassStats>;

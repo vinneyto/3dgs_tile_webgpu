@@ -1,3 +1,4 @@
+import { StorageBindings } from "./StorageBindings";
 import type {
   ComputeNode,
   Node,
@@ -19,9 +20,9 @@ import {
   mat4,
   normalize,
   sqrt,
-  storage,
   uint,
   uvec2,
+  uniform,
   vec2,
   vec4,
   wgslFn,
@@ -109,26 +110,33 @@ const projectedAccessors = new Set<Node>([
 ]);
 
 export class ProjectionStage {
-  readonly projectedMean: StorageBufferAttribute;
-  readonly projectedConic: StorageBufferAttribute;
-  readonly projectedColor: StorageBufferAttribute;
-  readonly tileCounts: StorageBufferAttribute;
+  projectedMean: StorageBufferAttribute;
+  projectedConic: StorageBufferAttribute;
+  projectedColor: StorageBufferAttribute;
+  tileCounts: StorageBufferAttribute;
 
   private readonly attributes = new AttributePool();
   private computeNode: ComputeNode | null = null;
+  private readonly objectOffset = uniform(0, "uint");
+  private readonly activeSlotOffset = uniform(0, "uint");
+  private readonly shDegree = uniform(0, "uint");
   private activeVersion = -1;
   private firstActiveChange = Infinity;
   private lastActiveChange = -1;
-  private readonly unsubscribeActiveSlots: () => void;
+  private unsubscribeActiveSlots: () => void;
 
   constructor(
-    private readonly data: GaussianData,
+    private data: GaussianData,
     private readonly frame: FrameUniforms,
-    objects: ObjectFrameState,
+    private readonly objects: ObjectFrameState,
     private readonly antialiasMode: AntialiasMode,
     nodes: GaussianProjectionNodeSlots,
     private readonly subpixelSampleCulling = true,
+    bindings = new StorageBindings(),
   ) {
+    this.attributes.bindings = bindings;
+    data.retain();
+    this.updateRuntimeParameters();
     this.projectedMean = objects.attribute;
     this.projectedConic = this.attributes.createFloat(
       "3dgs.projected-conic",
@@ -151,6 +159,67 @@ export class ProjectionStage {
       );
     });
     this.rebuild(nodes);
+  }
+
+  compatible(data: GaussianData): boolean {
+    return (
+      data.geometryFormat === this.data.geometryFormat &&
+      data.shFormat === this.data.shFormat &&
+      Boolean(data.activeSlots) === Boolean(this.data.activeSlots)
+    );
+  }
+
+  updateData(data: GaussianData, nodes?: GaussianProjectionNodeSlots): void {
+    const variantChanged = !this.compatible(data);
+    if (variantChanged && !nodes)
+      throw new TypeError("Projection schema requires a shader variant");
+    const previous = this.data;
+    if (previous !== data) {
+      data.retain();
+      this.unsubscribeActiveSlots();
+      for (const key of [
+        "means",
+        "scalesOpacity",
+        "rotations",
+        "shCoefficients",
+      ] as const) {
+        if (
+          previous[key].itemSize === data[key].itemSize &&
+          previous[key].array.constructor === data[key].array.constructor
+        )
+          this.attributes.bindings.replace(previous[key], data[key]);
+      }
+      this.data = data;
+      this.activeVersion = -1;
+      this.firstActiveChange = Infinity;
+      this.lastActiveChange = -1;
+      this.unsubscribeActiveSlots = data.subscribeActiveSlots((range) => {
+        this.firstActiveChange = Math.min(this.firstActiveChange, range.start);
+        this.lastActiveChange = Math.max(
+          this.lastActiveChange,
+          range.start + range.count,
+        );
+      });
+      this.attributes.bindings.afterSubmittedWork(() => previous.release());
+    }
+    this.projectedMean = this.objects.attribute;
+    this.projectedConic = this.attributes.grow(this.projectedConic, data.count);
+    this.projectedColor = this.attributes.grow(this.projectedColor, data.count);
+    this.tileCounts = this.attributes.grow(this.tileCounts, data.count);
+    if (this.computeNode) this.computeNode.count = data.count;
+    this.updateRuntimeParameters();
+    if (variantChanged) this.rebuild(nodes!);
+  }
+
+  private updateRuntimeParameters(): void {
+    this.objectOffset.value = this.objects.slotCapacity;
+    this.activeSlotOffset.value =
+      this.data.count * this.data.shCoefficientCount;
+    this.shDegree.value = this.data.shDegree;
+  }
+
+  getComputeNodes(): ComputeNode[] {
+    return this.computeNode ? [this.computeNode] : [];
   }
 
   rebuild(nodes: GaussianProjectionNodeSlots): void {
@@ -219,6 +288,8 @@ export class ProjectionStage {
 
   dispose(): void {
     this.unsubscribeActiveSlots();
+    const data = this.data;
+    this.attributes.bindings.afterSubmittedWork(() => data.release());
     this.computeNode?.dispose();
     this.computeNode = null;
     this.attributes.dispose();
@@ -259,39 +330,53 @@ export class ProjectionStage {
 
   private createComputeNode(nodes: GaussianProjectionNodeSlots): ComputeNode {
     const { data, frame } = this;
-    const means = storage(data.means, "vec4", data.count).toReadOnly();
-    const scalesOpacity = storage(
-      data.scalesOpacity,
-      data.geometryFormat === "compact" ? "uvec2" : "vec4",
-      data.count,
-    ).toReadOnly();
-    const rotations = storage(
-      data.rotations,
-      data.geometryFormat === "compact" ? "uint" : "vec4",
-      data.count,
-    ).toReadOnly();
+    const means = this.attributes
+      .storage(data.means, "vec4", data.count)
+      .toReadOnly();
+    const scalesOpacity = this.attributes
+      .storage(
+        data.scalesOpacity,
+        data.geometryFormat === "compact" ? "uvec2" : "vec4",
+        data.count,
+      )
+      .toReadOnly();
+    const rotations = this.attributes
+      .storage(
+        data.rotations,
+        data.geometryFormat === "compact" ? "uint" : "vec4",
+        data.count,
+      )
+      .toReadOnly();
     const decodeScaleOpacity = wgslFn<any>(compactScaleOpacityWGSL);
     const decodeRotation = wgslFn<any>(compactRotationWGSL);
     const shCoefficients =
       data.shFormat === "rgb8e8"
-        ? storage(
-            data.shCoefficients,
-            "uint",
-            data.shCoefficients.count,
-          ).toReadOnly()
-        : storage(
-            data.shCoefficients,
-            "vec4",
-            data.shCoefficients.count,
-          ).toReadOnly();
-    const projectedMean = storage(
+        ? this.attributes
+            .storage(data.shCoefficients, "uint", data.shCoefficients.count)
+            .toReadOnly()
+        : this.attributes
+            .storage(data.shCoefficients, "vec4", data.shCoefficients.count)
+            .toReadOnly();
+    const projectedMean = this.attributes.storage(
       this.projectedMean,
       "vec4",
       this.projectedMean.count,
     );
-    const projectedConic = storage(this.projectedConic, "vec4", data.count);
-    const projectedColor = storage(this.projectedColor, "vec4", data.count);
-    const tileCounts = storage(this.tileCounts, "uint", data.count);
+    const projectedConic = this.attributes.storage(
+      this.projectedConic,
+      "vec4",
+      data.count,
+    );
+    const projectedColor = this.attributes.storage(
+      this.projectedColor,
+      "vec4",
+      data.count,
+    );
+    const tileCounts = this.attributes.storage(
+      this.tileCounts,
+      "uint",
+      data.count,
+    );
     const projectionIsValid = wgslFn<any>(projectionIsValidWGSL);
     const evaluateSh = wgslFn<any>(evaluateShWGSL(data.shFormat));
     const countTiles = wgslFn<any>(countContributingTilesWGSL());
@@ -307,15 +392,11 @@ export class ProjectionStage {
 
       const sourceSlot = data.activeSlots
         ? (data.shFormat === "rgb8e8"
-            ? shCoefficients.element(
-                uint(data.count * data.shCoefficientCount).add(gid),
-              )
+            ? shCoefficients.element(this.activeSlotOffset.add(gid))
             : (decodeActiveSlot({
                 value: (
                   shCoefficients.element(
-                    uint(data.count * data.shCoefficientCount).add(
-                      gid.div(uint(4)),
-                    ),
+                    this.activeSlotOffset.add(gid.div(uint(4))),
                   ) as any
                 ).element(gid.mod(uint(4))),
               }) as any)
@@ -345,7 +426,7 @@ export class ProjectionStage {
               decodeRotation({ packed: rotations.element(sourceSlot) }) as any
             ).toVar("gaussianQuaternion")
           : rotations.element(sourceSlot);
-      const objectBase = uint(data.count).add(
+      const objectBase = this.objectOffset.add(
         objectId.mul(uint(OBJECT_FRAME_VEC4S)),
       );
       const objectMatrix = mat4(
@@ -523,7 +604,7 @@ export class ProjectionStage {
 
       const standardColor = evaluateSh({
         gid: sourceSlot,
-        sh_degree: uint(data.shDegree),
+        sh_degree: this.shDegree,
         direction: viewDirection,
         sh_coefficients: shCoefficients,
       });
