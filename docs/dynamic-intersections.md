@@ -24,7 +24,10 @@ high-water growth is implemented in this first stage.
 
 ## Overflow and feedback
 
-The GPU computes full demand after projection and scan. When demand exceeds
+The GPU computes demand after projection and scan. Prefix sums saturate at
+`0xffffffff` instead of wrapping; sums above the uint32 range are consequently
+always rejected, since every supported capacity is smaller than that value.
+`requestedIntersections` is exact within the uint32 range and saturates beyond it. When demand exceeds
 capacity it sets emitted count and intersection indirect dispatches to zero.
 A separate five-storage-binding kernel suppresses emission and direct/composite
 output dispatch. Scratch tile offsets are cleared, so chunk tasks are also empty.

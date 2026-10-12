@@ -22,7 +22,8 @@ fn prepare_dispatch(
   var total = 0u;
   if (item_count > 0u) {
     let last = item_count - 1u;
-    total = (*intersection_offsets)[last] + (*tile_counts)[last];
+    let offset = (*intersection_offsets)[last];
+    total = offset + min((*tile_counts)[last], 0xffffffffu - offset);
   }
   // Never sort or publish a truncated set.
   let count = select(total, 0u, total > capacity);

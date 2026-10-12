@@ -2801,7 +2801,9 @@ fn ${g.functionName}(
     if (lane < active_count) {
       let left = offset * (2u * lane + 1u) - 1u;
       let right = offset * (2u * lane + 2u) - 1u;
-      (*scratch)[right] += (*scratch)[left];
+      let left_value = (*scratch)[left];
+      let right_value = (*scratch)[right];
+      (*scratch)[right] = right_value + min(left_value, 0xffffffffu - right_value);
     }
     offset *= 2u;
     active_count /= 2u;
@@ -2822,7 +2824,8 @@ fn ${g.functionName}(
       let right = offset * (2u * lane + 2u) - 1u;
       let value = (*scratch)[left];
       (*scratch)[left] = (*scratch)[right];
-      (*scratch)[right] += value;
+      let right_value = (*scratch)[right];
+      (*scratch)[right] = right_value + min(value, 0xffffffffu - right_value);
     }
     active_count *= 2u;
     offset /= 2u;
@@ -2854,7 +2857,9 @@ fn add_scan_offsets(
   block_offsets: ptr<storage, array<u32>, read>
 ) -> u32 {
   if (index < length) {
-    (*values)[index] += (*block_offsets)[index / ${L}u];
+    let value = (*values)[index];
+    let offset = (*block_offsets)[index / ${L}u];
+    (*values)[index] = value + min(offset, 0xffffffffu - value);
   }
   return 0u;
 }
@@ -2997,7 +3002,8 @@ fn prepare_dispatch(
   var total = 0u;
   if (item_count > 0u) {
     let last = item_count - 1u;
-    total = (*intersection_offsets)[last] + (*tile_counts)[last];
+    let offset = (*intersection_offsets)[last];
+    total = offset + min((*tile_counts)[last], 0xffffffffu - offset);
   }
   // Never sort or publish a truncated set.
   let count = select(total, 0u, total > capacity);

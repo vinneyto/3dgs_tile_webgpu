@@ -81,6 +81,7 @@ export type GaussianPassDebugListener = (snapshot: GaussianPassDebugSnapshot) =>
 export interface GaussianPassStats {
     visibleGaussianCount: number;
     intersectionCount: number;
+    /** Exact through uint32 range; larger sums saturate to 0xffffffff and are always rejected. */
     requestedIntersections: number;
     intersectionCapacity: number;
     overflow: boolean;
@@ -187,6 +188,7 @@ export interface GaussianPassOutputStatus {
     version: number;
     confirmedAttempt: number;
     latestAttempt: number;
+    /** Exact through uint32 range; larger sums saturate to 0xffffffff and are always rejected. */
     requestedIntersections: number;
     intersectionCapacity: number;
     maxIntersectionCapacity: number;
