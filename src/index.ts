@@ -95,6 +95,7 @@ export {
   type GaussianPassProfileStats,
   type GaussianPassResources,
   type GaussianPassStats,
+  type GaussianPassOutputStatus,
   type GaussianTileLoadStats,
   type GaussianTileCapStats,
   type RadixBackend,

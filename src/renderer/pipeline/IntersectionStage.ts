@@ -1,13 +1,22 @@
 import type {
   ComputeNode,
+  IndirectStorageBufferAttribute,
   Node,
   StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
-import { instanceIndex, storage, uint, uvec2, wgslFn } from "three/tsl";
+import {
+  instanceIndex,
+  storage,
+  uint,
+  uvec2,
+  uniform,
+  wgslFn,
+} from "three/tsl";
 import {
   emitIntersectionsWGSL,
   prepareDispatchWGSL,
+  prepareIntersectionOutputWGSL,
 } from "../kernels/intersections";
 import { AttributePool } from "./AttributePool";
 import { WORKGROUP_SIZE } from "./constants";
@@ -25,6 +34,12 @@ export class IntersectionStage {
   private readonly attributes = new AttributePool();
   private readonly prepareNode: ComputeNode;
   private readonly emitNode: ComputeNode;
+  private readonly outputNode: ComputeNode;
+  readonly rasterDispatch: IndirectStorageBufferAttribute;
+  private readonly emitDispatch: IndirectStorageBufferAttribute;
+  private readonly attempt = uniform(0, "uint");
+  private readonly resetValid = uniform(0, "uint");
+  readonly outputState: StorageBufferAttribute;
 
   constructor(
     private readonly renderer: WebGPURenderer,
@@ -38,6 +53,7 @@ export class IntersectionStage {
     projectedConicAttribute: StorageBufferAttribute,
     projectedColorAttribute: StorageBufferAttribute,
     frame: FrameUniforms,
+    outputState?: StorageBufferAttribute,
   ) {
     this.dispatch = {
       state: this.attributes.createUint("3dgs.dispatch-state", 1, 4),
@@ -45,6 +61,14 @@ export class IntersectionStage {
       radixReduce: this.attributes.createIndirect("3dgs.radix-reduce-dispatch"),
       linear: this.attributes.createIndirect("3dgs.linear-dispatch"),
     };
+    this.emitDispatch = this.attributes.createIndirect(
+      "3dgs.intersection-emit-dispatch",
+    );
+    this.rasterDispatch = this.attributes.createIndirect(
+      "3dgs.complete-raster-dispatch",
+    );
+    this.outputState =
+      outputState ?? this.attributes.createUint("3dgs.output-state", 1, 4);
     this.buffers = {
       recordsA: this.attributes.createUint(
         "3dgs.intersection-records-a",
@@ -87,6 +111,21 @@ export class IntersectionStage {
       .compute(1)
       .setName("3DGS prepare intersection indirect dispatch WGSL");
 
+    this.outputNode = wgslFn<Record<string, Node>>(
+      prepareIntersectionOutputWGSL,
+    )({
+      state: storage(this.dispatch.state, "uvec4", 1).toReadOnly(),
+      visible_state: visibleState,
+      emit_dispatch: storage(this.emitDispatch, "uvec4", 1),
+      raster_dispatch: storage(this.rasterDispatch, "uvec4", 1),
+      output_state: storage(this.outputState, "uvec4", 1),
+      tiles: uvec2(frame.tilesX, frame.tilesY),
+      attempt: this.attempt,
+      reset_valid: this.resetValid,
+    })
+      .compute(1)
+      .setName("3DGS prepare complete output dispatch WGSL");
+
     const emitKernel = wgslFn<Record<string, Node>>(emitIntersectionsWGSL);
     this.emitNode = emitKernel({
       rank: instanceIndex,
@@ -127,9 +166,12 @@ export class IntersectionStage {
 
   private readonly visibleLinearDispatch: DispatchResources;
 
-  encode(): void {
+  encode(attempt = 1, resetValid = false): void {
+    this.attempt.value = attempt;
+    this.resetValid.value = resetValid ? 1 : 0;
     this.renderer.compute(this.prepareNode);
-    this.renderer.compute(this.emitNode, this.visibleLinearDispatch.linear);
+    this.renderer.compute(this.outputNode);
+    this.renderer.compute(this.emitNode, this.emitDispatch);
   }
 
   async readStats(): Promise<GaussianPassStats> {
@@ -152,6 +194,7 @@ export class IntersectionStage {
   dispose(): void {
     this.prepareNode.dispose();
     this.emitNode.dispose();
+    this.outputNode.dispose();
     this.attributes.dispose();
   }
 }

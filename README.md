@@ -169,3 +169,7 @@ Run `npm run sandbox`. **Open cloud** replaces the scene; **Add cloud** loads a 
 ## Rendering extensions
 
 See [GaussianPass rendering extensions](docs/render-extensions.md) for custom TSL projection/scalar-output roots, fixed resolution, periodic image boundaries, externally managed passes and GPU consumer ordering.
+
+### Dynamic intersection buffers
+
+`GaussianPass` now starts with a small independent reserve and grows from asynchronous GPU demand feedback. See [dynamic intersection capacity](docs/dynamic-intersections.md) for the output contract, fixed-capacity compatibility, limits, and memory accounting.

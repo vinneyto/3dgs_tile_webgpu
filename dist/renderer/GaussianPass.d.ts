@@ -1,6 +1,6 @@
 import { Camera, PassNode, StorageTexture, type Node, type NodeBuilder, type NodeFrame, type ColorSpace, type Texture, type WebGPURenderer } from "three/webgpu";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
-import type { AntialiasMode, GaussianBoundaryPolicy, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassResources, GaussianPassStats, ResolvedRadixBackend } from "./pipeline/types";
+import type { AntialiasMode, GaussianBoundaryPolicy, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassResources, GaussianPassStats, GaussianPassOutputStatus, ResolvedRadixBackend } from "./pipeline/types";
 /**
  * A multi-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
  */
@@ -26,7 +26,26 @@ export declare class GaussianPass extends PassNode {
     readonly colorTexture: StorageTexture;
     readonly depthTexture: StorageTexture | null;
     private readonly ownerRenderer;
-    private readonly requestedIntersectionCapacity;
+    private readonly capacityOptions;
+    private capacityPolicy;
+    private readonly outputState;
+    private readonly outputStateNode;
+    /** True on the GPU only when the latest attempt produced a complete result. Stable across growth. */
+    readonly outputReadyNode: Node<"bool">;
+    private outputStatus;
+    private outputVersion;
+    private confirmedAttempt;
+    private latestAttempt;
+    private lastDemand;
+    private growthCount;
+    private growthDurationMs;
+    private feedbackError;
+    private feedbackInFlight;
+    private feedbackGeneration;
+    private lastFeedbackTime;
+    private pendingCapacity;
+    private resetOutput;
+    private checkAllocation;
     private resolvedIntersectionCapacity;
     private readonly debugListeners;
     private workingColorNode;
@@ -47,7 +66,7 @@ export declare class GaussianPass extends PassNode {
     get intersectionCapacity(): number;
     getTexture(name: string): Texture;
     setSize(width: number, height: number): void;
-    /** Number of complete Gaussian kernel chains successfully encoded. */
+    /** Number of encoded attempts. Completeness is GPU-authoritative; see getOutputStatus(). */
     get renderCount(): number;
     /** Number of frames that reused the last valid output textures. */
     get cacheHitCount(): number;
@@ -71,7 +90,7 @@ export declare class GaussianPass extends PassNode {
     set rasterOutputDepthNode(node: Node);
     get rasterOutputValidNode(): Node;
     set rasterOutputValidNode(node: Node);
-    /** Encode the pass before subsequent renderer.compute/render calls on this renderer. No readback. */
+    /** Encode before subsequent compute/render calls. Feedback is asynchronous and never awaited here. */
     render(): void;
     get gaussianPositionLocalNode(): Node;
     set gaussianPositionLocalNode(node: Node);
@@ -103,11 +122,15 @@ export declare class GaussianPass extends PassNode {
     invalidate(): void;
     set needsUpdate(value: boolean);
     updateBefore(frame: NodeFrame): boolean | undefined;
+    /** Last confirmed GPU result. Freshness is conservative until asynchronous feedback arrives. */
+    getOutputStatus(): GaussianPassOutputStatus;
+    private failAllocation;
+    private scheduleCapacityFeedback;
     /** Subscribe to allocation, LOD and CPU-side pass diagnostics. */
     subscribeDebug(listener: GaussianPassDebugListener): () => void;
     /** Three.js storage attributes produced by the renderer, available after the first frame. */
     getResources(): GaussianPassResources | null;
-    /** Optional diagnostic readback. Normal rendering never reads the GPU count. */
+    /** Full diagnostic readback, separate from automatic 16-byte capacity feedback. */
     readStats(): Promise<GaussianPassStats>;
     /** CPU-side lifecycle information; unlike readStats(), this does not perform a GPU readback. */
     getDebugInfo(): GaussianPassDebugInfo;
@@ -118,4 +141,4 @@ export declare class GaussianPass extends PassNode {
     private autoInputsChanged;
     private captureAutoSnapshot;
 }
-export type { AntialiasMode, GaussianBoundaryPolicy, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassDebugSnapshot, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassProfileStats, GaussianPassResources, GaussianPassStats, GaussianTileLoadStats, GaussianTileCapStats, RadixBackend, ResolvedRadixBackend, } from "./pipeline/types";
+export type { AntialiasMode, GaussianBoundaryPolicy, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassDebugSnapshot, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassProfileStats, GaussianPassOutputStatus, GaussianPassResources, GaussianPassStats, GaussianTileLoadStats, GaussianTileCapStats, RadixBackend, ResolvedRadixBackend, } from "./pipeline/types";

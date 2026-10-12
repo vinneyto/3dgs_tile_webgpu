@@ -10,6 +10,7 @@ import {
   Scene,
   SRGBColorSpace,
   StorageTexture,
+  StorageBufferAttribute,
   Vector2,
   type Node,
   type NodeBuilder,
@@ -18,7 +19,7 @@ import {
   type Texture,
   type WebGPURenderer,
 } from "three/webgpu";
-import { colorSpaceToWorking } from "three/tsl";
+import { colorSpaceToWorking, storage } from "three/tsl";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
 import type { FrontendCapabilities } from "../streaming-backend/FrontendCapabilities";
 import {
@@ -43,8 +44,11 @@ import type {
   GaussianPassRedrawStrategy,
   GaussianPassResources,
   GaussianPassStats,
+  GaussianPassOutputStatus,
   ResolvedRadixBackend,
 } from "./pipeline/types";
+
+import { IntersectionCapacityPolicy } from "./pipeline/IntersectionCapacityPolicy";
 
 import { cameraDepthRange } from "./pipeline/FrameUniforms";
 
@@ -82,7 +86,37 @@ export class GaussianPass extends PassNode {
   readonly depthTexture: StorageTexture | null;
 
   private readonly ownerRenderer: WebGPURenderer;
-  private readonly requestedIntersectionCapacity: number | null;
+  private readonly capacityOptions: GaussianPassOptions;
+  private capacityPolicy: IntersectionCapacityPolicy | null = null;
+  private readonly outputState = new StorageBufferAttribute(
+    new Uint32Array(4),
+    4,
+  );
+  private readonly outputStateNode = storage(
+    this.outputState,
+    "uvec4",
+    1,
+  ).toReadOnly();
+  /** True on the GPU only when the latest attempt produced a complete result. Stable across growth. */
+  readonly outputReadyNode = this.outputStateNode
+    .element(0)
+    .y.greaterThan(0)
+    .and(this.outputStateNode.element(0).w.equal(0));
+  private outputStatus: GaussianPassOutputStatus["state"] =
+    "awaiting-first-result";
+  private outputVersion = 0;
+  private confirmedAttempt = 0;
+  private latestAttempt = 0;
+  private lastDemand = 0;
+  private growthCount = 0;
+  private growthDurationMs = 0;
+  private feedbackError: string | null = null;
+  private feedbackInFlight = false;
+  private feedbackGeneration = 0;
+  private lastFeedbackTime = -Infinity;
+  private pendingCapacity: number | null = null;
+  private resetOutput = true;
+  private checkAllocation = true;
   private resolvedIntersectionCapacity = 0;
   private readonly debugListeners = new Set<GaussianPassDebugListener>();
   private workingColorNode: Node | null = null;
@@ -165,10 +199,7 @@ export class GaussianPass extends PassNode {
       options.rasterChunkSize === undefined
         ? DEFAULT_RASTER_CHUNK_SIZE
         : options.rasterChunkSize;
-    validateRasterChunkSize(
-      rasterChunkSize,
-      intersectionCapacity ?? WORKGROUP_SIZE * 65_535,
-    );
+    validateRasterChunkSize(rasterChunkSize, intersectionCapacity ?? 1);
 
     this.dataMode = options.dataMode ?? "managed";
     if (this.dataMode !== "managed" && this.dataMode !== "external")
@@ -190,7 +221,8 @@ export class GaussianPass extends PassNode {
     this.redrawStrategy = redrawStrategy;
     this.depthSortMode = depthSortMode;
     this.antialiasMode = antialiasMode;
-    this.requestedIntersectionCapacity = intersectionCapacity;
+    this.capacityOptions = { ...options };
+    this.outputState.name = "3dgs.output-state";
     this.background = options.background ?? [0, 0, 0, 0];
     this.outputDepth = options.outputDepth ?? false;
     this.depthAlphaThreshold = options.depthAlphaThreshold ?? 0.95;
@@ -270,7 +302,10 @@ export class GaussianPass extends PassNode {
   /** Resolved after the first render when omitted from GaussianPassOptions. */
   get intersectionCapacity(): number {
     return (
-      this.requestedIntersectionCapacity ?? this.resolvedIntersectionCapacity
+      this.resolvedIntersectionCapacity ||
+      this.capacityOptions.intersectionCapacity ||
+      this.capacityOptions.initialIntersectionCapacity ||
+      0
     );
   }
 
@@ -303,10 +338,13 @@ export class GaussianPass extends PassNode {
       previousHeight !== this.renderTarget.height
     ) {
       this.frameDirty = true;
+      this.resetOutput = true;
+      this.outputVersion = 0;
+      this.feedbackGeneration++;
     }
   }
 
-  /** Number of complete Gaussian kernel chains successfully encoded. */
+  /** Number of encoded attempts. Completeness is GPU-authoritative; see getOutputStatus(). */
   get renderCount(): number {
     return this.successfulRenderCount;
   }
@@ -440,7 +478,7 @@ export class GaussianPass extends PassNode {
     this.setRasterNode("rasterOutputValidNode", node);
   }
 
-  /** Encode the pass before subsequent renderer.compute/render calls on this renderer. No readback. */
+  /** Encode before subsequent compute/render calls. Feedback is asynchronous and never awaited here. */
   render(): void {
     this.updateBefore({ renderer: this.ownerRenderer } as unknown as NodeFrame);
   }
@@ -614,18 +652,36 @@ export class GaussianPass extends PassNode {
       this.pipelineLayoutVersion = -1;
       this.frameDirty = true;
       this.autoSnapshot = null;
+      this.capacityPolicy = null;
+      this.feedbackGeneration++;
+      this.resetOutput = true;
+      this.outputVersion = 0;
+      this.pendingCapacity = null;
+      this.checkAllocation = true;
     }
+    if (!this.gaussianStore.hasPackedData) return undefined;
+    if (this.capacityPolicy === null) {
+      this.capacityPolicy = new IntersectionCapacityPolicy(
+        this.capacityOptions,
+        device.limits,
+        this.rasterChunkSize,
+        this.outputDepth,
+      );
+      this.resolvedIntersectionCapacity = this.capacityPolicy.initial;
+    }
+    if (this.outputStatus === "allocation-failed") return undefined;
 
     if (
       this.redrawStrategy === "never" &&
       !this.frameDirty &&
       this.pipeline !== null
     ) {
+      if (this.latestAttempt > this.confirmedAttempt)
+        this.scheduleCapacityFeedback();
       this.cachedFrameCount++;
       return undefined;
     }
 
-    if (!this.gaussianStore.hasPackedData) return undefined;
     const lodUpdate =
       this.dataMode === "managed"
         ? this.gaussianStore.updateLod(this.camera)
@@ -637,16 +693,12 @@ export class GaussianPass extends PassNode {
       this.frameDirty = true;
     }
     const data = this.gaussianStore.getPackedData();
-    if (this.requestedIntersectionCapacity === null) {
-      this.resolvedIntersectionCapacity = Math.min(
-        WORKGROUP_SIZE * 65_535,
-        Math.max(1, data.count * 16),
-      );
-    }
     if (
       this.pipeline === null ||
       this.pipelineLayoutVersion !== this.gaussianStore.layoutVersion
     ) {
+      this.feedbackGeneration++;
+      this.pendingCapacity = null;
       this.pipeline?.dispose();
       if (data.count > WORKGROUP_SIZE * 65_535) {
         throw new RangeError(
@@ -672,7 +724,9 @@ export class GaussianPass extends PassNode {
         this.rasterStats,
         this.depthAlphaThreshold,
         this.renderDomain,
+        this.outputState,
       );
+      this.checkAllocation = true;
       this.pipelineDevice = device;
       this.pipelineLayoutVersion = this.gaussianStore.layoutVersion;
       this.dirtyStages = DirtyStage.None;
@@ -686,18 +740,83 @@ export class GaussianPass extends PassNode {
       }
       this.dirtyStages = DirtyStage.None;
     }
+    if (this.pendingCapacity !== null) {
+      const capacity = this.pendingCapacity;
+      this.pendingCapacity = null;
+      this.outputStatus = "resizing";
+      const start = performance.now();
+      try {
+        this.pipeline.resizeIntersections(
+          capacity,
+          this.colorTexture,
+          this.depthTexture,
+        );
+        this.resolvedIntersectionCapacity = capacity;
+        this.growthCount++;
+        this.growthDurationMs += performance.now() - start;
+        this.feedbackGeneration++;
+        this.frameDirty = true;
+        this.lastFeedbackTime = -Infinity;
+        this.checkAllocation = true;
+      } catch (error) {
+        this.outputStatus = "allocation-failed";
+        this.feedbackError = String(error);
+        return undefined;
+      }
+    }
     if (this.redrawStrategy !== "always" && !this.frameDirty) {
+      if (this.latestAttempt > this.confirmedAttempt)
+        this.scheduleCapacityFeedback();
       this.cachedFrameCount++;
       return undefined;
     }
-    renderer.initRenderTarget(this.renderTarget);
-    this.pipeline.prepareFrame(
-      width,
-      height,
-      this.colorTexture,
-      this.depthTexture,
-    );
-    this.pipeline.render();
+    const checkAllocation =
+      this.checkAllocation && typeof device.pushErrorScope === "function";
+    const allocationGeneration = this.feedbackGeneration;
+    if (checkAllocation) {
+      device.pushErrorScope("out-of-memory");
+      device.pushErrorScope("validation");
+    }
+    try {
+      renderer.initRenderTarget(this.renderTarget);
+      this.pipeline.prepareFrame(
+        width,
+        height,
+        this.colorTexture,
+        this.depthTexture,
+      );
+      this.latestAttempt++;
+      this.pipeline.render(this.latestAttempt, this.resetOutput);
+      this.checkAllocation = false;
+    } catch (error) {
+      if (checkAllocation) this.failAllocation(String(error));
+      throw error;
+    } finally {
+      if (checkAllocation) {
+        void Promise.all([device.popErrorScope(), device.popErrorScope()])
+          .then((errors) => {
+            if (
+              this.disposed ||
+              allocationGeneration !== this.feedbackGeneration
+            )
+              return;
+            const error = errors.find((error) => error !== null);
+            if (error) this.failAllocation(error.message);
+          })
+          .catch((error) => {
+            if (
+              !this.disposed &&
+              allocationGeneration === this.feedbackGeneration
+            )
+              this.failAllocation(String(error));
+          });
+      }
+    }
+    this.resetOutput = false;
+    if (this.outputStatus !== "budget-exceeded")
+      this.outputStatus =
+        this.outputVersion > 0 ? "pending" : "awaiting-first-result";
+    this.scheduleCapacityFeedback();
     this.frameDirty = false;
     this.successfulRenderCount++;
     if (this.redrawStrategy === "auto") {
@@ -714,6 +833,98 @@ export class GaussianPass extends PassNode {
     return undefined;
   }
 
+  /** Last confirmed GPU result. Freshness is conservative until asynchronous feedback arrives. */
+  getOutputStatus(): GaussianPassOutputStatus {
+    return {
+      state: this.outputStatus,
+      valid: this.outputVersion > 0,
+      fresh:
+        !this.frameDirty &&
+        this.outputVersion > 0 &&
+        this.outputVersion === this.latestAttempt,
+      version: this.outputVersion,
+      confirmedAttempt: this.confirmedAttempt,
+      latestAttempt: this.latestAttempt,
+      requestedIntersections: this.lastDemand,
+      intersectionCapacity: this.intersectionCapacity,
+      maxIntersectionCapacity: this.capacityPolicy?.maximum ?? 0,
+      growthCount: this.growthCount,
+      growthDurationMs: this.growthDurationMs,
+      intersectionBufferBytes: this.intersectionCapacity * 16,
+      error: this.feedbackError,
+    };
+  }
+
+  private failAllocation(message: string): void {
+    this.outputStatus = "allocation-failed";
+    this.feedbackError = message;
+    this.outputVersion = 0;
+    this.feedbackGeneration++;
+    (this.outputState.array as Uint32Array).fill(0);
+    this.outputState.needsUpdate = true;
+  }
+
+  private scheduleCapacityFeedback(): void {
+    const now = performance.now();
+    if (
+      this.feedbackInFlight ||
+      (this.outputVersion > 0 &&
+        now - this.lastFeedbackTime < this.capacityPolicy!.interval)
+    )
+      return;
+    this.feedbackInFlight = true;
+    this.lastFeedbackTime = now;
+    const generation = this.feedbackGeneration;
+    const pipeline = this.pipeline;
+    // Three copies this tiny buffer into a private staging buffer before the
+    // first await, so later submissions cannot overwrite the sampled values.
+    void this.ownerRenderer
+      .getArrayBufferAsync(this.outputState)
+      .then((buffer) => {
+        if (
+          this.disposed ||
+          generation !== this.feedbackGeneration ||
+          pipeline !== this.pipeline
+        )
+          return;
+        const [attempt = 0, version = 0, demand = 0, overflow = 0] =
+          new Uint32Array(buffer);
+        this.confirmedAttempt = attempt;
+        this.outputVersion = version;
+        this.lastDemand = demand;
+        this.feedbackError = null;
+        if (overflow !== 0) {
+          const next = this.capacityPolicy!.next(
+            this.intersectionCapacity,
+            demand,
+          );
+          this.outputStatus =
+            next === null ? "budget-exceeded" : "overflow-pending";
+          if (next !== null && next > this.intersectionCapacity)
+            this.pendingCapacity = next;
+          // Retry current camera/data even with auto/never redraw after feedback.
+          this.frameDirty = true;
+        } else {
+          this.outputStatus =
+            attempt === this.latestAttempt ? "ready" : "pending";
+        }
+      })
+      .catch((error) => {
+        if (
+          this.disposed ||
+          generation !== this.feedbackGeneration ||
+          pipeline !== this.pipeline
+        )
+          return;
+        this.outputStatus = "readback-failed";
+        this.feedbackError = String(error);
+        this.frameDirty = true;
+      })
+      .finally(() => {
+        this.feedbackInFlight = false;
+      });
+  }
+
   /** Subscribe to allocation, LOD and CPU-side pass diagnostics. */
   subscribeDebug(listener: GaussianPassDebugListener): () => void {
     this.debugListeners.add(listener);
@@ -725,7 +936,7 @@ export class GaussianPass extends PassNode {
     return this.pipeline?.getResources() ?? null;
   }
 
-  /** Optional diagnostic readback. Normal rendering never reads the GPU count. */
+  /** Full diagnostic readback, separate from automatic 16-byte capacity feedback. */
   readStats(): Promise<GaussianPassStats> {
     if (this.pipeline !== null) return this.pipeline.readStats();
     return Promise.resolve({
@@ -764,6 +975,8 @@ export class GaussianPass extends PassNode {
   override dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.feedbackGeneration++;
+    this.outputState.dispose();
     this.unsubscribeStore?.();
     this.unsubscribeStore = null;
     this.pipeline?.dispose();
@@ -946,6 +1159,7 @@ export type {
   GaussianPassOptions,
   GaussianPassRedrawStrategy,
   GaussianPassProfileStats,
+  GaussianPassOutputStatus,
   GaussianPassResources,
   GaussianPassStats,
   GaussianTileLoadStats,

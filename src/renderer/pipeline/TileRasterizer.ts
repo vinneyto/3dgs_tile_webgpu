@@ -136,6 +136,7 @@ export class TileRasterizer {
     private readonly transmittanceThreshold = 1e-4,
     private readonly depthAlphaThreshold = 0.95,
     chunkWorkspace?: RasterChunkWorkspace,
+    private readonly completeDispatch?: IndirectStorageBufferAttribute,
   ) {
     this.metrics = rasterStats
       ? this.attributes.createUint("3dgs.raster-work", tileCapacity * 4)
@@ -224,7 +225,10 @@ export class TileRasterizer {
       throw new Error("TileRasterizer has no compute node");
     }
     if (this.chunks === null) {
-      this.renderer.compute(this.computeNode, [tilesX, tilesY, 1]);
+      this.renderer.compute(
+        this.computeNode,
+        this.completeDispatch ?? [tilesX, tilesY, 1],
+      );
       return;
     }
     if (this.chunkComputeNode === null || this.compositeNode === null) {
@@ -236,9 +240,15 @@ export class TileRasterizer {
     this.chunks.offsets.encode(this.renderer);
     this.renderer.compute(this.chunks.prepareNode);
     this.renderer.compute(this.chunks.emitNode, [groups, 1, 1]);
-    this.renderer.compute(this.computeNode, [tilesX, tilesY, 1]);
+    this.renderer.compute(
+      this.computeNode,
+      this.completeDispatch ?? [tilesX, tilesY, 1],
+    );
     this.renderer.compute(this.chunkComputeNode, this.chunks.dispatch);
-    this.renderer.compute(this.compositeNode, [tilesX, tilesY, 1]);
+    this.renderer.compute(
+      this.compositeNode,
+      this.completeDispatch ?? [tilesX, tilesY, 1],
+    );
   }
 
   dispose(): void {

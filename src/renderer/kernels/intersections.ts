@@ -24,7 +24,8 @@ fn prepare_dispatch(
     let last = item_count - 1u;
     total = (*intersection_offsets)[last] + (*tile_counts)[last];
   }
-  let count = min(total, capacity);
+  // Never sort or publish a truncated set.
+  let count = select(total, 0u, total > capacity);
   let radix_blocks = (count + ${RADIX_BLOCK_ITEMS - 1}u) / ${RADIX_BLOCK_ITEMS}u;
   let reduce_chunks = (radix_blocks + ${RADIX_REDUCE_ITEMS - 1}u) / ${RADIX_REDUCE_ITEMS}u;
   (*radix_block_dispatch)[0] = vec4<u32>(radix_blocks, 1u, 1u, 0u);
@@ -107,3 +108,26 @@ fn emit_intersections(
 ${boundaryTileContributionWGSL()}
 `;
 })();
+
+/** Separate kernel keeps every stage within the portable eight-storage-binding limit. */
+export const prepareIntersectionOutputWGSL = /* wgsl */ `
+fn prepare_intersection_output(
+  state: ptr<storage, array<vec4<u32>>, read>,
+  visible_state: ptr<storage, array<vec4<u32>>, read>,
+  emit_dispatch: ptr<storage, array<vec4<u32>>, read_write>,
+  raster_dispatch: ptr<storage, array<vec4<u32>>, read_write>,
+  output_state: ptr<storage, array<vec4<u32>>, read_write>,
+  tiles: vec2<u32>,
+  attempt: u32,
+  reset_valid: u32
+) -> u32 {
+  let overflow = (*state)[0].w;
+  let complete = overflow == 0u;
+  (*emit_dispatch)[0] = vec4<u32>(select(0u, ((*visible_state)[0].x + ${WORKGROUP_SIZE - 1}u) / ${WORKGROUP_SIZE}u, complete), 1u, 1u, 0u);
+  (*raster_dispatch)[0] = vec4<u32>(select(0u, tiles.x, complete), tiles.y, 1u, 0u);
+  var last_version = (*output_state)[0].y;
+  if (reset_valid != 0u) { last_version = 0u; }
+  (*output_state)[0] = vec4<u32>(attempt, select(last_version, attempt, complete), (*state)[0].y, overflow);
+  return 0u;
+}
+`;

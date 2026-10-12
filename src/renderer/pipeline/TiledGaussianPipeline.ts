@@ -1,4 +1,9 @@
-import type { Camera, StorageTexture, WebGPURenderer } from "three/webgpu";
+import type {
+  Camera,
+  StorageBufferAttribute,
+  StorageTexture,
+  WebGPURenderer,
+} from "three/webgpu";
 import type { GaussianData } from "../GaussianData";
 import type { GaussianRenderStore } from "../GaussianRenderStore";
 import type {
@@ -39,8 +44,8 @@ export class TiledGaussianPipeline {
   readonly depthSorter: RadixSorter;
   readonly orderedTiles: DepthOrderedTileStage;
   readonly scan: ExclusiveScanStage;
-  readonly intersections: IntersectionStage;
-  readonly sorter: RadixSorter;
+  intersections: IntersectionStage;
+  sorter: RadixSorter;
 
   private tileOffsets: TileOffsetBuilder | null = null;
   private rasterizer: TileRasterizer | null = null;
@@ -59,7 +64,7 @@ export class TiledGaussianPipeline {
     store: GaussianRenderStore,
     private readonly mode: DepthSortMode,
     antialiasMode: AntialiasMode,
-    private readonly capacity: number,
+    private capacity: number,
     background: readonly [number, number, number, number],
     private readonly profileKernels: boolean,
     private readonly maxRasterizedSplatsPerTile: number | null,
@@ -71,6 +76,7 @@ export class TiledGaussianPipeline {
     private readonly rasterStats = false,
     private readonly depthAlphaThreshold = 0.95,
     domain?: GaussianRenderDomain,
+    private readonly outputState?: StorageBufferAttribute,
   ) {
     this.frame = new FrameUniforms(camera, background, domain);
     this.objects = new ObjectFrameState(camera, store, data.count);
@@ -134,10 +140,15 @@ export class TiledGaussianPipeline {
       "uint",
       () => this.data.activeCount,
     );
-    this.intersections = new IntersectionStage(
-      renderer,
-      data.count,
-      capacity,
+    this.intersections = this.createIntersections();
+    this.sorter = this.createSorter();
+  }
+
+  private createIntersections(): IntersectionStage {
+    return new IntersectionStage(
+      this.renderer,
+      this.data.count,
+      this.capacity,
       this.depthSorter.sortedRecords,
       this.visible.dispatch,
       this.orderedTiles.tileCounts,
@@ -146,15 +157,70 @@ export class TiledGaussianPipeline {
       this.projection.projectedConic,
       this.projection.projectedColor,
       this.frame,
+      this.outputState,
     );
-    this.sorter = new RadixSorter(
-      renderer,
+  }
+
+  private createSorter(): RadixSorter {
+    return new RadixSorter(
+      this.renderer,
       "tile",
-      capacity,
+      this.capacity,
       this.intersections.buffers,
       this.intersections.dispatch,
-      radixBackend,
+      this.radixBackend,
     );
+  }
+
+  /** Keep projection, scene buffers and scans; replace only capacity-dependent stages. */
+  resizeIntersections(
+    capacity: number,
+    color: StorageTexture,
+    depth: StorageTexture | null,
+  ): void {
+    const old = {
+      rasterizer: this.rasterizer,
+      tileOffsets: this.tileOffsets,
+      chunkWorkspace: this.chunkWorkspace,
+      sorter: this.sorter,
+      intersections: this.intersections,
+      capacity: this.capacity,
+    };
+    this.rasterizer = null;
+    this.tileOffsets = null;
+    this.chunkWorkspace = null;
+    this.capacity = capacity;
+    try {
+      this.intersections = this.createIntersections();
+      this.sorter = this.createSorter();
+      this.rebuildTileStages(color, depth);
+    } catch (error) {
+      this.disposeTileStages();
+      if (this.sorter !== old.sorter) this.sorter.dispose();
+      if (this.intersections !== old.intersections)
+        this.intersections.dispose();
+      Object.assign(this, old);
+      throw error;
+    }
+    const retire = () => {
+      old.rasterizer?.dispose();
+      old.tileOffsets?.dispose();
+      old.chunkWorkspace?.dispose();
+      old.sorter.dispose();
+      old.intersections.dispose();
+    };
+    // Three submits compute commands synchronously. Retain the old bindings
+    // until all already submitted uses finish, including frames after feedback.
+    const queue = (this.renderer.backend as unknown as { device?: GPUDevice })
+      ?.device?.queue;
+    if (queue) void queue.onSubmittedWorkDone().then(retire, retire);
+    else retire();
+  }
+
+  private disposeTileStages(): void {
+    this.rasterizer?.dispose();
+    this.tileOffsets?.dispose();
+    this.chunkWorkspace?.dispose();
   }
 
   prepareFrame(
@@ -183,7 +249,7 @@ export class TiledGaussianPipeline {
     }
   }
 
-  render(): void {
+  render(attempt = 1, resetValid = false): void {
     if (this.tileOffsets === null || this.rasterizer === null) {
       throw new Error(
         "TiledGaussianPipeline must be prepared before rendering",
@@ -196,7 +262,7 @@ export class TiledGaussianPipeline {
     this.depthSorter.encode(this.profileKernels);
     this.orderedTiles.encode();
     this.scan.encode(this.renderer);
-    this.intersections.encode();
+    this.intersections.encode(attempt, resetValid);
     this.sorter.encode(this.profileKernels);
     this.tileOffsets.encode();
     this.rasterizer.encode(this.tilesX, this.tilesY);
@@ -330,6 +396,7 @@ export class TiledGaussianPipeline {
       this.rasterTransmittanceThreshold,
       this.depthAlphaThreshold,
       this.chunkWorkspace ?? undefined,
+      this.intersections.rasterDispatch,
     );
     this.tileCapacity = tileCapacity;
     this.tileStageRebuilds++;
