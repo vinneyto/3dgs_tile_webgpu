@@ -1,17 +1,18 @@
+import { StorageBindings } from "./StorageBindings";
 import type {
   ComputeNode,
   Node,
   StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
-import { instanceIndex, storage, wgslFn } from "three/tsl";
+import { instanceIndex, wgslFn } from "three/tsl";
 import { gatherDepthOrderedTileCountsWGSL } from "../kernels/visibility";
 import { AttributePool } from "./AttributePool";
 import { WORKGROUP_SIZE } from "./constants";
 import type { DispatchResources } from "./types";
 
 export class DepthOrderedTileStage {
-  readonly tileCounts: StorageBufferAttribute;
+  tileCounts: StorageBufferAttribute;
 
   private readonly attributes = new AttributePool();
   private readonly computeNode: ComputeNode;
@@ -22,7 +23,9 @@ export class DepthOrderedTileStage {
     originalTileCounts: StorageBufferAttribute,
     sortedGaussians: StorageBufferAttribute,
     private readonly visibleDispatch: DispatchResources,
+    bindings = new StorageBindings(),
   ) {
+    this.attributes.bindings = bindings;
     this.tileCounts = this.attributes.createUint(
       "3dgs.depth-ordered-tile-counts",
       gaussianCount,
@@ -32,21 +35,30 @@ export class DepthOrderedTileStage {
     );
     this.computeNode = kernel({
       rank: instanceIndex,
-      state: storage(visibleDispatch.state, "uvec4", 1).toReadOnly(),
-      depth_sorted_gaussians: storage(
-        sortedGaussians,
-        "uvec2",
-        gaussianCount,
-      ).toReadOnly(),
-      tile_counts: storage(
-        originalTileCounts,
+      state: this.attributes
+        .storage(visibleDispatch.state, "uvec4", 1)
+        .toReadOnly(),
+      depth_sorted_gaussians: this.attributes
+        .storage(sortedGaussians, "uvec2", gaussianCount)
+        .toReadOnly(),
+      tile_counts: this.attributes
+        .storage(originalTileCounts, "uint", gaussianCount)
+        .toReadOnly(),
+      ordered_tile_counts: this.attributes.storage(
+        this.tileCounts,
         "uint",
         gaussianCount,
-      ).toReadOnly(),
-      ordered_tile_counts: storage(this.tileCounts, "uint", gaussianCount),
+      ),
     })
       .computeKernel([WORKGROUP_SIZE])
       .setName("3DGS gather depth-ordered tile counts WGSL");
+  }
+
+  resize(count: number): void {
+    this.tileCounts = this.attributes.grow(this.tileCounts, count);
+  }
+  getComputeNodes(): ComputeNode[] {
+    return [this.computeNode];
   }
 
   encode(): void {

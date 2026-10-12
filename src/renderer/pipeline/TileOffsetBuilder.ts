@@ -1,10 +1,11 @@
+import { StorageBindings } from "./StorageBindings";
 import type {
   ComputeNode,
   Node,
   StorageBufferAttribute,
   WebGPURenderer,
 } from "three/webgpu";
-import { instanceIndex, storage, uint, uniform, wgslFn } from "three/tsl";
+import { instanceIndex, uniform, wgslFn } from "three/tsl";
 import {
   clearTileOffsetsWGSL,
   tileBoundariesWGSL,
@@ -15,7 +16,7 @@ import { SuffixMinStage } from "./SuffixMinStage";
 import type { DepthSortMode, DispatchResources } from "./types";
 
 export class TileOffsetBuilder {
-  readonly offsets: StorageBufferAttribute;
+  offsets: StorageBufferAttribute;
 
   private readonly attributes = new AttributePool();
   private readonly clearNode: ComputeNode;
@@ -30,19 +31,25 @@ export class TileOffsetBuilder {
     sortedRecordsAttribute: StorageBufferAttribute,
     private readonly dispatch: DispatchResources,
     private readonly getTileCount?: () => number,
+    bindings = new StorageBindings(),
   ) {
+    this.attributes.bindings = bindings;
     this.offsets = this.attributes.createUint(
       "3dgs.tile-offsets",
       tileCapacity + 1,
     );
     this.runtimeTileCount.value = tileCapacity;
-    const offsets = storage(this.offsets, "uint", tileCapacity + 1);
+    const offsets = this.attributes.storage(
+      this.offsets,
+      "uint",
+      tileCapacity + 1,
+    );
 
     const clearKernel = wgslFn<Record<string, Node>>(clearTileOffsetsWGSL);
     this.clearNode = clearKernel({
       index: instanceIndex,
-      tile_count: getTileCount ? this.runtimeTileCount : uint(tileCapacity),
-      state: storage(dispatch.state, "uvec4", 1).toReadOnly(),
+      tile_count: this.runtimeTileCount,
+      state: this.attributes.storage(dispatch.state, "uvec4", 1).toReadOnly(),
       offsets,
     })
       .compute(tileCapacity + 1, [WORKGROUP_SIZE])
@@ -53,13 +60,11 @@ export class TileOffsetBuilder {
     );
     this.boundariesNode = boundariesKernel({
       index: instanceIndex,
-      tile_count: getTileCount ? this.runtimeTileCount : uint(tileCapacity),
-      state: storage(dispatch.state, "uvec4", 1).toReadOnly(),
-      records: storage(
-        sortedRecordsAttribute,
-        "uvec2",
-        sortedRecordsAttribute.count,
-      ).toReadOnly(),
+      tile_count: this.runtimeTileCount,
+      state: this.attributes.storage(dispatch.state, "uvec4", 1).toReadOnly(),
+      records: this.attributes
+        .storage(sortedRecordsAttribute, "uvec2", sortedRecordsAttribute.count)
+        .toReadOnly(),
       offsets,
     })
       .computeKernel([WORKGROUP_SIZE])
@@ -69,7 +74,28 @@ export class TileOffsetBuilder {
       this.offsets,
       tileCapacity + 1,
       getTileCount ? () => getTileCount() + 1 : undefined,
+      bindings,
     );
+  }
+
+  resize(capacity: number): void {
+    this.offsets = this.attributes.grow(this.offsets, capacity + 1);
+    this.clearNode.count = capacity + 1;
+    this.runtimeTileCount.value = capacity;
+    this.suffixMin.resize(this.offsets, capacity + 1);
+  }
+  setSortedRecords(
+    previous: StorageBufferAttribute,
+    next: StorageBufferAttribute,
+  ): void {
+    this.attributes.rebind(previous, next);
+  }
+  getComputeNodes(): ComputeNode[] {
+    return [
+      this.clearNode,
+      this.boundariesNode,
+      ...this.suffixMin.getComputeNodes(),
+    ];
   }
 
   encode(): void {

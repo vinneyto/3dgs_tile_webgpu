@@ -45,9 +45,10 @@ layout replacement, device change, or disposal. `render()` never awaits feedback
 An overflowing response requests
 `min(maximum, roundUp(max(demand * headroom, current * growthFactor)))`.
 The maximum can reduce the reserve while still accommodating demand. The next
-render replaces only intersections, tile radix scratch, tile offsets, and raster
-chunk/raster stages, then retries the current camera/data. Projection, scene
-attributes, object state, and prefix scans are retained. Old capacity-dependent
+render grows only insufficient intersection, tile radix and raster-chunk
+workspaces, then retries the current camera/data. Compute nodes and pipelines,
+projection, scene attributes, object state, tile offsets and prefix scans are
+retained; see [stable-pipeline.md](stable-pipeline.md). Old capacity-dependent
 resources are retired after submitted GPU work completes; peak usage can include
 both allocations. Growth still allocates and initializes CPU TypedArrays and
 Three GPU buffers, and can cause a main-thread hitch.

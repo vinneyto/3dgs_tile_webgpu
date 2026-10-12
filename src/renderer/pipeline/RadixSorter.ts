@@ -1,3 +1,4 @@
+import { StorageBindings } from "./StorageBindings";
 import type {
   ComputeNode,
   Node,
@@ -7,10 +8,9 @@ import type {
 import {
   invocationLocalIndex,
   invocationSubgroupIndex,
-  storage,
   subgroupIndex,
   subgroupSize,
-  uint,
+  uniform,
   wgslFn,
   workgroupArray,
   workgroupId,
@@ -52,24 +52,29 @@ export class RadixSorter {
   sortedRecords: StorageBufferAttribute;
 
   private readonly attributes = new AttributePool();
-  private readonly blockHistograms: StorageBufferAttribute;
-  private readonly blockPrefixes: StorageBufferAttribute;
-  private readonly reduced: StorageBufferAttribute;
+  private blockHistograms: StorageBufferAttribute;
+  private blockPrefixes: StorageBufferAttribute;
+  private reduced: StorageBufferAttribute;
   private readonly reduceNode: ComputeNode;
   private readonly scanReducedNode: ComputeNode;
   private readonly scanAddNode: ComputeNode;
-  private readonly maxRadixBlocks: number;
-  private readonly maxReduceChunks: number;
+  private maxRadixBlocks: number;
+  private maxReduceChunks: number;
   private passes: RadixPass[] = [];
+  private activePassCount = 0;
+  private readonly blockStride = uniform(1, "uint");
+  private readonly chunkStride = uniform(1, "uint");
 
   constructor(
     private readonly renderer: WebGPURenderer,
     private readonly label: string,
-    private readonly capacity: number,
+    private capacity: number,
     private readonly buffers: KeyValueBuffers,
     private readonly dispatch: DispatchResources,
     private readonly backend: ResolvedRadixBackend,
+    bindings = new StorageBindings(),
   ) {
+    this.attributes.bindings = bindings;
     this.maxRadixBlocks = Math.ceil(capacity / RADIX_BLOCK_ITEMS);
     this.maxReduceChunks = Math.ceil(this.maxRadixBlocks / RADIX_REDUCE_ITEMS);
     this.blockHistograms = this.attributes.createUint(
@@ -85,12 +90,14 @@ export class RadixSorter {
       this.maxReduceChunks * RADIX_SIZE,
     );
 
-    const state = storage(dispatch.state, "uvec4", 1).toReadOnly();
-    const histograms = storage(
-      this.blockHistograms,
-      "uint",
-      this.blockHistograms.count,
-    ).toReadOnly();
+    this.blockStride.value = this.maxRadixBlocks;
+    this.chunkStride.value = this.maxReduceChunks;
+    const state = this.attributes
+      .storage(dispatch.state, "uvec4", 1)
+      .toReadOnly();
+    const histograms = this.attributes
+      .storage(this.blockHistograms, "uint", this.blockHistograms.count)
+      .toReadOnly();
     const reduceKernel = wgslFn<Record<string, Node>>(
       backend === "subgroup"
         ? reduceRadixHistogramsWGSL
@@ -99,11 +106,15 @@ export class RadixSorter {
     const reduceParameters: Record<string, Node> = {
       lane: invocationLocalIndex,
       group_id: workgroupId,
-      block_stride: uint(this.maxRadixBlocks),
-      chunk_stride: uint(this.maxReduceChunks),
+      block_stride: this.blockStride,
+      chunk_stride: this.chunkStride,
       state,
       block_histograms: histograms,
-      reduced: storage(this.reduced, "uint", this.reduced.count),
+      reduced: this.attributes.storage(
+        this.reduced,
+        "uint",
+        this.reduced.count,
+      ),
     };
     if (backend === "subgroup") {
       reduceParameters.subgroup_index = subgroupIndex;
@@ -120,9 +131,13 @@ export class RadixSorter {
     const scanReducedKernel =
       wgslFn<Record<string, Node>>(scanRadixReducedWGSL);
     this.scanReducedNode = scanReducedKernel({
-      chunk_stride: uint(this.maxReduceChunks),
+      chunk_stride: this.chunkStride,
       state,
-      reduced: storage(this.reduced, "uint", this.reduced.count),
+      reduced: this.attributes.storage(
+        this.reduced,
+        "uint",
+        this.reduced.count,
+      ),
     })
       .compute(1)
       .setName(`3DGS ${label} radix global scan WGSL`);
@@ -133,12 +148,14 @@ export class RadixSorter {
     this.scanAddNode = scanAddKernel({
       lane: invocationLocalIndex,
       group_id: workgroupId,
-      block_stride: uint(this.maxRadixBlocks),
-      chunk_stride: uint(this.maxReduceChunks),
+      block_stride: this.blockStride,
+      chunk_stride: this.chunkStride,
       state,
       block_histograms: histograms,
-      reduced: storage(this.reduced, "uint", this.reduced.count).toReadOnly(),
-      block_prefixes: storage(
+      reduced: this.attributes
+        .storage(this.reduced, "uint", this.reduced.count)
+        .toReadOnly(),
+      block_prefixes: this.attributes.storage(
         this.blockPrefixes,
         "uint",
         this.blockPrefixes.count,
@@ -148,25 +165,55 @@ export class RadixSorter {
       .computeKernel([WORKGROUP_SIZE])
       .setName(`3DGS ${label} radix scan-add WGSL`);
     this.sortedRecords = buffers.recordsA;
+    this.passes = Array.from({ length: 8 }, (_, index) =>
+      this.createPass(index, index * RADIX_BITS),
+    );
   }
 
   configure(bitCount: number): void {
-    const passCount = Math.ceil(Math.max(0, bitCount) / RADIX_BITS);
-    if (passCount === this.passes.length) return;
-    this.disposePasses();
-    this.passes = Array.from({ length: passCount }, (_, passIndex) =>
-      this.createPass(passIndex, passIndex * RADIX_BITS),
-    );
+    const count = Math.ceil(Math.max(0, bitCount) / RADIX_BITS);
+    if (count > 8) throw new RangeError("Radix keys exceed 32 bits");
+    this.activePassCount = count;
     this.sortedRecords =
-      passCount % 2 === 0 ? this.buffers.recordsA : this.buffers.recordsB;
+      count % 2 === 0 ? this.buffers.recordsA : this.buffers.recordsB;
+  }
+
+  resize(capacity: number): void {
+    this.capacity = Math.max(this.capacity, capacity);
+    this.maxRadixBlocks = Math.ceil(this.capacity / RADIX_BLOCK_ITEMS);
+    this.maxReduceChunks = Math.ceil(this.maxRadixBlocks / RADIX_REDUCE_ITEMS);
+    this.blockHistograms = this.attributes.grow(
+      this.blockHistograms,
+      this.maxRadixBlocks * RADIX_SIZE,
+    );
+    this.blockPrefixes = this.attributes.grow(
+      this.blockPrefixes,
+      this.maxRadixBlocks * RADIX_SIZE,
+    );
+    this.reduced = this.attributes.grow(
+      this.reduced,
+      this.maxReduceChunks * RADIX_SIZE,
+    );
+    this.blockStride.value = this.maxRadixBlocks;
+    this.chunkStride.value = this.maxReduceChunks;
+    this.configure(this.activePassCount * RADIX_BITS);
+  }
+
+  getComputeNodes(): ComputeNode[] {
+    return [
+      this.reduceNode,
+      this.scanReducedNode,
+      this.scanAddNode,
+      ...this.passes.flatMap((pass) => [pass.histogram, pass.scatter]),
+    ];
   }
 
   get passCount(): number {
-    return this.passes.length;
+    return this.activePassCount;
   }
 
   encode(_profileKernels = false): void {
-    for (const pass of this.passes) {
+    for (const pass of this.passes.slice(0, this.activePassCount)) {
       this.renderer.compute(pass.histogram, this.dispatch.radixBlock);
       this.renderer.compute(this.reduceNode, this.dispatch.radixReduce);
       this.renderer.compute(this.scanReducedNode);
@@ -187,12 +234,12 @@ export class RadixSorter {
     const inputA = passIndex % 2 === 0;
     const recordsIn = inputA ? this.buffers.recordsA : this.buffers.recordsB;
     const recordsOut = inputA ? this.buffers.recordsB : this.buffers.recordsA;
-    const state = storage(this.dispatch.state, "uvec4", 1).toReadOnly();
-    const recordsInput = storage(
-      recordsIn,
-      "uvec2",
-      this.capacity,
-    ).toReadOnly();
+    const state = this.attributes
+      .storage(this.dispatch.state, "uvec4", 1)
+      .toReadOnly();
+    const recordsInput = this.attributes
+      .storage(recordsIn, "uvec2", this.capacity)
+      .toReadOnly();
 
     const histogramKernel = wgslFn<Record<string, Node>>(
       this.backend === "subgroup"
@@ -202,10 +249,10 @@ export class RadixSorter {
     const histogramParameters: Record<string, Node> = {
       lane: invocationLocalIndex,
       block_index: workgroupId.x,
-      block_stride: uint(this.maxRadixBlocks),
+      block_stride: this.blockStride,
       state,
       records: recordsInput,
-      block_histograms: storage(
+      block_histograms: this.attributes.storage(
         this.blockHistograms,
         "uint",
         this.blockHistograms.count,
@@ -234,15 +281,13 @@ export class RadixSorter {
     const scatterParameters: Record<string, Node> = {
       lane: invocationLocalIndex,
       block_index: workgroupId.x,
-      block_stride: uint(this.maxRadixBlocks),
+      block_stride: this.blockStride,
       state,
       records_in: recordsInput,
-      records_out: storage(recordsOut, "uvec2", this.capacity),
-      block_prefixes: storage(
-        this.blockPrefixes,
-        "uint",
-        this.blockPrefixes.count,
-      ).toReadOnly(),
+      records_out: this.attributes.storage(recordsOut, "uvec2", this.capacity),
+      block_prefixes: this.attributes
+        .storage(this.blockPrefixes, "uint", this.blockPrefixes.count)
+        .toReadOnly(),
       block_bases: workgroupArray("uint", RADIX_SIZE),
       local_digit_counts: workgroupArray("uint", RADIX_SIZE),
     };

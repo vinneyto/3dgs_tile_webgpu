@@ -315,6 +315,8 @@ function fixture(options: ConstructorParameters<typeof GaussianPass>[3]) {
     prepareFrame: vi.fn(),
     render: vi.fn(),
     resizeIntersections: vi.fn(),
+    compatible: vi.fn(() => false),
+    updateData: vi.fn(),
     rebuildProjection: vi.fn(),
     rebuildRasterizer: vi.fn(),
     dispose: vi.fn(),

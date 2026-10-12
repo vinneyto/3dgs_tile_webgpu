@@ -7,12 +7,10 @@ import type {
 import {
   instanceIndex,
   invocationLocalIndex,
-  storage,
-  uint,
+  uniform,
   wgslFn,
   workgroupArray,
   workgroupId,
-  uniform,
 } from "three/tsl";
 import {
   addScanOffsetsWGSL,
@@ -20,22 +18,27 @@ import {
   scanVisibilityBlocksWGSL,
 } from "../kernels/scan";
 import { AttributePool } from "./AttributePool";
+import { StorageBindings } from "./StorageBindings";
 import { SCAN_BLOCK_ITEMS, WORKGROUP_SIZE } from "./constants";
 
+// Five levels cover every uint32 logical length. Allocate tiny inactive levels
+// now, so crossing a block boundary never creates a new ComputeNode.
+const SCAN_LEVELS = 5;
 interface ScanLevel {
   length: number;
   runtimeLength: ReturnType<typeof uniform>;
   blockCount: number;
   output: StorageBufferAttribute;
+  sums: StorageBufferAttribute;
   scanNode: ComputeNode;
   addNode?: ComputeNode;
 }
 
 export class ExclusiveScanStage {
-  readonly output: StorageBufferAttribute;
-
+  output: StorageBufferAttribute;
   private readonly attributes = new AttributePool();
   private readonly levels: ScanLevel[] = [];
+  private capacity: number;
 
   constructor(
     input: StorageBufferAttribute,
@@ -43,107 +46,113 @@ export class ExclusiveScanStage {
     label = "intersections",
     inputMode: "uint" | "projectedVisibility" = "uint",
     private readonly getLength?: () => number,
+    bindings = new StorageBindings(),
   ) {
+    this.attributes.bindings = bindings;
+    this.capacity = length;
     this.output = this.attributes.createUint(`3dgs.${label}-offsets`, length);
-    const uintScanKernel = wgslFn<Record<string, Node>>(scanBlocksWGSL);
-    const visibilityScanKernel = wgslFn<Record<string, Node>>(
-      scanVisibilityBlocksWGSL,
-    );
-    const addKernel = wgslFn<Record<string, Node>>(addScanOffsetsWGSL);
-
-    let scanInput = input;
-    let scanOutput = this.output;
-    let scanLength = length;
-    while (true) {
-      const blockCount = Math.ceil(scanLength / SCAN_BLOCK_ITEMS);
-      const blockSums = this.attributes.createUint(
-        `3dgs.${label}-scan-sums-${this.levels.length}`,
+    let scanInput = input,
+      scanOutput = this.output,
+      scanLength = length;
+    for (let index = 0; index < SCAN_LEVELS; index++) {
+      const blockCount = Math.max(1, Math.ceil(scanLength / SCAN_BLOCK_ITEMS));
+      const sums = this.attributes.createUint(
+        `3dgs.${label}-scan-sums-${index}`,
         blockCount,
       );
-      const scratch = workgroupArray("uint", SCAN_BLOCK_ITEMS);
-      const firstLevelVisibility =
-        this.levels.length === 0 && inputMode === "projectedVisibility";
+      const visible = index === 0 && inputMode === "projectedVisibility";
       const runtimeLength = uniform(scanLength, "uint");
-      const scanNode = (
-        firstLevelVisibility ? visibilityScanKernel : uintScanKernel
+      const scanNode = wgslFn<Record<string, Node>>(
+        visible ? scanVisibilityBlocksWGSL : scanBlocksWGSL,
       )({
         lane: invocationLocalIndex,
         group_id: workgroupId.x,
-        length: getLength ? runtimeLength : uint(scanLength),
-        input_values: storage(
-          scanInput,
-          firstLevelVisibility ? "vec4" : "uint",
-          scanLength,
-        ).toReadOnly(),
-        output_values: storage(scanOutput, "uint", scanLength),
-        block_sums: storage(blockSums, "uint", blockCount),
-        scratch,
+        length: runtimeLength,
+        input_values: this.attributes
+          .storage(scanInput, visible ? "vec4" : "uint", scanLength)
+          .toReadOnly(),
+        output_values: this.attributes.storage(scanOutput, "uint", scanLength),
+        block_sums: this.attributes.storage(sums, "uint", blockCount),
+        scratch: workgroupArray("uint", SCAN_BLOCK_ITEMS),
       })
         .computeKernel([WORKGROUP_SIZE])
-        .setName(`3DGS ${label} scan WGSL level ${this.levels.length}`);
+        .setName(`3DGS ${label} scan WGSL level ${index}`);
       this.levels.push({
         length: scanLength,
         runtimeLength,
         blockCount,
         output: scanOutput,
+        sums,
         scanNode,
       });
-      if (blockCount <= 1) break;
-      scanInput = blockSums;
+      scanInput = sums;
       scanLength = blockCount;
-      scanOutput = this.attributes.createUint(
-        `3dgs.${label}-scan-offsets-${this.levels.length}`,
-        scanLength,
-      );
+      if (index < SCAN_LEVELS - 1)
+        scanOutput = this.attributes.createUint(
+          `3dgs.${label}-scan-offsets-${index + 1}`,
+          scanLength,
+        );
     }
-
-    for (let level = 0; level < this.levels.length - 1; level++) {
-      const current = this.levels[level]!;
-      const parent = this.levels[level + 1]!;
-      current.addNode = addKernel({
+    for (let index = 0; index < this.levels.length - 1; index++) {
+      const current = this.levels[index]!,
+        parent = this.levels[index + 1]!;
+      current.addNode = wgslFn<Record<string, Node>>(addScanOffsetsWGSL)({
         index: instanceIndex,
-        length: getLength ? current.runtimeLength : uint(current.length),
-        values: storage(current.output, "uint", current.length),
-        block_offsets: storage(
-          parent.output,
-          "uint",
-          parent.length,
-        ).toReadOnly(),
+        length: current.runtimeLength,
+        values: this.attributes.storage(current.output, "uint", current.length),
+        block_offsets: this.attributes
+          .storage(parent.output, "uint", parent.length)
+          .toReadOnly(),
       })
-        .compute(current.length, [WORKGROUP_SIZE])
-        .setName(`3DGS ${label} add scan offsets WGSL ${level}`);
+        .computeKernel([WORKGROUP_SIZE])
+        .setName(`3DGS ${label} add scan offsets WGSL ${index}`);
     }
+  }
+
+  resize(length: number): void {
+    this.capacity = Math.max(this.capacity, length);
+    let capacity = this.capacity;
+    for (const level of this.levels) {
+      level.length = capacity;
+      level.blockCount = Math.max(1, Math.ceil(capacity / SCAN_BLOCK_ITEMS));
+      level.output = this.attributes.grow(level.output, capacity);
+      level.sums = this.attributes.grow(level.sums, level.blockCount);
+      capacity = level.blockCount;
+    }
+    this.output = this.levels[0]!.output;
   }
 
   encode(renderer: WebGPURenderer): void {
-    let length = this.getLength?.();
+    let length = this.getLength?.() ?? this.capacity;
+    let activeLevels = 0;
     for (const level of this.levels) {
-      level.runtimeLength.value = length ?? level.length;
-      const blocks =
-        length === undefined
-          ? level.blockCount
-          : Math.max(1, Math.ceil(length / SCAN_BLOCK_ITEMS));
+      level.runtimeLength.value = length;
+      const blocks = Math.max(1, Math.ceil(length / SCAN_BLOCK_ITEMS));
       renderer.compute(level.scanNode, [blocks, 1, 1]);
-      if (length !== undefined) length = blocks;
+      activeLevels++;
+      if (blocks === 1) break;
+      length = blocks;
     }
-    for (let level = this.levels.length - 2; level >= 0; level--) {
-      const current = this.levels[level]!;
-      if (this.getLength) {
-        if (Number(current.runtimeLength.value) > 0)
-          renderer.compute(current.addNode!, [
-            Math.ceil(Number(current.runtimeLength.value) / WORKGROUP_SIZE),
-            1,
-            1,
-          ]);
-      } else renderer.compute(current.addNode!);
+    for (const level of this.levels.slice(activeLevels))
+      level.runtimeLength.value = 0;
+    for (let index = activeLevels - 2; index >= 0; index--) {
+      const level = this.levels[index]!;
+      if (Number(level.runtimeLength.value) > 0)
+        renderer.compute(level.addNode!, [
+          Math.ceil(Number(level.runtimeLength.value) / WORKGROUP_SIZE),
+          1,
+          1,
+        ]);
     }
   }
 
+  getComputeNodes(): ComputeNode[] {
+    return this.levels.flatMap((level) =>
+      level.addNode ? [level.scanNode, level.addNode] : [level.scanNode],
+    );
+  }
   dispose(): void {
-    for (const level of this.levels) {
-      level.scanNode.dispose();
-      level.addNode?.dispose();
-    }
+    for (const node of this.getComputeNodes()) node.dispose();
     this.attributes.dispose();
   }
 }
