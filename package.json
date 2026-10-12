@@ -21,6 +21,7 @@
     "dist",
     "README.md",
     "docs/render-extensions.md",
+    "docs/dynamic-intersections.md",
     "scripts/build-wasm.mjs",
     "THIRD_PARTY_NOTICES.md",
     "rust/Cargo.toml",

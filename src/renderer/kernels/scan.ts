@@ -30,7 +30,9 @@ fn ${config.functionName}(
     if (lane < active_count) {
       let left = offset * (2u * lane + 1u) - 1u;
       let right = offset * (2u * lane + 2u) - 1u;
-      (*scratch)[right] += (*scratch)[left];
+      let left_value = (*scratch)[left];
+      let right_value = (*scratch)[right];
+      (*scratch)[right] = right_value + min(left_value, 0xffffffffu - right_value);
     }
     offset *= 2u;
     active_count /= 2u;
@@ -51,7 +53,8 @@ fn ${config.functionName}(
       let right = offset * (2u * lane + 2u) - 1u;
       let value = (*scratch)[left];
       (*scratch)[left] = (*scratch)[right];
-      (*scratch)[right] += value;
+      let right_value = (*scratch)[right];
+      (*scratch)[right] = right_value + min(value, 0xffffffffu - right_value);
     }
     active_count *= 2u;
     offset /= 2u;
@@ -87,7 +90,9 @@ fn add_scan_offsets(
   block_offsets: ptr<storage, array<u32>, read>
 ) -> u32 {
   if (index < length) {
-    (*values)[index] += (*block_offsets)[index / ${SCAN_BLOCK_ITEMS}u];
+    let value = (*values)[index];
+    let offset = (*block_offsets)[index / ${SCAN_BLOCK_ITEMS}u];
+    (*values)[index] = value + min(offset, 0xffffffffu - value);
   }
   return 0u;
 }

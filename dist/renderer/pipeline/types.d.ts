@@ -37,8 +37,16 @@ export interface GaussianPassOptions {
     depthSortMode?: DepthSortMode;
     /** Preserve subpixel Gaussian energy, or retain the original fixed-footprint 3DGS low-pass behavior. */
     antialiasMode?: AntialiasMode;
-    /** Maximum emitted tile/Gaussian intersections. Buffers are allocated once at this capacity. */
+    /** Legacy fixed capacity. Overflow is rejected rather than rendered partially. */
     intersectionCapacity?: number;
+    /** Initial dynamic reserve, default 262,144 records (4 MiB for the pair). */
+    initialIntersectionCapacity?: number;
+    /** Hard record limit, additionally constrained by device/workspace limits. */
+    maxIntersectionCapacity?: number;
+    intersectionGrowthFactor?: number;
+    intersectionHeadroom?: number;
+    /** Milliseconds between small asynchronous feedback reads; default 100. */
+    intersectionReadbackInterval?: number;
     /** RGBA clear color composited behind the cloud. Defaults to transparent black. */
     background?: readonly [number, number, number, number];
     /** Create a float32 scalar texture; default encoding is opacity-weighted perspective depth exposed as pass.getTextureNode("depth"). */
@@ -73,6 +81,7 @@ export type GaussianPassDebugListener = (snapshot: GaussianPassDebugSnapshot) =>
 export interface GaussianPassStats {
     visibleGaussianCount: number;
     intersectionCount: number;
+    /** Exact through uint32 range; larger sums saturate to 0xffffffff and are always rejected. */
     requestedIntersections: number;
     intersectionCapacity: number;
     overflow: boolean;
@@ -170,4 +179,21 @@ export interface DispatchResources {
     radixBlock: IndirectStorageBufferAttribute;
     radixReduce: IndirectStorageBufferAttribute;
     linear: IndirectStorageBufferAttribute;
+}
+export interface GaussianPassOutputStatus {
+    state: "awaiting-first-result" | "pending" | "ready" | "overflow-pending" | "resizing" | "budget-exceeded" | "allocation-failed" | "readback-failed";
+    /** Conservative CPU confirmation. Use outputReadyNode for same-submission GPU consumers. */
+    valid: boolean;
+    fresh: boolean;
+    version: number;
+    confirmedAttempt: number;
+    latestAttempt: number;
+    /** Exact through uint32 range; larger sums saturate to 0xffffffff and are always rejected. */
+    requestedIntersections: number;
+    intersectionCapacity: number;
+    maxIntersectionCapacity: number;
+    growthCount: number;
+    growthDurationMs: number;
+    intersectionBufferBytes: number;
+    error: string | null;
 }
