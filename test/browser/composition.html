@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <title>Gaussian pass composition GPU check</title>
+  </head>
+  <body>
+    <pre id="result">Running WebGPU checks…</pre>
+    <script type="module">
+      import "./composition.ts";
+      window
+        .runQa()
+        .then((result) => {
+          document.getElementById("result").textContent = JSON.stringify(
+            result,
+            null,
+            2,
+          );
+          window.qaResult = result;
+        })
+        .catch((error) => {
+          document.getElementById("result").textContent = error.stack;
+          window.qaError = error.stack;
+        });
+    </script>
+  </body>
+</html>

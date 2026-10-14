@@ -192,3 +192,7 @@ See [GaussianPass rendering extensions](docs/render-extensions.md) for custom TS
 ### Dynamic intersection buffers
 
 `GaussianPass` now starts with a small independent reserve and grows from asynchronous GPU demand feedback. See [dynamic intersection capacity](docs/dynamic-intersections.md) for the output contract, fixed-capacity compatibility, limits, and memory accounting.
+
+### Composable logical passes
+
+The standard `gaussianPass()` preset exposes `pass.passes`: data, projection, ordering, intersections and raster. Assemble these explicitly with `composeGaussianPass()` and typed output connections, or replace the data producer with `GaussianTransformPass` to materialize geometry before projection. See [the composition guide](docs/composable-passes.md) for contracts, examples, node ownership and buffer lifetime.

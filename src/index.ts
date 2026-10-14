@@ -166,3 +166,46 @@ export {
   perspectiveGaussianProjection,
 } from "./renderer/nodes/GaussianProjectionNodes";
 export type { GaussianRenderStore } from "./renderer/GaussianRenderStore";
+
+export { composeGaussianPass } from "./renderer/composeGaussianPass";
+export { createGaussianPassComposition } from "./renderer/passes/createGaussianPassComposition";
+export {
+  GaussianDataPass,
+  type GaussianDataPassRuntime,
+  type GaussianDataPassContext,
+  type GaussianDataPassFactory,
+} from "./renderer/passes/GaussianDataPass";
+export {
+  GaussianProjectionPass,
+  type GaussianProjectionResources,
+} from "./renderer/passes/GaussianProjectionPass";
+export {
+  GaussianOrderingPass,
+  type GaussianOrderingResources,
+} from "./renderer/passes/GaussianOrderingPass";
+export {
+  GaussianIntersectionPass,
+  type GaussianIntersectionResources,
+} from "./renderer/passes/GaussianIntersectionPass";
+export {
+  GaussianRasterPass,
+  type GaussianRasterResources,
+} from "./renderer/passes/GaussianRasterPass";
+export { GaussianPassOutput } from "./renderer/passes/GaussianPassOutput";
+export type { GaussianPassComposition } from "./renderer/passes/GaussianPassComposition";
+export type {
+  GaussianProjectionNodeSlots,
+  GaussianRasterNodeSlots,
+} from "./renderer/nodes/GaussianContextNodes";
+export {
+  GaussianTransformPass,
+  type GaussianTransformNodeSlots,
+} from "./renderer/passes/GaussianTransformPass";
+
+export type { GaussianPassContext } from "./renderer/passes/GaussianPassContext";
+export type { GaussianOrderingRuntime } from "./renderer/passes/GaussianOrderingPass";
+export type { GaussianIntersectionRuntime } from "./renderer/passes/GaussianIntersectionPass";
+export type {
+  GaussianRasterContext,
+  GaussianRasterRuntime,
+} from "./renderer/passes/GaussianRasterPass";

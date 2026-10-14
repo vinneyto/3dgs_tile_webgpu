@@ -25,6 +25,16 @@ import { TileOffsetBuilder } from "./TileOffsetBuilder";
 import { TileRasterizer } from "./TileRasterizer";
 import { VisibleGaussianStage } from "./VisibleGaussianStage";
 import { StorageBindings } from "./StorageBindings";
+import { createGaussianPassComposition } from "../passes/createGaussianPassComposition";
+import {
+  validateGaussianPassComposition,
+  type GaussianPassComposition,
+} from "../passes/GaussianPassComposition";
+import type { GaussianDataPassRuntime } from "../passes/GaussianDataPass";
+import type { GaussianPassContext } from "../passes/GaussianPassContext";
+import type { GaussianOrderingRuntime } from "../passes/GaussianOrderingPass";
+import type { GaussianIntersectionRuntime } from "../passes/GaussianIntersectionPass";
+import type { GaussianRasterRuntime } from "../passes/GaussianRasterPass";
 import { TILE_SIZE } from "./constants";
 import type {
   AntialiasMode,
@@ -37,6 +47,11 @@ import type {
 } from "./types";
 
 export class TiledGaussianPipeline {
+  readonly passes: GaussianPassComposition;
+  private readonly dataRuntime: GaussianDataPassRuntime;
+  private readonly orderingRuntime: GaussianOrderingRuntime;
+  private readonly intersectionRuntime: GaussianIntersectionRuntime;
+  private rasterRuntime: GaussianRasterRuntime | null = null;
   readonly frame: FrameUniforms;
   readonly objects: ObjectFrameState;
   readonly projection: ProjectionStage;
@@ -50,6 +65,7 @@ export class TiledGaussianPipeline {
   sorter: RadixSorter;
 
   private readonly bindings: StorageBindings;
+  private disposed = false;
   private resourceUpdates = 0;
   private shaderGeneration = 0;
   private tileOffsets: TileOffsetBuilder | null = null;
@@ -68,7 +84,7 @@ export class TiledGaussianPipeline {
     private data: GaussianData,
     store: GaussianRenderStore,
     private readonly mode: DepthSortMode,
-    antialiasMode: AntialiasMode,
+    private readonly antialiasMode: AntialiasMode,
     private capacity: number,
     background: readonly [number, number, number, number],
     private readonly profileKernels: boolean,
@@ -76,12 +92,13 @@ export class TiledGaussianPipeline {
     private readonly rasterChunkSize: number | null,
     private readonly subpixelSampleCulling: boolean,
     private readonly radixBackend: ResolvedRadixBackend,
-    private readonly nodes: GaussianNodeSlots,
+    nodes: GaussianNodeSlots,
     private readonly rasterTransmittanceThreshold = 1e-4,
     private readonly rasterStats = false,
     private readonly depthAlphaThreshold = 0.95,
     domain?: GaussianRenderDomain,
     private readonly outputState?: StorageBufferAttribute,
+    passes?: GaussianPassComposition,
   ) {
     this.bindings = new StorageBindings(renderer);
     this.frame = new FrameUniforms(camera, background, domain);
@@ -91,105 +108,71 @@ export class TiledGaussianPipeline {
       data.count,
       this.bindings,
     );
-    this.frame.activeCount.value = data.activeCount;
-    this.projection = new ProjectionStage(
-      data,
-      this.frame,
-      this.objects,
-      antialiasMode,
-      nodes,
-      subpixelSampleCulling,
-      this.bindings,
-    );
-    this.profileDiagnostics =
-      profileKernels || rasterStats
-        ? new ProfileDiagnosticsStage(
-            renderer,
-            data.count,
-            this.projection.projectedMean,
-            this.projection.projectedConic,
-            this.frame,
-            maxRasterizedSplatsPerTile,
-            this.bindings,
-          )
-        : null;
-    this.visibleScan = new ExclusiveScanStage(
-      this.projection.projectedMean,
-      data.count,
-      "visible",
-      "projectedVisibility",
-      () => this.data.activeCount,
-      this.bindings,
-    );
-    this.visible = new VisibleGaussianStage(
-      renderer,
-      mode,
-      data.count,
-      this.visibleScan.output,
-      this.projection.projectedMean,
-      this.frame.viewport,
-      this.frame.activeCount,
-      () => this.data.activeCount,
-      this.bindings,
-    );
-    this.depthSorter = new RadixSorter(
-      renderer,
-      "depth",
-      data.count,
-      this.visible.buffers,
-      this.visible.dispatch,
-      radixBackend,
-      this.bindings,
-    );
-    this.depthSorter.configure(mode === "float32" ? 32 : 16);
-    this.orderedTiles = new DepthOrderedTileStage(
-      renderer,
-      data.count,
-      this.projection.tileCounts,
-      this.depthSorter.sortedRecords,
-      this.visible.dispatch,
-      this.bindings,
-    );
-    this.scan = new ExclusiveScanStage(
-      this.orderedTiles.tileCounts,
-      data.count,
-      "intersections",
-      "uint",
-      () => this.data.activeCount,
-      this.bindings,
-    );
-    this.intersections = this.createIntersections();
-    this.sorter = this.createSorter();
+    this.passes = passes ?? createGaussianPassComposition(store);
+    validateGaussianPassComposition(this.passes);
+    if (!passes) {
+      for (const key of Object.keys(
+        this.passes.projection.nodes,
+      ) as (keyof GaussianProjectionNodeSlots)[])
+        this.passes.projection.nodes[key] = nodes[key];
+      for (const key of Object.keys(
+        this.passes.raster.nodes,
+      ) as (keyof GaussianRasterNodeSlots)[])
+        this.passes.raster.nodes[key] = nodes[key];
+    }
+    try {
+      this.dataRuntime = this.passes.data.createRuntime({
+        source: data,
+        renderer,
+        bindings: this.bindings,
+      });
+      this.data = this.dataRuntime.getData();
+      this.objects.resize(this.data.count);
+      this.frame.activeCount.value = this.data.activeCount;
+      const context = this.getPassContext();
+      this.projection = this.passes.projection.createRuntime(context);
+      this.profileDiagnostics =
+        profileKernels || rasterStats
+          ? new ProfileDiagnosticsStage(
+              renderer,
+              this.data.count,
+              this.projection.projectedMean,
+              this.projection.projectedConic,
+              this.frame,
+              maxRasterizedSplatsPerTile,
+              this.bindings,
+            )
+          : null;
+      const ordering = (this.orderingRuntime =
+        this.passes.ordering.createRuntime(context));
+      this.visibleScan = ordering.visibleScan;
+      this.visible = ordering.visible;
+      this.depthSorter = ordering.depthSorter;
+      this.orderedTiles = ordering.orderedTiles;
+      const intersections = (this.intersectionRuntime =
+        this.passes.intersections.createRuntime(context));
+      this.scan = intersections.scan;
+      this.intersections = intersections.intersections;
+      this.sorter = intersections.sorter;
+    } catch (error) {
+      this.dispose();
+      throw error;
+    }
   }
 
-  private createIntersections(): IntersectionStage {
-    return new IntersectionStage(
-      this.renderer,
-      this.data.count,
-      this.capacity,
-      this.depthSorter.sortedRecords,
-      this.visible.dispatch,
-      this.orderedTiles.tileCounts,
-      this.scan.output,
-      this.projection.projectedMean,
-      this.projection.projectedConic,
-      this.projection.projectedColor,
-      this.frame,
-      this.outputState,
-      this.bindings,
-    );
-  }
-
-  private createSorter(): RadixSorter {
-    return new RadixSorter(
-      this.renderer,
-      "tile",
-      this.capacity,
-      this.intersections.buffers,
-      this.intersections.dispatch,
-      this.radixBackend,
-      this.bindings,
-    );
+  private getPassContext(): GaussianPassContext {
+    return {
+      renderer: this.renderer,
+      bindings: this.bindings,
+      frame: this.frame,
+      objects: this.objects,
+      mode: this.mode,
+      antialiasMode: this.antialiasMode,
+      subpixelSampleCulling: this.subpixelSampleCulling,
+      radixBackend: this.radixBackend,
+      capacity: this.capacity,
+      outputState: this.outputState,
+    };
   }
 
   compatible(data: GaussianData): boolean {
@@ -201,15 +184,14 @@ export class TiledGaussianPipeline {
   }
 
   updateData(data: GaussianData): void {
+    this.dataRuntime.updateData(data);
+    data = this.dataRuntime.getData();
     const variantChanged = !this.compatible(data);
     this.objects.resize(data.count);
-    this.projection.updateData(data, this.nodes);
+    this.projection.updateData(data, this.passes.projection.nodes);
     if (variantChanged) this.shaderGeneration++;
-    this.visibleScan.resize(data.count);
-    this.visible.resize(data.count);
-    this.depthSorter.resize(data.count);
-    this.orderedTiles.resize(data.count);
-    this.scan.resize(data.count);
+    this.orderingRuntime.resize(data.count);
+    this.intersectionRuntime.resizeGaussianCount(data.count);
     this.profileDiagnostics?.resize(data.count);
     this.data = data;
     this.frame.activeCount.value = data.activeCount;
@@ -222,8 +204,7 @@ export class TiledGaussianPipeline {
     _color: StorageTexture,
     _depth: StorageTexture | null,
   ): void {
-    this.intersections.resize(capacity);
-    this.sorter.resize(capacity);
+    this.intersectionRuntime.resizeCapacity(capacity);
     this.chunkWorkspace?.resize(capacity);
     this.capacity = capacity;
     this.updateRasterResources();
@@ -246,18 +227,13 @@ export class TiledGaussianPipeline {
 
   getComputeNodes(): ComputeNode[] {
     return [
-      this.projection,
-      this.profileDiagnostics,
-      this.visibleScan,
-      this.visible,
-      this.depthSorter,
-      this.orderedTiles,
-      this.scan,
-      this.intersections,
-      this.sorter,
-      this.tileOffsets,
-      this.rasterizer,
-    ].flatMap((stage) => stage?.getComputeNodes() ?? []);
+      ...this.dataRuntime.getComputeNodes(),
+      ...this.projection.getComputeNodes(),
+      ...(this.profileDiagnostics?.getComputeNodes() ?? []),
+      ...this.orderingRuntime.getComputeNodes(),
+      ...this.intersectionRuntime.getComputeNodes(),
+      ...(this.rasterRuntime?.getComputeNodes() ?? []),
+    ];
   }
 
   /** Compile/bind every reserved stage with zero work, including inactive scan/radix levels. */
@@ -299,6 +275,7 @@ export class TiledGaussianPipeline {
     this.tilesX = tilesX;
     this.tilesY = tilesY;
     this.frame.update(width, height, tilesX, tilesY);
+    this.data = this.dataRuntime.getData();
     this.frame.activeCount.value = this.data.activeCount;
     this.objects.update();
     if (this.tileOffsets === null || this.rasterizer === null) {
@@ -327,17 +304,17 @@ export class TiledGaussianPipeline {
         "TiledGaussianPipeline must be prepared before rendering",
       );
     }
+    this.dataRuntime.encode(this.renderer);
     this.projection.encode(this.renderer);
     this.profileDiagnostics?.encode();
-    this.visibleScan.encode(this.renderer);
-    this.visible.encode();
-    this.depthSorter.encode(this.profileKernels);
-    this.orderedTiles.encode();
-    this.scan.encode(this.renderer);
-    this.intersections.encode(attempt, resetValid);
-    this.sorter.encode(this.profileKernels);
-    this.tileOffsets.encode();
-    this.rasterizer.encode(this.tilesX, this.tilesY);
+    this.orderingRuntime.encode(this.profileKernels);
+    this.intersectionRuntime.encode(attempt, resetValid, this.profileKernels);
+    this.rasterRuntime!.encode(this.tilesX, this.tilesY);
+  }
+
+  rebuildData(): void {
+    this.dataRuntime.getComputeNodes();
+    this.shaderGeneration++;
   }
 
   rebuildProjection(nodes: GaussianProjectionNodeSlots): void {
@@ -406,22 +383,21 @@ export class TiledGaussianPipeline {
   }
 
   dispose(): void {
-    this.tileOffsets?.dispose();
+    if (this.disposed) return;
+    this.disposed = true;
+    this.rasterRuntime?.dispose();
+    this.rasterRuntime = null;
     this.tileOffsets = null;
-    this.rasterizer?.dispose();
     this.rasterizer = null;
     this.chunkWorkspace?.dispose();
     this.chunkWorkspace = null;
-    this.sorter.dispose();
-    this.intersections.dispose();
-    this.scan.dispose();
-    this.orderedTiles.dispose();
-    this.depthSorter.dispose();
-    this.visible.dispose();
-    this.visibleScan.dispose();
+    this.intersectionRuntime?.dispose();
+    this.orderingRuntime?.dispose();
     this.profileDiagnostics?.dispose();
-    this.projection.dispose();
-    this.objects.dispose();
+    this.projection?.dispose();
+    this.objects?.dispose();
+    this.dataRuntime?.dispose();
+    for (const pass of Object.values(this.passes)) pass.output.bind(null);
   }
 
   private rebuildTileStages(
@@ -437,47 +413,26 @@ export class TiledGaussianPipeline {
         this.bindings,
       );
     }
-    this.tileOffsets?.dispose();
-    this.rasterizer?.dispose();
+    this.rasterRuntime?.dispose();
     const tileBits = Math.max(
       1,
       Math.ceil(Math.log2(Math.max(2, tileCapacity + 1))),
     );
     this.sorter.configure(tileBits);
-    this.tileOffsets = new TileOffsetBuilder(
-      this.renderer,
-      this.mode,
+    const raster = (this.rasterRuntime = this.passes.raster.createRuntime({
+      ...this.getPassContext(),
       tileCapacity,
-      this.sorter.sortedRecords,
-      this.intersections.dispatch,
-      () => Number(this.frame.tileCount.value),
-      this.bindings,
-    );
-    this.rasterizer = new TileRasterizer(
-      this.renderer,
-      this.data.count,
-      this.capacity,
-      this.mode,
-      this.data.means,
-      this.projection.projectedMean,
-      this.projection.projectedConic,
-      this.projection.projectedColor,
-      this.sorter.sortedRecords,
-      this.tileOffsets.offsets,
       colorTexture,
       depthTexture,
-      this.frame,
-      this.maxRasterizedSplatsPerTile,
-      this.rasterChunkSize,
-      tileCapacity,
-      this.nodes,
-      this.rasterStats,
-      this.rasterTransmittanceThreshold,
-      this.depthAlphaThreshold,
-      this.chunkWorkspace ?? undefined,
-      this.intersections.rasterDispatch,
-      this.bindings,
-    );
+      maxRasterizedSplatsPerTile: this.maxRasterizedSplatsPerTile,
+      rasterChunkSize: this.rasterChunkSize,
+      rasterStats: this.rasterStats,
+      rasterTransmittanceThreshold: this.rasterTransmittanceThreshold,
+      depthAlphaThreshold: this.depthAlphaThreshold,
+      chunkWorkspace: this.chunkWorkspace ?? undefined,
+    }));
+    this.tileOffsets = raster.tileOffsets;
+    this.rasterizer = raster.rasterizer;
     this.tileCapacity = tileCapacity;
     this.tileStageRebuilds++;
   }
