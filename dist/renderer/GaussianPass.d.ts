@@ -1,10 +1,14 @@
 import { Camera, PassNode, StorageTexture, type Node, type NodeBuilder, type NodeFrame, type ColorSpace, type Texture, type WebGPURenderer } from "three/webgpu";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
+import { type GaussianPassComposition } from "./passes/GaussianPassComposition";
 import type { AntialiasMode, GaussianBoundaryPolicy, DepthSortMode, GaussianPassDebugInfo, GaussianPassDebugListener, GaussianPassOptions, GaussianPassRedrawStrategy, GaussianPassResources, GaussianPassStats, GaussianPassOutputStatus, GaussianPassWarmupOptions, ResolvedRadixBackend } from "./pipeline/types";
 /**
  * A multi-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
  */
 export declare class GaussianPass extends PassNode {
+    readonly passes: GaussianPassComposition;
+    private readonly unsubscribePasses;
+    private releaseComposition;
     readonly dataMode: "managed" | "external";
     private fixedSize;
     private readonly renderDomain;
@@ -56,8 +60,8 @@ export declare class GaussianPass extends PassNode {
     private workingColorNode;
     private pipeline;
     private pipelineLayoutVersion;
-    private readonly nodeSlots;
-    private readonly defaultProjectionNode;
+    private get nodeSlots();
+    private get defaultProjectionNode();
     private dirtyStages;
     private frameDirty;
     private successfulRenderCount;
@@ -66,7 +70,7 @@ export declare class GaussianPass extends PassNode {
     private pipelineDevice;
     private disposed;
     private unsubscribeStore;
-    constructor(renderer: WebGPURenderer, camera: Camera, gaussianStore: GaussianRenderStore, options?: GaussianPassOptions);
+    constructor(renderer: WebGPURenderer, camera: Camera, gaussianStore: GaussianRenderStore, options?: GaussianPassOptions, composition?: GaussianPassComposition);
     /** Resolved after the first render when omitted from GaussianPassOptions. */
     get intersectionCapacity(): number;
     getTexture(name: string): Texture;
@@ -89,36 +93,51 @@ export declare class GaussianPass extends PassNode {
     set invalidDepthValue(value: number);
     get boundaryPolicy(): GaussianBoundaryPolicy;
     set boundaryPolicy(value: GaussianBoundaryPolicy);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get gaussianProjectionNode(): Node;
     set gaussianProjectionNode(node: Node);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get rasterOutputDepthNode(): Node;
     set rasterOutputDepthNode(node: Node);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get rasterOutputValidNode(): Node;
     set rasterOutputValidNode(node: Node);
     /** Encode before subsequent compute/render calls. Feedback is asynchronous and never awaited here. */
     render(): void;
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get gaussianPositionLocalNode(): Node;
     set gaussianPositionLocalNode(node: Node);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get gaussianPositionWorldNode(): Node;
     set gaussianPositionWorldNode(node: Node);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get gaussianScaleNode(): Node;
     set gaussianScaleNode(node: Node);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get gaussianRotationNode(): Node;
     set gaussianRotationNode(node: Node);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get gaussianOpacityNode(): Node;
     set gaussianOpacityNode(node: Node);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get gaussianColorNode(): Node;
     set gaussianColorNode(node: Node);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get gaussianVisibilityNode(): Node;
     set gaussianVisibilityNode(node: Node);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get rasterColorNode(): Node;
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get rasterPixelValueNode(): Node;
     set rasterPixelValueNode(node: Node);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get rasterBreakNode(): Node;
     set rasterBreakNode(node: Node);
     set rasterColorNode(node: Node);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get rasterAlphaNode(): Node;
     set rasterAlphaNode(node: Node);
+    /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
     get rasterDiscardNode(): Node;
     set rasterDiscardNode(node: Node);
     invalidateProjection(): void;

@@ -23,11 +23,15 @@ import { colorSpaceToWorking, storage } from "three/tsl";
 import { GaussianData } from "./GaussianData";
 import type { GaussianRenderStore } from "./GaussianRenderStore";
 import type { FrontendCapabilities } from "../streaming-backend/FrontendCapabilities";
-import {
-  createDefaultGaussianNodeSlots,
-  type GaussianNodeSlots,
-} from "./nodes/GaussianContextNodes";
+import { type GaussianNodeSlots } from "./nodes/GaussianContextNodes";
 import { validateRasterChunkSize } from "./kernels/rasterChunks";
+import { createGaussianPassComposition } from "./passes/createGaussianPassComposition";
+import {
+  claimGaussianPassComposition,
+  assertGaussianPassCompositionAvailable,
+  validateGaussianPassComposition,
+  type GaussianPassComposition,
+} from "./passes/GaussianPassComposition";
 import { TiledGaussianPipeline } from "./pipeline/TiledGaussianPipeline";
 import {
   DEFAULT_RASTER_CHUNK_SIZE,
@@ -59,13 +63,17 @@ const enum DirtyStage {
   None = 0,
   Projection = 1 << 0,
   Rasterizer = 1 << 1,
-  All = Projection | Rasterizer,
+  Data = 1 << 2,
+  All = Projection | Rasterizer | Data,
 }
 
 /**
  * A multi-cloud Three.js RenderPipeline pass backed by explicit WGSL kernels bound through wgslFn.
  */
 export class GaussianPass extends PassNode {
+  readonly passes: GaussianPassComposition;
+  private readonly unsubscribePasses: (() => void)[] = [];
+  private releaseComposition: (() => void) | null = null;
   readonly dataMode: "managed" | "external";
   private fixedSize: { width: number; height: number } | null = null;
   private readonly renderDomain: GaussianRenderDomain;
@@ -129,9 +137,12 @@ export class GaussianPass extends PassNode {
   private workingColorNode: Node | null = null;
   private pipeline: TiledGaussianPipeline | null = null;
   private pipelineLayoutVersion = -1;
-  private readonly nodeSlots = createDefaultGaussianNodeSlots();
-  private readonly defaultProjectionNode =
-    this.nodeSlots.gaussianProjectionNode;
+  private get nodeSlots(): GaussianNodeSlots {
+    return { ...this.passes.projection.nodes, ...this.passes.raster.nodes };
+  }
+  private get defaultProjectionNode(): Node {
+    return this.passes.projection.defaultProjectionNode;
+  }
   private dirtyStages = DirtyStage.None;
   private frameDirty = true;
   private successfulRenderCount = 0;
@@ -146,6 +157,7 @@ export class GaussianPass extends PassNode {
     camera: Camera,
     gaussianStore: GaussianRenderStore,
     options: GaussianPassOptions = {},
+    composition?: GaussianPassComposition,
   ) {
     super(PassNode.COLOR, new Scene(), camera, {
       type: HalfFloatType,
@@ -153,6 +165,16 @@ export class GaussianPass extends PassNode {
       stencilBuffer: false,
       samples: 0,
     });
+
+    this.passes = Object.freeze({
+      ...(composition ?? createGaussianPassComposition(gaussianStore)),
+    });
+    validateGaussianPassComposition(this.passes);
+    assertGaussianPassCompositionAvailable(this.passes);
+    if (this.passes.data.sourceStore !== gaussianStore)
+      throw new Error(
+        "Gaussian data pass must consume the store passed to the render runtime",
+      );
 
     const depthSortMode = options.depthSortMode ?? "float32";
     const antialiasMode = options.antialiasMode ?? "compensated";
@@ -287,6 +309,23 @@ export class GaussianPass extends PassNode {
 
     if (options.fixedSize)
       this.setFixedSize(options.fixedSize.width, options.fixedSize.height);
+
+    this.releaseComposition = claimGaussianPassComposition(this.passes, this);
+    this.unsubscribePasses.push(
+      this.passes.projection.subscribe(() => this.invalidateProjection()),
+      this.passes.raster.subscribe(() => this.invalidateRasterizer()),
+    );
+
+    for (let dataPass = this.passes.data; dataPass;) {
+      this.unsubscribePasses.push(
+        dataPass.subscribe(() => this.invalidate()),
+        dataPass.subscribeNodes(() => {
+          this.dirtyStages |= DirtyStage.Data;
+        }),
+      );
+      if (!dataPass.upstream) break;
+      dataPass = dataPass.upstream;
+    }
 
     // The store processes loads independently; the pass enables render output.
     const device = (
@@ -470,20 +509,23 @@ export class GaussianPass extends PassNode {
     this.invalidate();
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get gaussianProjectionNode(): Node {
-    return this.nodeSlots.gaussianProjectionNode;
+    return this.passes.projection.nodes.gaussianProjectionNode;
   }
   set gaussianProjectionNode(node: Node) {
     this.setProjectionNode("gaussianProjectionNode", node);
   }
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get rasterOutputDepthNode(): Node {
-    return this.nodeSlots.rasterOutputDepthNode;
+    return this.passes.raster.nodes.rasterOutputDepthNode;
   }
   set rasterOutputDepthNode(node: Node) {
     this.setRasterNode("rasterOutputDepthNode", node);
   }
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get rasterOutputValidNode(): Node {
-    return this.nodeSlots.rasterOutputValidNode;
+    return this.passes.raster.nodes.rasterOutputValidNode;
   }
   set rasterOutputValidNode(node: Node) {
     this.setRasterNode("rasterOutputValidNode", node);
@@ -494,76 +536,86 @@ export class GaussianPass extends PassNode {
     this.updateBefore({ renderer: this.ownerRenderer } as unknown as NodeFrame);
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get gaussianPositionLocalNode(): Node {
-    return this.nodeSlots.gaussianPositionLocalNode;
+    return this.passes.projection.nodes.gaussianPositionLocalNode;
   }
 
   set gaussianPositionLocalNode(node: Node) {
     this.setProjectionNode("gaussianPositionLocalNode", node);
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get gaussianPositionWorldNode(): Node {
-    return this.nodeSlots.gaussianPositionWorldNode;
+    return this.passes.projection.nodes.gaussianPositionWorldNode;
   }
 
   set gaussianPositionWorldNode(node: Node) {
     this.setProjectionNode("gaussianPositionWorldNode", node);
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get gaussianScaleNode(): Node {
-    return this.nodeSlots.gaussianScaleNode;
+    return this.passes.projection.nodes.gaussianScaleNode;
   }
 
   set gaussianScaleNode(node: Node) {
     this.setProjectionNode("gaussianScaleNode", node);
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get gaussianRotationNode(): Node {
-    return this.nodeSlots.gaussianRotationNode;
+    return this.passes.projection.nodes.gaussianRotationNode;
   }
 
   set gaussianRotationNode(node: Node) {
     this.setProjectionNode("gaussianRotationNode", node);
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get gaussianOpacityNode(): Node {
-    return this.nodeSlots.gaussianOpacityNode;
+    return this.passes.projection.nodes.gaussianOpacityNode;
   }
 
   set gaussianOpacityNode(node: Node) {
     this.setProjectionNode("gaussianOpacityNode", node);
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get gaussianColorNode(): Node {
-    return this.nodeSlots.gaussianColorNode;
+    return this.passes.projection.nodes.gaussianColorNode;
   }
 
   set gaussianColorNode(node: Node) {
     this.setProjectionNode("gaussianColorNode", node);
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get gaussianVisibilityNode(): Node {
-    return this.nodeSlots.gaussianVisibilityNode;
+    return this.passes.projection.nodes.gaussianVisibilityNode;
   }
 
   set gaussianVisibilityNode(node: Node) {
     this.setProjectionNode("gaussianVisibilityNode", node);
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get rasterColorNode(): Node {
-    return this.nodeSlots.rasterColorNode;
+    return this.passes.raster.nodes.rasterColorNode;
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get rasterPixelValueNode(): Node {
-    return this.nodeSlots.rasterPixelValueNode;
+    return this.passes.raster.nodes.rasterPixelValueNode;
   }
 
   set rasterPixelValueNode(node: Node) {
     this.setRasterNode("rasterPixelValueNode", node);
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get rasterBreakNode(): Node {
-    return this.nodeSlots.rasterBreakNode;
+    return this.passes.raster.nodes.rasterBreakNode;
   }
 
   set rasterBreakNode(node: Node) {
@@ -574,16 +626,18 @@ export class GaussianPass extends PassNode {
     this.setRasterNode("rasterColorNode", node);
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get rasterAlphaNode(): Node {
-    return this.nodeSlots.rasterAlphaNode;
+    return this.passes.raster.nodes.rasterAlphaNode;
   }
 
   set rasterAlphaNode(node: Node) {
     this.setRasterNode("rasterAlphaNode", node);
   }
 
+  /** @deprecated Use passes.projection.nodes or passes.raster.nodes to name the owning pass. */
   get rasterDiscardNode(): Node {
-    return this.nodeSlots.rasterDiscardNode;
+    return this.passes.raster.nodes.rasterDiscardNode;
   }
 
   set rasterDiscardNode(node: Node) {
@@ -625,7 +679,8 @@ export class GaussianPass extends PassNode {
       );
     }
     if (
-      this.nodeSlots.gaussianProjectionNode === this.defaultProjectionNode &&
+      this.passes.projection.nodes.gaussianProjectionNode ===
+        this.defaultProjectionNode &&
       !(this.camera instanceof PerspectiveCamera)
     ) {
       throw new TypeError(
@@ -748,6 +803,8 @@ export class GaussianPass extends PassNode {
       this.checkAllocation = true;
     }
     if (this.dirtyStages !== DirtyStage.None) {
+      if ((this.dirtyStages & DirtyStage.Data) !== 0)
+        this.pipeline.rebuildData();
       if ((this.dirtyStages & DirtyStage.Projection) !== 0) {
         this.pipeline.rebuildProjection(this.nodeSlots);
       }
@@ -873,6 +930,7 @@ export class GaussianPass extends PassNode {
       this.depthAlphaThreshold,
       this.renderDomain,
       this.outputState,
+      this.passes,
     );
   }
 
@@ -960,6 +1018,7 @@ export class GaussianPass extends PassNode {
       this.ownerRenderer.initRenderTarget(this.renderTarget);
       this.pipeline.prepareFrame(1, 1, this.colorTexture, this.depthTexture);
     }
+    if ((this.dirtyStages & DirtyStage.Data) !== 0) this.pipeline.rebuildData();
     if ((this.dirtyStages & DirtyStage.Projection) !== 0)
       this.pipeline.rebuildProjection(this.nodeSlots);
     if ((this.dirtyStages & DirtyStage.Rasterizer) !== 0)
@@ -1134,6 +1193,10 @@ export class GaussianPass extends PassNode {
     this.pipeline?.dispose();
     this.pipeline = null;
     this.pipelineDevice = null;
+    for (const unsubscribe of this.unsubscribePasses) unsubscribe();
+    this.unsubscribePasses.length = 0;
+    this.releaseComposition?.();
+    this.releaseComposition = null;
     this.frameDirty = true;
     this.autoSnapshot = null;
     this.debugListeners.clear();
@@ -1156,9 +1219,8 @@ export class GaussianPass extends PassNode {
     node: Node,
   ): void {
     assertNode(node, key);
-    if (this.nodeSlots[key] === node) return;
-    this.nodeSlots[key] = node;
-    this.invalidateProjection();
+    if (this.passes.projection.nodes[key] === node) return;
+    this.passes.projection.nodes[key] = node;
   }
 
   private setRasterNode(
@@ -1175,9 +1237,8 @@ export class GaussianPass extends PassNode {
     node: Node,
   ): void {
     assertNode(node, key);
-    if (this.nodeSlots[key] === node) return;
-    this.nodeSlots[key] = node;
-    this.invalidateRasterizer();
+    if (this.passes.raster.nodes[key] === node) return;
+    this.passes.raster.nodes[key] = node;
   }
 
   private invalidateAutomatically(): void {
