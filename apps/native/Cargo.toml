@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = ["crates/spark-lod", "crates/brush-renderer", "crates/bevy-gaussian", "viewer"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.88"
+
+[workspace.dependencies]
+anyhow = "1"
+glam = "0.30"
+bytemuck = { version = "1", features = ["derive", "min_const_generics"] }
+wgpu = "26"
+pollster = "0.4"
+bevy = { version = "=0.17.3", default-features = false, features = ["std", "async_executor", "multi_threaded", "bevy_log", "bevy_asset", "bevy_color", "bevy_core_pipeline", "bevy_render", "bevy_image", "bevy_camera", "bevy_shader", "bevy_sprite", "bevy_sprite_render", "bevy_window", "bevy_winit", "bevy_text", "bevy_ui", "bevy_ui_render", "default_font", "png", "x11"] }
+
+[profile.dev]
+opt-level = 1
+debug = 0
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"

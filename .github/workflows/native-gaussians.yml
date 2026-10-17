@@ -1,0 +1,37 @@
+name: Native Gaussian viewer
+on:
+  pull_request:
+    paths: ['apps/native/**', 'rust/vendor/spark-lib/**', '.github/workflows/native-gaussians.yml']
+  push:
+    branches: [main]
+    paths: ['apps/native/**', 'rust/vendor/spark-lib/**', '.github/workflows/native-gaussians.yml']
+jobs:
+  native:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: apps/native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.90.0
+        with:
+          components: rustfmt, clippy
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libxkbcommon-dev libwayland-dev mesa-vulkan-drivers xvfb
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/native
+      - run: cargo fmt -p spark-lod -p brush-renderer -p bevy-gaussian -p gaussian-viewer -- --check
+      - run: cargo check --workspace --locked
+      - run: cargo test --workspace --locked
+      - run: cargo test -p brush-renderer --test gpu --locked -- --ignored --nocapture
+        env:
+          XDG_RUNTIME_DIR: /tmp
+      - if: runner.os == 'Linux'
+        run: xvfb-run -a cargo run -p gaussian-viewer --locked -- tests/fixtures/rgb-binary.ply
+        env:
+          XDG_RUNTIME_DIR: /tmp
+          GAUSSIAN_SMOKE_TEST: '1'

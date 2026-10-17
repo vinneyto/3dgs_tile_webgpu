@@ -1,0 +1,17 @@
+[package]
+name = "brush-renderer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
+spark-lod = { path = "../spark-lod" }
+
+[dev-dependencies]
+naga = { version = "26", features = ["wgsl-in"] }

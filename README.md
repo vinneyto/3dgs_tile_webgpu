@@ -192,3 +192,7 @@ See [GaussianPass rendering extensions](docs/render-extensions.md) for custom TS
 ### Dynamic intersection buffers
 
 `GaussianPass` now starts with a small independent reserve and grows from asynchronous GPU demand feedback. See [dynamic intersection capacity](docs/dynamic-intersections.md) for the output contract, fixed-capacity compatibility, limits, and memory accounting.
+
+## Native Rust desktop experiment
+
+[`apps/native`](apps/native/README.md) is an isolated Spark × Brush × Bevy viewer. It loads local Gaussian PLY files with Spark, builds/selects Gaussian LODs, transforms per-entity buffers on the GPU and renders all clouds through Brush-derived WGSL on Bevy's wgpu device. See its README for build commands, plugin API, provenance, validation and experiment limitations.

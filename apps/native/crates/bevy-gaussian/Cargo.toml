@@ -1,0 +1,13 @@
+[package]
+name = "bevy-gaussian"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+bevy.workspace = true
+wgpu.workspace = true
+glam.workspace = true
+spark-lod = { path = "../spark-lod" }
+brush-renderer = { path = "../brush-renderer" }
