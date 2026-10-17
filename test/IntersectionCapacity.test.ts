@@ -188,14 +188,14 @@ it("rebuilds capacity-dependent stages and keeps scene/projection/scan resources
   const p = (f.pass as unknown as { pipeline: TiledGaussianPipeline }).pipeline;
   const projection = p.projection,
     scan = p.scan,
-    objects = p.objects;
+    objects = p.accumulation;
   const previous = p.getResources()!.sortedIntersections;
   const disposed = vi.fn();
   previous.addEventListener("dispose", disposed);
   p.resizeIntersections(2048, new StorageTexture(32, 32), null);
   expect(p.projection).toBe(projection);
   expect(p.scan).toBe(scan);
-  expect(p.objects).toBe(objects);
+  expect(p.accumulation).toBe(objects);
   expect(disposed).toHaveBeenCalledOnce();
   expect(p.getResources()!.sortedIntersections.count).toBe(2048);
   const stages = p as unknown as {

@@ -61,6 +61,7 @@ export type {
   GaussianStoreEvents,
   GaussianStoreListener,
 } from "./renderer/GaussianStoreEvents";
+export { GaussianCloudMaterial } from "./renderer/GaussianCloudMaterial";
 export { GaussianCloud } from "./renderer/GaussianCloud";
 export {
   OctreeHelper,

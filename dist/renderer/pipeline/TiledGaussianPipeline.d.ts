@@ -6,7 +6,7 @@ import { DepthOrderedTileStage } from "./DepthOrderedTileStage";
 import { ExclusiveScanStage } from "./ExclusiveScanStage";
 import { FrameUniforms } from "./FrameUniforms";
 import { IntersectionStage } from "./IntersectionStage";
-import { ObjectFrameState } from "./ObjectFrameState";
+import { CloudAccumulationStage } from "./CloudAccumulationStage";
 import { ProjectionStage } from "./ProjectionStage";
 import { ProfileDiagnosticsStage } from "./ProfileDiagnosticsStage";
 import { RadixSorter } from "./RadixSorter";
@@ -28,7 +28,7 @@ export declare class TiledGaussianPipeline {
     private readonly depthAlphaThreshold;
     private readonly outputState?;
     readonly frame: FrameUniforms;
-    readonly objects: ObjectFrameState;
+    readonly accumulation: CloudAccumulationStage;
     readonly projection: ProjectionStage;
     readonly profileDiagnostics: ProfileDiagnosticsStage | null;
     readonly visibleScan: ExclusiveScanStage;

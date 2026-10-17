@@ -192,3 +192,6 @@ See [GaussianPass rendering extensions](docs/render-extensions.md) for custom TS
 ### Dynamic intersection buffers
 
 `GaussianPass` now starts with a small independent reserve and grows from asynchronous GPU demand feedback. See [dynamic intersection capacity](docs/dynamic-intersections.md) for the output contract, fixed-capacity compatibility, limits, and memory accounting.
+
+See [per-cloud TSL materials](docs/cloud-materials.md) for customizing how each
+cloud writes world-space Gaussians before tiled projection and sorting.

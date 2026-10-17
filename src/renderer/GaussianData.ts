@@ -8,7 +8,7 @@ export interface ActiveSlotRange {
 }
 
 export interface GaussianBuffers {
-  /** vec4<f32> per Gaussian. xyz is the local-space mean; w holds objectId for occupied slots, or -1 for an unoccupied slot. */
+  /** vec4<f32> per Gaussian. xyz is the local-space mean; w holds CPU transport ownership (objectId, or -1 for a hole). GaussianPass gathers cloud-local inputs without uploading this id. */
   means: StorageBufferAttribute;
   /** float32: vec4<f32> linear scale + opacity. compact: uvec2 packed fp16 log scales + opacity. */
   scalesOpacity: StorageBufferAttribute;

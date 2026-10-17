@@ -21,6 +21,7 @@ export { StreamingGaussianBackend } from "./streaming-backend-impl/StreamingGaus
 export { WorkerStreamingGaussianBackend } from "./streaming-backend-worker/WorkerStreamingGaussianBackend";
 export { WorkerWasmGaussianBackend } from "./wasm-backend/WorkerWasmGaussianBackend";
 export type { GaussianStoreEvent, GaussianStoreEvents, GaussianStoreListener, } from "./renderer/GaussianStoreEvents";
+export { GaussianCloudMaterial } from "./renderer/GaussianCloudMaterial";
 export { GaussianCloud } from "./renderer/GaussianCloud";
 export { OctreeHelper, type OctreeHelperOptions, } from "./renderer/OctreeHelper";
 export { GaussianLodColorHelper, type GaussianLodColorHelperOptions, } from "./renderer/GaussianLodColorHelper";

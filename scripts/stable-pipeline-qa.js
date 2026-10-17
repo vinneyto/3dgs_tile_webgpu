@@ -128,7 +128,11 @@ window.runQa = async () => {
     await settle();
     const firstConfirmedFrameMs = performance.now() - confirmationStart;
     const graph = pass.pipeline;
-    const ids = graph.getComputeNodes().map((n) => n.id);
+    const tiledNodes = () =>
+      graph
+        .getComputeNodes()
+        .slice(graph.accumulation.getComputeNodes().length);
+    const ids = tiledNodes().map((n) => n.id);
     const warmed = counts();
     records.push({
       phase: "first",
@@ -146,7 +150,7 @@ window.runQa = async () => {
         counts: counts(),
         status: pass.getOutputStatus(),
         graphSame: pass.pipeline === graph,
-        idsSame: graph.getComputeNodes().every((n, i) => n.id === ids[i]),
+        idsSame: tiledNodes().every((n, i) => n.id === ids[i]),
       });
     }
     renderer.setSize(80, 16);
@@ -160,7 +164,7 @@ window.runQa = async () => {
       status: pass.getOutputStatus(),
       counts: counts(),
       graphSame: pass.pipeline === graph,
-      idsSame: graph.getComputeNodes().every((n, i) => n.id === ids[i]),
+      idsSame: tiledNodes().every((n, i) => n.id === ids[i]),
     });
     const capture = async (p) => {
       const width = 640,
@@ -210,8 +214,7 @@ window.runQa = async () => {
       1,
     );
     const stableNodes =
-      pass.pipeline === graph &&
-      graph.getComputeNodes().every((n, i) => n.id === ids[i]);
+      pass.pipeline === graph && tiledNodes().every((n, i) => n.id === ids[i]);
     const stablePipelines =
       !explicitWarmup ||
       records.every(

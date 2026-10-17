@@ -1,5 +1,6 @@
 import type { Node } from "three/webgpu";
 export declare const gaussianIndex: import("three/webgpu").PropertyNode<"uint">;
+/** Cloud-material uniform; unavailable after accumulation. */
 export declare const gaussianObjectId: import("three/webgpu").PropertyNode<"uint">;
 export declare const gaussianPositionLocal: import("three/webgpu").PropertyNode<"vec3">;
 export declare const gaussianPositionWorld: import("three/webgpu").PropertyNode<"vec3">;
@@ -7,6 +8,7 @@ export declare const gaussianScale: import("three/webgpu").PropertyNode<"vec3">;
 export declare const gaussianRotation: import("three/webgpu").PropertyNode<"vec4">;
 export declare const gaussianOpacity: import("three/webgpu").PropertyNode<"float">;
 export declare const gaussianColor: import("three/webgpu").PropertyNode<"vec3">;
+/** Cloud-material matrixWorld uniform; unavailable in projection/raster. */
 export declare const gaussianObjectMatrix: import("three/webgpu").PropertyNode<"mat4">;
 export declare const gaussianObjectVisible: import("three/webgpu").PropertyNode<"bool">;
 export declare const gaussianViewDirection: import("three/webgpu").PropertyNode<"vec3">;
@@ -17,6 +19,7 @@ export declare const gaussianScreenBoundsMax: import("three/webgpu").PropertyNod
 export declare const gaussianProjectedSigma: import("three/webgpu").PropertyNode<"vec2">;
 export declare const gaussianProjectedArea: import("three/webgpu").PropertyNode<"float">;
 export declare const rasterGaussianIndex: import("three/webgpu").PropertyNode<"uint">;
+/** @deprecated Unavailable: use GaussianCloud.material for per-cloud effects. */
 export declare const rasterObjectId: import("three/webgpu").PropertyNode<"uint">;
 export declare const rasterPixelCoordinate: import("three/webgpu").PropertyNode<"uvec2">;
 export declare const rasterScreenPosition: import("three/webgpu").PropertyNode<"vec2">;

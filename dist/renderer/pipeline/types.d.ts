@@ -155,7 +155,9 @@ export interface GaussianPassDebugInfo {
 }
 /** Three.js-owned intermediate attributes reusable by other node code or wgslFn kernels. */
 export interface GaussianPassResources {
-    /** Gaussian results occupy the first store.count rows; camera-specific object frames use the private tail. */
+    /** Four vec4 rows per accumulated Gaussian; see docs/cloud-materials.md. */
+    worldGaussians: StorageBufferAttribute;
+    worldGaussianCount: number;
     /** Projected arrays use compact active ordinals, not source GPU slots. */
     projectedMean: StorageBufferAttribute;
     /** xyz: inverse covariance; w: exact ceil radiusX + radiusY * 512. */

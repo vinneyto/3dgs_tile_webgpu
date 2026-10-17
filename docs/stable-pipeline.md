@@ -8,19 +8,22 @@ smaller layouts reuse them. Compute nodes and compatible WebGPU pipelines stay
 the same. Intersection records retain the capacity policy's exact allocation;
 other workspaces use geometric reservation, constrained by device binding sizes.
 
-Projection uses uniforms for the object-state offset, active-slot tail and SH
-degree. Scan/suffix stages reserve five kernel levels, enough for uint32 lengths,
-but allocate only the currently needed buffers. Radix sorting reserves all eight
-four-bit shifts and selects the active passes at encode time. Scratch strides and
-raster-task capacity are uniforms. Ping-pong output changes rebind only consumer
-nodes, without changing the sorter's own input/output roles.
+Cloud material dispatches use uniforms for `matrixWorld`, local camera position,
+SH degree, count and output offset. Tiled projection consumes one uniform
+world-space schema; geometry/SH source encodings and sparse/dense backend layouts
+do not create projection variants. New clouds add material dispatches; changing
+source encoding or a cloud material graph rebuilds only those dispatches. SH
+degree and count changes preserve compatible cloud compute nodes. See
+[cloud-materials.md](cloud-materials.md) for data layout and migration.
 
-Geometry encoding, SH storage encoding and dense versus sparse source layout
-remain genuine projection variants. Changing those rebuilds only projection.
-Changing custom projection/raster roots rebuilds the affected stage. Device,
-depth-output configuration and raster/workgroup configuration are pass-level
-choices. A new shader variant must be compiled; stable resources do not promise
-that every possible configuration shares one shader.
+Scan/suffix stages reserve five kernel levels, enough for uint32 lengths, but
+allocate only currently needed buffers. Radix sorting reserves all eight four-bit
+shifts and selects active passes at encode time. Scratch strides and raster-task
+capacity are uniforms. Ping-pong changes rebind only consumer nodes.
+
+Changing pass-wide projection/material hooks rebuilds projection and cloud
+preprocessing; raster hooks rebuild the raster stage. Device, depth-output and
+raster/workgroup configuration remain pass-level choices.
 
 ## Warmup
 
@@ -47,8 +50,8 @@ rendering remains synchronous and never implicitly awaits warmup.
 Without published data, defaults match the WASM store: compact geometry, rgb8e8
 SH and sparse slots. A custom store can specify its initial variant with
 `warmup({ geometryFormat: "float32", shFormat: "float32", activeSlots: false })`.
-Once data exists its schema is inferred. Source schema changes after warmup can
-still require the targeted projection compilation.
+Once data exists its schema is inferred. New cloud materials and source schema changes can still require material
+compilation. An empty-store warmup cannot precompile future cloud graphs.
 
 Warmup avoids large scene-sized allocations and repeats across compatible model
 loads. It does not eliminate CPU TypedArray allocation, GPU allocation/upload,
@@ -64,9 +67,10 @@ can therefore select a cached group with an old GPU buffer. Mutable storage uses
 a separate `gaussianStorage` uniform group, updated per object. Texture groups
 retain their normal caching. This uses the public TSL grouping API.
 
-Old workspaces retire after `queue.onSubmittedWorkDone()`. Projection holds a
-lease on source `GaussianData`, so layout publication or store disposal cannot
-destroy buffers still used by another pass. Temporary peak memory can include
+Old workspaces and cloud-local inputs retire after
+`queue.onSubmittedWorkDone()`. Projection reads only pass-owned world data; the
+backend snapshot is consumed on CPU during gathering. Public `GaussianData`
+leases remain available for external consumers. Temporary peak memory can include
 both old and new resources. The previous complete-output/overflow contract in
 [dynamic-intersections.md](dynamic-intersections.md) is unchanged.
 

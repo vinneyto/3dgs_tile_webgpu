@@ -56,7 +56,6 @@ import {
   rasterGaussianCoord,
   rasterGaussianIndex,
   rasterGaussianOpacity,
-  rasterObjectId,
   rasterPixelCoordinate,
   rasterPixelDelta,
   rasterPixelValue,
@@ -119,7 +118,6 @@ export class TileRasterizer {
     private gaussianCount: number,
     private intersectionCapacity: number,
     private readonly mode: DepthSortMode,
-    private meansAttribute: StorageBufferAttribute,
     private projectedMeanAttribute: StorageBufferAttribute,
     private projectedConicAttribute: StorageBufferAttribute,
     private projectedColorAttribute: StorageBufferAttribute,
@@ -179,7 +177,6 @@ export class TileRasterizer {
     gaussians: number,
     intersections: number,
     tiles: number,
-    means: StorageBufferAttribute,
     projectedMean: StorageBufferAttribute,
     projectedConic: StorageBufferAttribute,
     projectedColor: StorageBufferAttribute,
@@ -188,7 +185,6 @@ export class TileRasterizer {
     this.gaussianCount = gaussians;
     this.intersectionCapacity = intersections;
     this.tileCapacity = Math.max(this.tileCapacity, tiles);
-    this.meansAttribute = means;
     this.projectedMeanAttribute = projectedMean;
     this.projectedConicAttribute = projectedConic;
     this.projectedColorAttribute = projectedColor;
@@ -421,9 +417,6 @@ export class TileRasterizer {
         : this.attributes
             .storage(this.metrics, "uint", this.tileCapacity * 4)
             .toAtomic();
-    const means = this.attributes
-      .storage(this.meansAttribute, "vec4", this.gaussianCount)
-      .toReadOnly();
     const projectedMean = this.attributes
       .storage(
         this.projectedMeanAttribute,
@@ -633,9 +626,6 @@ export class TileRasterizer {
                 const earlyOverrides: OverrideMap = new Map(pixelOverrides);
                 earlyOverrides.set(rasterPixelValue, () => pixelValue);
                 earlyOverrides.set(rasterGaussianIndex, () => sourceSlot);
-                earlyOverrides.set(rasterObjectId, () =>
-                  uint(means.element(sourceSlot).w),
-                );
                 earlyOverrides.set(rasterGaussianCenter, () => mean.xy);
                 earlyOverrides.set(rasterPixelDelta, () => delta);
                 earlyOverrides.set(rasterViewDepth, () => mean.z);

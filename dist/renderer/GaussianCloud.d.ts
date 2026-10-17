@@ -1,4 +1,5 @@
 import { Object3D, type Intersection, type Raycaster } from "three/webgpu";
+import { GaussianCloudMaterial } from "./GaussianCloudMaterial";
 import type { GaussianRaycastIndex } from "./GaussianRaycastIndex";
 /** Actions the scene object delegates to its owning client store. */
 export interface GaussianCloudOwner {
@@ -9,6 +10,8 @@ export interface GaussianCloudOwner {
 /** A transformable Three.js scene object backed by a range in a GaussianStore. */
 export declare class GaussianCloud extends Object3D {
     readonly isGaussianCloud = true;
+    /** Per-cloud TSL preprocessing, dispatched by GaussianPass. */
+    material: GaussianCloudMaterial;
     readonly objectId: number;
     /** Ignore coarse snapshot Gaussians below this opacity. */
     minRaycastOpacity: number;

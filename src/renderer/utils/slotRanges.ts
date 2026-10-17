@@ -67,5 +67,21 @@ export function markSlotRangesUpdated(
       range.count * componentsPerSlot,
     );
   }
+  coalescePendingRanges(attribute);
   attribute.needsUpdate = true;
+}
+
+/** CPU snapshots need not be GPU-bound by GaussianPass. Bound retained upload
+ * metadata for external consumers and for hidden per-cloud source buffers.
+ */
+export function coalescePendingRanges(attribute: StorageBufferAttribute): void {
+  if (attribute.updateRanges.length <= 256) return;
+  let start = Infinity,
+    end = 0;
+  for (const range of attribute.updateRanges) {
+    start = Math.min(start, range.start);
+    end = Math.max(end, range.start + range.count);
+  }
+  attribute.clearUpdateRanges();
+  attribute.addUpdateRange(start, end - start);
 }
