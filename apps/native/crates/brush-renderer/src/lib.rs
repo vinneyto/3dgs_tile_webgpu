@@ -1,12 +1,16 @@
 //! Forward-only Brush WGSL renderer on a caller-owned wgpu device.
 //! No Burn runtime, second device, or CPU image round trip.
+mod residency;
+mod resident_gpu;
+pub use resident_gpu::DEFAULT_SOURCE_CACHE_BYTES;
+use resident_gpu::ResidentGpu;
+
 use anyhow::{Context, Result, ensure};
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
-use spark_lod::{GaussianBuffer, SourceSplat};
+use spark_lod::GaussianBuffer;
 use std::{
     borrow::Cow,
-    collections::HashMap,
     sync::{Arc, mpsc},
 };
 use wgpu::util::DeviceExt;
@@ -23,7 +27,7 @@ pub struct CloudBatch {
     pub scale: f32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Camera {
     /// Bevy convention: local -Z forward, +Y up.
     pub world_from_view: Mat4,
@@ -45,7 +49,16 @@ impl Camera {
 pub struct RenderStats {
     pub splats: u32,
     pub intersections: u32,
+    /// Missing source records including 16-byte scatter headers.
     pub uploaded_bytes: u64,
+    pub index_uploaded_bytes: u64,
+    pub resident_splats: u32,
+    pub source_cache_bytes: u64,
+    pub cache_hits: u32,
+    pub cache_misses: u32,
+    pub evicted_splats: u32,
+    pub gpu_copied_bytes: u64,
+    pub reused_frame: bool,
 }
 
 #[repr(C)]
@@ -158,12 +171,6 @@ fn dispatch(
     pass.dispatch_workgroups(groups.min(65535), groups.div_ceil(65535), 1);
 }
 
-struct CachedCloud {
-    source: Arc<GaussianBuffer>,
-    nodes: Arc<Vec<usize>>,
-    buffer: wgpu::Buffer,
-    capacity: usize,
-}
 struct Scratch {
     capacity: usize,
     world: wgpu::Buffer,
@@ -194,6 +201,35 @@ struct Target {
     offsets: wgpu::Buffer,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+struct FrameConfig {
+    width: u32,
+    height: u32,
+    camera: Camera,
+    background: [f32; 4],
+    max_intersections: u32,
+    source_cache_bytes: u64,
+}
+struct CompletedFrame {
+    config: FrameConfig,
+    batches: Vec<CloudBatch>,
+    stats: RenderStats,
+}
+impl CompletedFrame {
+    fn matches(&self, config: FrameConfig, batches: &[CloudBatch]) -> bool {
+        self.config == config
+            && self.batches.len() == batches.len()
+            && self.batches.iter().zip(batches).all(|(a, b)| {
+                a.id == b.id
+                    && Arc::ptr_eq(&a.buffer, &b.buffer)
+                    && a.world_from_local == b.world_from_local
+                    && a.opacity == b.opacity
+                    && a.scale == b.scale
+                    && (Arc::ptr_eq(&a.nodes, &b.nodes) || *a.nodes == *b.nodes)
+            })
+    }
+}
+
 pub struct Renderer {
     adapt: wgpu::ComputePipeline,
     project: wgpu::ComputePipeline,
@@ -204,7 +240,8 @@ pub struct Renderer {
     ranges: wgpu::ComputePipeline,
     raster: wgpu::ComputePipeline,
     scratch: Option<Scratch>,
-    clouds: HashMap<u64, CachedCloud>,
+    resident: ResidentGpu,
+    completed: Option<CompletedFrame>,
     target: Option<Target>,
     pairs: Option<wgpu::Buffer>,
     pair_capacity: u32,
@@ -212,6 +249,8 @@ pub struct Renderer {
     /// Fail explicitly before scatter if exact intersections exceed this bound.
     pub max_intersections: u32,
     pub background: [f32; 4],
+    /// Global resident source allocations; excludes render scratch and upload staging.
+    pub source_cache_bytes: u64,
 }
 impl Renderer {
     pub fn new(device: &wgpu::Device) -> Self {
@@ -281,7 +320,8 @@ impl Renderer {
                 "main",
             ),
             scratch: None,
-            clouds: HashMap::new(),
+            resident: ResidentGpu::new(device),
+            completed: None,
             target: None,
             pairs: None,
             pair_capacity: 0,
@@ -293,6 +333,7 @@ impl Renderer {
             }),
             max_intersections: 8 * 1024 * 1024,
             background: [0.025, 0.03, 0.04, 1.],
+            source_cache_bytes: DEFAULT_SOURCE_CACHE_BYTES,
         }
     }
 
@@ -307,6 +348,32 @@ impl Renderer {
         camera: Camera,
         batches: &[CloudBatch],
     ) -> Result<RenderStats> {
+        let config = FrameConfig {
+            width,
+            height,
+            camera,
+            background: self.background,
+            max_intersections: self.max_intersections,
+            source_cache_bytes: self.source_cache_bytes,
+        };
+        if let Some(frame) = self
+            .completed
+            .as_ref()
+            .filter(|f| f.matches(config, batches))
+        {
+            return Ok(RenderStats {
+                uploaded_bytes: 0,
+                index_uploaded_bytes: 0,
+                cache_hits: 0,
+                cache_misses: 0,
+                evicted_splats: 0,
+                gpu_copied_bytes: 0,
+                reused_frame: true,
+                ..frame.stats
+            });
+        }
+        // A failed frame must not leave an obsolete completion key valid.
+        self.completed = None;
         ensure!(
             width > 0
                 && height > 0
@@ -381,8 +448,27 @@ impl Renderer {
             splats: count,
             ..Default::default()
         };
-        self.clouds
-            .retain(|id, _| batches.iter().any(|b| b.id == *id));
+        let mut ids = std::collections::HashSet::new();
+        ensure!(
+            batches.iter().all(|b| ids.insert(b.id)),
+            "Cloud batch IDs must be unique"
+        );
+        for batch in batches {
+            ensure!(
+                batch.world_from_local.is_finite()
+                    && batch.world_from_local.determinant().abs() > 1e-12,
+                "Cloud transform must be finite and invertible"
+            );
+            ensure!(
+                batch.opacity.is_finite()
+                    && batch.opacity >= 0.
+                    && batch.scale.is_finite()
+                    && batch.scale > 0.,
+                "Invalid cloud parameters"
+            );
+        }
+        self.resident
+            .prepare(device, queue, batches, self.source_cache_bytes, &mut stats)?;
         let scratch = self.scratch.as_ref().unwrap();
         let target = self.target.as_ref().unwrap();
         let view = ViewUniform {
@@ -400,64 +486,12 @@ impl Renderer {
         };
         let view_buffer = uniform(device, &view);
         let mut encoder = device.create_command_encoder(&Default::default());
-        let mut ids = std::collections::HashSet::new();
-        ensure!(
-            batches.iter().all(|b| ids.insert(b.id)),
-            "Cloud batch IDs must be unique"
-        );
         let mut offset = 0;
         for batch in batches {
-            ensure!(
-                batch.world_from_local.is_finite()
-                    && batch.world_from_local.determinant().abs() > 1e-12,
-                "Cloud transform must be finite and invertible"
-            );
-            ensure!(
-                batch.opacity.is_finite()
-                    && batch.opacity >= 0.
-                    && batch.scale.is_finite()
-                    && batch.scale > 0.,
-                "Invalid cloud parameters"
-            );
             if batch.nodes.is_empty() {
                 continue;
             }
-            ensure!(
-                batch.nodes.len() as u64 * std::mem::size_of::<SourceSplat>() as u64 <= limit,
-                "Per-cloud source buffer exceeds GPU binding limit; lower the LOD budget"
-            );
-            let cached = self.clouds.entry(batch.id).or_insert_with(|| CachedCloud {
-                source: batch.buffer.clone(),
-                nodes: Arc::new(Vec::new()),
-                buffer: storage(device, "local Spark splats", 4),
-                capacity: 0,
-            });
-            if !Arc::ptr_eq(&cached.source, &batch.buffer) || *cached.nodes != *batch.nodes {
-                ensure!(
-                    batch.nodes.iter().all(|n| *n < batch.buffer.node_count()),
-                    "Invalid Spark node index"
-                );
-                let rows: Vec<_> = batch
-                    .nodes
-                    .iter()
-                    .map(|i| batch.buffer.record(*i))
-                    .collect();
-                if cached.capacity < rows.len() {
-                    cached.capacity = rows
-                        .len()
-                        .next_power_of_two()
-                        .min((limit / std::mem::size_of::<SourceSplat>() as u64) as usize);
-                    cached.buffer = storage(
-                        device,
-                        "per-cloud Spark source",
-                        (cached.capacity * std::mem::size_of::<SourceSplat>()) as u64,
-                    );
-                }
-                queue.write_buffer(&cached.buffer, 0, bytemuck::cast_slice(&rows));
-                stats.uploaded_bytes += (rows.len() * std::mem::size_of::<SourceSplat>()) as u64;
-                cached.nodes = batch.nodes.clone();
-                cached.source = batch.buffer.clone();
-            }
+            let (source_buffer, active_indices) = self.resident.buffers(batch);
             let params = uniform(
                 device,
                 &CloudUniform {
@@ -473,7 +507,7 @@ impl Renderer {
             let group = buffers(
                 device,
                 &self.adapt,
-                &[&params, &cached.buffer, &scratch.world],
+                &[&params, source_buffer, &scratch.world, active_indices],
             );
             dispatch(&mut encoder, &self.adapt, &group, batch.nodes.len() as u32);
             offset += batch.nodes.len() as u32;
@@ -629,6 +663,11 @@ impl Renderer {
         });
         dispatch(&mut encoder, &self.raster, &group, tiles_x * tiles_y * 256);
         queue.submit([encoder.finish()]);
+        self.completed = Some(CompletedFrame {
+            config,
+            batches: batches.to_vec(),
+            stats,
+        });
         Ok(stats)
     }
 
@@ -640,10 +679,12 @@ impl Renderer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use spark_lod::SourceSplat;
     #[test]
     fn validate_all_wgsl_with_naga() {
         for (body, math, sh) in [
             (include_str!("shaders/adapt.wgsl"), true, true),
+            (include_str!("shaders/upload.wgsl"), false, false),
             (include_str!("shaders/project.wgsl"), true, false),
             (include_str!("shaders/scan.wgsl"), false, false),
             (include_str!("shaders/scatter.wgsl"), true, false),

@@ -2,12 +2,6 @@
 // Adapted from Brush v0.3.0 (3edecbb2fe79d3e2c87eeab85b15e0b1dd10d486).
 // Copyright Brush contributors. See third_party/brush/LICENSE and UPSTREAM.md.
 
-struct SourceSplat {
-    center_opacity: vec4f,
-    scale: vec4f,
-    rotation: vec4f,
-    sh: array<f32, 48>,
-}
 struct Cloud {
     world_from_local: mat4x4f,
     local_from_world: mat4x4f,
@@ -20,6 +14,7 @@ struct Cloud {
 @group(0) @binding(0) var<uniform> cloud: Cloud;
 @group(0) @binding(1) var<storage, read> source: array<SourceSplat>;
 @group(0) @binding(2) var<storage, read_write> world: array<WorldSplat>;
+@group(0) @binding(3) var<storage, read> active_indices: array<u32>;
 fn coeff(s: SourceSplat, i: u32) -> vec3f {
     return vec3f(s.sh[i*3], s.sh[i*3+1], s.sh[i*3+2]);
 }
@@ -27,7 +22,7 @@ fn coeff(s: SourceSplat, i: u32) -> vec3f {
 fn main(@builtin(global_invocation_id) gid: vec3u) {
     let i = invocation_id(gid);
     if i >= cloud.count { return; }
-    let s = source[i];
+    let s = source[active_indices[i]];
     // Spark stores decoded linear opacity. Tiny LOD merged opacity can exceed
     // one: inflate volume by its mass and render with unit peak opacity.
     let inflation = pow(max(1.0, s.center_opacity.w), 1.0 / 3.0);

@@ -303,14 +303,20 @@ fn update_status(
     let report = telemetry.0.lock().unwrap();
     for mut text in &mut text {
         **text = format!(
-            "Spark x Brush / Bevy\n{}\n{} clouds | {} selected | {} tile intersections\nBudget {} | LOD {:.2}px | uploaded {:.1} KiB\nO open | drop files | F frame | D duplicate | C clear\nDrag orbit | right drag pan | wheel zoom | [ ] budget | - + detail{}",
+            "Spark x Brush / Bevy\n{}\n{} clouds | {} selected | {} tile intersections\nBudget {} | LOD {:.2}px | resident {} / {:.1} MiB\nData {:.1} KiB | indices {:.1} KiB | misses {} | evicted {} | cached frame {}\nO open | drop files | F frame | D duplicate | C clear\nDrag orbit | right drag pan | wheel zoom | [ ] budget | - + detail{}",
             loader.status,
             clouds.iter().count(),
             report.stats.splats,
             report.stats.intersections,
             settings.budget,
             settings.pixel_limit,
+            report.stats.resident_splats,
+            report.stats.source_cache_bytes as f64 / (1024. * 1024.),
             report.stats.uploaded_bytes as f64 / 1024.,
+            report.stats.index_uploaded_bytes as f64 / 1024.,
+            report.stats.cache_misses,
+            report.stats.evicted_splats,
+            report.stats.reused_frame,
             report
                 .error
                 .as_ref()

@@ -1,3 +1,9 @@
+struct SourceSplat {
+    center_opacity: vec4f,
+    scale: vec4f,
+    rotation: vec4f,
+    sh: array<f32, 48>,
+}
 
 struct View {
     viewmat: mat4x4f,

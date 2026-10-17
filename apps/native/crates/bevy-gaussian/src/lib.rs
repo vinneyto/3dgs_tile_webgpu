@@ -1,5 +1,8 @@
 //! Add `GaussianPlugin`, an output target and a `GaussianCamera`; attach
 //! `GaussianCloud` + ordinary Bevy transforms to any number of entities.
+mod selection_cache;
+use selection_cache::{CloudKey, SelectionKey};
+
 use bevy::{
     asset::RenderAssetUsages,
     prelude::*,
@@ -79,6 +82,7 @@ pub struct GaussianSettings {
     pub budget: usize,
     pub pixel_limit: f32,
     pub max_intersections: u32,
+    pub source_cache_bytes: u64,
 }
 impl Default for GaussianSettings {
     fn default() -> Self {
@@ -86,6 +90,7 @@ impl Default for GaussianSettings {
             budget: 200_000,
             pixel_limit: 1.,
             max_intersections: 8 * 1024 * 1024,
+            source_cache_bytes: brush_renderer::DEFAULT_SOURCE_CACHE_BYTES,
         }
     }
 }
@@ -103,6 +108,7 @@ struct GaussianFrame {
     camera: RenderCamera,
     batches: Vec<CloudBatch>,
     max_intersections: u32,
+    source_cache_bytes: u64,
     telemetry: GaussianTelemetry,
     error: Option<String>,
 }
@@ -116,11 +122,17 @@ impl Default for GaussianFrame {
             },
             batches: Vec::new(),
             max_intersections: 0,
+            source_cache_bytes: brush_renderer::DEFAULT_SOURCE_CACHE_BYTES,
             telemetry: default(),
             error: None,
         }
     }
 }
+#[derive(Resource, Default)]
+struct SelectionState {
+    key: Option<SelectionKey>,
+}
+
 #[derive(Resource)]
 struct GpuRenderer(Renderer);
 
@@ -130,6 +142,7 @@ impl Plugin for GaussianPlugin {
         app.init_resource::<GaussianSettings>()
             .init_resource::<GaussianTelemetry>()
             .init_resource::<GaussianFrame>()
+            .init_resource::<SelectionState>()
             .add_plugins(ExtractResourcePlugin::<GaussianFrame>::default())
             .add_systems(PostUpdate, select_frame.after(TransformSystems::Propagate));
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
@@ -158,16 +171,21 @@ fn select_frame(
         Option<&InheritedVisibility>,
     )>,
     mut frame: ResMut<GaussianFrame>,
+    mut selection: ResMut<SelectionState>,
 ) {
     frame.target = target.as_ref().map(|t| (**t).clone());
-    frame.batches.clear();
     frame.error = None;
     frame.telemetry = telemetry.clone();
     frame.max_intersections = settings.max_intersections;
+    frame.source_cache_bytes = settings.source_cache_bytes;
     if frame.target.is_none() {
+        frame.batches.clear();
+        selection.key = None;
         return;
     }
     let Ok((camera, transform)) = cameras.single() else {
+        frame.batches.clear();
+        selection.key = None;
         frame.error = Some("Exactly one GaussianCamera is required".into());
         return;
     };
@@ -185,6 +203,28 @@ fn select_frame(
         })
         .collect();
     visible.sort_by_key(|(e, ..)| e.to_bits());
+    let key = SelectionKey {
+        camera: frame.camera,
+        width: target.as_ref().unwrap().width,
+        height: target.as_ref().unwrap().height,
+        budget: settings.budget,
+        pixel_limit: settings.pixel_limit,
+        clouds: visible
+            .iter()
+            .map(|(entity, c, t, _)| CloudKey {
+                id: entity.to_bits(),
+                source: c.buffer.clone(),
+                transform: t.to_matrix(),
+                opacity: c.opacity,
+                scale: c.scale,
+                lod_scale: c.lod_scale,
+            })
+            .collect(),
+    };
+    if selection.key.as_ref() == Some(&key) {
+        return;
+    }
+    frame.batches.clear();
     let views: Vec<_> = visible
         .iter()
         .map(|(_, c, t, _)| CloudView {
@@ -203,6 +243,7 @@ fn select_frame(
         settings.budget,
     ) {
         Ok(cuts) => {
+            selection.key = Some(key);
             for ((entity, cloud, transform, _), nodes) in visible.into_iter().zip(cuts) {
                 frame.batches.push(CloudBatch {
                     id: entity.to_bits(),
@@ -214,7 +255,10 @@ fn select_frame(
                 });
             }
         }
-        Err(e) => frame.error = Some(e.to_string()),
+        Err(e) => {
+            selection.key = None;
+            frame.error = Some(e.to_string());
+        }
     }
 }
 
@@ -235,6 +279,7 @@ fn render_frame(
         Err(error.clone())
     } else {
         renderer.0.max_intersections = frame.max_intersections;
+        renderer.0.source_cache_bytes = frame.source_cache_bytes;
         renderer
             .0
             .render(
@@ -272,5 +317,81 @@ fn render_frame(
             }
             report.error = Some(error);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn stationary_frames_reuse_lod_and_scene_changes_invalidate_it() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, TransformPlugin, GaussianPlugin));
+        let mut images = Assets::<Image>::default();
+        app.insert_resource(GaussianTarget::new(&mut images, 128, 128));
+        let buffer = GaussianBuffer::from_records(&[spark_lod::SourceSplat {
+            center_opacity: [0., 0., 0., 0.8],
+            scale: [0.1, 0.1, 0.1, 0.],
+            rotation: [0., 0., 0., 1.],
+            sh: [0.; 48],
+        }])
+        .unwrap();
+        let entity = app
+            .world_mut()
+            .spawn((GaussianCloud::new(buffer), Transform::IDENTITY))
+            .id();
+        let camera = app
+            .world_mut()
+            .spawn((GaussianCamera::default(), Transform::from_xyz(0., 0., 3.)))
+            .id();
+        app.update();
+        let first = app.world().resource::<GaussianFrame>().batches[0]
+            .nodes
+            .clone();
+        app.update();
+        assert!(Arc::ptr_eq(
+            &first,
+            &app.world().resource::<GaussianFrame>().batches[0].nodes
+        ));
+        app.world_mut()
+            .get_mut::<Transform>(camera)
+            .unwrap()
+            .translation
+            .x = 1.;
+        app.update();
+        let moved = app.world().resource::<GaussianFrame>().batches[0]
+            .nodes
+            .clone();
+        assert!(!Arc::ptr_eq(&first, &moved));
+        app.world_mut()
+            .resource_mut::<GaussianSettings>()
+            .pixel_limit = 2.;
+        app.update();
+        let settings = app.world().resource::<GaussianFrame>().batches[0]
+            .nodes
+            .clone();
+        assert!(!Arc::ptr_eq(&moved, &settings));
+        app.world_mut()
+            .get_mut::<Transform>(entity)
+            .unwrap()
+            .translation
+            .y = 1.;
+        app.update();
+        assert!(!Arc::ptr_eq(
+            &settings,
+            &app.world().resource::<GaussianFrame>().batches[0].nodes
+        ));
+        app.world_mut()
+            .get_mut::<GaussianCloud>(entity)
+            .unwrap()
+            .enabled = false;
+        app.update();
+        assert!(app.world().resource::<GaussianFrame>().batches.is_empty());
+        app.world_mut()
+            .get_mut::<GaussianCloud>(entity)
+            .unwrap()
+            .enabled = true;
+        app.update();
+        assert_eq!(app.world().resource::<GaussianFrame>().batches.len(), 1);
     }
 }
