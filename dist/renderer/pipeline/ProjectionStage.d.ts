@@ -3,12 +3,12 @@ import type { ComputeNode, StorageBufferAttribute, WebGPURenderer } from "three/
 import type { GaussianData } from "../GaussianData";
 import { type GaussianProjectionNodeSlots } from "../nodes/GaussianContextNodes";
 import type { FrameUniforms } from "./FrameUniforms";
-import { type ObjectFrameState } from "./ObjectFrameState";
+import { type CloudAccumulationStage } from "./CloudAccumulationStage";
 import type { AntialiasMode } from "./types";
 export declare class ProjectionStage {
     private data;
     private readonly frame;
-    private readonly objects;
+    private readonly accumulated;
     private readonly antialiasMode;
     private readonly subpixelSampleCulling;
     projectedMean: StorageBufferAttribute;
@@ -17,21 +17,12 @@ export declare class ProjectionStage {
     tileCounts: StorageBufferAttribute;
     private readonly attributes;
     private computeNode;
-    private readonly objectOffset;
-    private readonly activeSlotOffset;
-    private readonly shDegree;
-    private activeVersion;
-    private firstActiveChange;
-    private lastActiveChange;
-    private unsubscribeActiveSlots;
-    constructor(data: GaussianData, frame: FrameUniforms, objects: ObjectFrameState, antialiasMode: AntialiasMode, nodes: GaussianProjectionNodeSlots, subpixelSampleCulling?: boolean, bindings?: StorageBindings);
-    compatible(data: GaussianData): boolean;
-    updateData(data: GaussianData, nodes?: GaussianProjectionNodeSlots): void;
-    private updateRuntimeParameters;
+    constructor(data: GaussianData, frame: FrameUniforms, accumulated: CloudAccumulationStage, antialiasMode: AntialiasMode, nodes: GaussianProjectionNodeSlots, subpixelSampleCulling?: boolean, bindings?: StorageBindings);
+    compatible(_data: GaussianData): boolean;
+    updateData(data: GaussianData, _nodes?: GaussianProjectionNodeSlots): void;
     getComputeNodes(): ComputeNode[];
     rebuild(nodes: GaussianProjectionNodeSlots): void;
     encode(renderer: WebGPURenderer): void;
     dispose(): void;
-    private updateActiveSlots;
     private createComputeNode;
 }

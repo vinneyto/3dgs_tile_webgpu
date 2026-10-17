@@ -16,7 +16,7 @@ import { DepthOrderedTileStage } from "./DepthOrderedTileStage";
 import { ExclusiveScanStage } from "./ExclusiveScanStage";
 import { FrameUniforms } from "./FrameUniforms";
 import { IntersectionStage } from "./IntersectionStage";
-import { ObjectFrameState } from "./ObjectFrameState";
+import { CloudAccumulationStage } from "./CloudAccumulationStage";
 import { ProjectionStage } from "./ProjectionStage";
 import { ProfileDiagnosticsStage } from "./ProfileDiagnosticsStage";
 import { RasterChunkWorkspace } from "./RasterChunkWorkspace";
@@ -38,7 +38,7 @@ import type {
 
 export class TiledGaussianPipeline {
   readonly frame: FrameUniforms;
-  readonly objects: ObjectFrameState;
+  readonly accumulation: CloudAccumulationStage;
   readonly projection: ProjectionStage;
   readonly profileDiagnostics: ProfileDiagnosticsStage | null;
   readonly visibleScan: ExclusiveScanStage;
@@ -85,17 +85,19 @@ export class TiledGaussianPipeline {
   ) {
     this.bindings = new StorageBindings(renderer);
     this.frame = new FrameUniforms(camera, background, domain);
-    this.objects = new ObjectFrameState(
+    this.accumulation = new CloudAccumulationStage(
       camera,
       store,
-      data.count,
+      data,
+      this.frame,
+      nodes,
       this.bindings,
     );
     this.frame.activeCount.value = data.activeCount;
     this.projection = new ProjectionStage(
       data,
       this.frame,
-      this.objects,
+      this.accumulation,
       antialiasMode,
       nodes,
       subpixelSampleCulling,
@@ -118,7 +120,7 @@ export class TiledGaussianPipeline {
       data.count,
       "visible",
       "projectedVisibility",
-      () => this.data.activeCount,
+      () => Number(this.frame.activeCount.value),
       this.bindings,
     );
     this.visible = new VisibleGaussianStage(
@@ -129,7 +131,7 @@ export class TiledGaussianPipeline {
       this.projection.projectedMean,
       this.frame.viewport,
       this.frame.activeCount,
-      () => this.data.activeCount,
+      () => Number(this.frame.activeCount.value),
       this.bindings,
     );
     this.depthSorter = new RadixSorter(
@@ -155,7 +157,7 @@ export class TiledGaussianPipeline {
       data.count,
       "intersections",
       "uint",
-      () => this.data.activeCount,
+      () => Number(this.frame.activeCount.value),
       this.bindings,
     );
     this.intersections = this.createIntersections();
@@ -197,12 +199,12 @@ export class TiledGaussianPipeline {
   }
 
   getShaderGeneration(): number {
-    return this.shaderGeneration;
+    return this.shaderGeneration + this.accumulation.generation;
   }
 
   updateData(data: GaussianData): void {
     const variantChanged = !this.compatible(data);
-    this.objects.resize(data.count);
+    this.accumulation.updateData(data);
     this.projection.updateData(data, this.nodes);
     if (variantChanged) this.shaderGeneration++;
     this.visibleScan.resize(data.count);
@@ -235,7 +237,6 @@ export class TiledGaussianPipeline {
       this.data.count,
       this.capacity,
       this.tileCapacity,
-      this.data.means,
       this.projection.projectedMean,
       this.projection.projectedConic,
       this.projection.projectedColor,
@@ -246,6 +247,7 @@ export class TiledGaussianPipeline {
 
   getComputeNodes(): ComputeNode[] {
     return [
+      this.accumulation,
       this.projection,
       this.profileDiagnostics,
       this.visibleScan,
@@ -262,10 +264,16 @@ export class TiledGaussianPipeline {
 
   /** Compile/bind every reserved stage with zero work, including inactive scan/radix levels. */
   async warmup(isCancelled: () => boolean = () => false): Promise<void> {
+    this.accumulation.prepare();
     const nodes = this.getComputeNodes();
-    const generation = this.shaderGeneration;
+    const generation = this.getShaderGeneration();
     for (let index = 0; index < nodes.length; index++) {
-      if (isCancelled() || generation !== this.shaderGeneration) return;
+      if (
+        isCancelled() ||
+        generation !== this.getShaderGeneration() ||
+        this.accumulation.hasPendingMaterialChanges()
+      )
+        return;
       this.renderer.compute(nodes[index]!, [0, 0, 0]);
       if (index % 4 === 3)
         await new Promise<void>((resolve) => {
@@ -300,7 +308,7 @@ export class TiledGaussianPipeline {
     this.tilesY = tilesY;
     this.frame.update(width, height, tilesX, tilesY);
     this.frame.activeCount.value = this.data.activeCount;
-    this.objects.update();
+    this.accumulation.prepare();
     if (this.tileOffsets === null || this.rasterizer === null) {
       this.rebuildTileStages(colorTexture, depthTexture);
     } else if (tilesX * tilesY > this.tileCapacity) {
@@ -327,6 +335,7 @@ export class TiledGaussianPipeline {
         "TiledGaussianPipeline must be prepared before rendering",
       );
     }
+    this.accumulation.encode(this.renderer);
     this.projection.encode(this.renderer);
     this.profileDiagnostics?.encode();
     this.visibleScan.encode(this.renderer);
@@ -341,6 +350,7 @@ export class TiledGaussianPipeline {
   }
 
   rebuildProjection(nodes: GaussianProjectionNodeSlots): void {
+    this.accumulation.rebuild(nodes);
     this.projection.rebuild(nodes);
     this.shaderGeneration++;
   }
@@ -391,6 +401,8 @@ export class TiledGaussianPipeline {
   getResources(): GaussianPassResources | null {
     if (this.tileOffsets === null) return null;
     return {
+      worldGaussians: this.accumulation.attribute,
+      worldGaussianCount: this.accumulation.count,
       projectedMean: this.projection.projectedMean,
       projectedConic: this.projection.projectedConic,
       projectedColor: this.projection.projectedColor,
@@ -421,7 +433,7 @@ export class TiledGaussianPipeline {
     this.visibleScan.dispose();
     this.profileDiagnostics?.dispose();
     this.projection.dispose();
-    this.objects.dispose();
+    this.accumulation.dispose();
   }
 
   private rebuildTileStages(
@@ -458,7 +470,6 @@ export class TiledGaussianPipeline {
       this.data.count,
       this.capacity,
       this.mode,
-      this.data.means,
       this.projection.projectedMean,
       this.projection.projectedConic,
       this.projection.projectedColor,

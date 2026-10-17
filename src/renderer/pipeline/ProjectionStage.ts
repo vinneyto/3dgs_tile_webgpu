@@ -17,12 +17,12 @@ import {
   int,
   ivec2,
   log,
-  mat4,
-  normalize,
   sqrt,
   uint,
   uvec2,
-  uniform,
+  mat3,
+  transpose,
+  vec3,
   vec2,
   vec4,
   wgslFn,
@@ -30,7 +30,6 @@ import {
 import type { GaussianData } from "../GaussianData";
 import {
   countContributingTilesWGSL,
-  evaluateShWGSL,
   projectionIsValidWGSL,
   subpixelHasSampleWGSL,
 } from "../kernels/projectionHelpers";
@@ -40,21 +39,14 @@ import {
   gaussianCovarianceView,
   passContextNodes,
   gaussianIndex,
-  gaussianObjectId,
-  gaussianObjectMatrix,
-  gaussianObjectVisible,
   gaussianOpacity,
-  gaussianPositionLocal,
   gaussianPositionWorld,
   gaussianProjectedArea,
   gaussianProjectedSigma,
-  gaussianRotation,
-  gaussianScale,
   gaussianScreenBoundsMax,
   gaussianScreenBoundsMin,
   gaussianScreenPosition,
   gaussianViewDepth,
-  gaussianViewDirection,
   projectionContextNodes,
   validateGaussianNodeAccess,
   validateGaussianNodeDomain,
@@ -62,39 +54,23 @@ import {
   type GaussianProjectionNodeSlots,
 } from "../nodes/GaussianContextNodes";
 import { AttributePool } from "./AttributePool";
-import {
-  ACTIVE_SLOT_TAG,
-  decodeActiveSlot,
-  encodeActiveSlot,
-} from "./activeSlots";
-import {
-  compactScaleOpacityWGSL,
-  compactRotationWGSL,
-} from "../kernels/compactGaussians";
+import { decodeActiveSlot, encodeActiveSlot } from "./activeSlots";
 import { TILE_SIZE, WORKGROUP_SIZE } from "./constants";
-import { gaussianViewCovariance } from "../nodes/GaussianProjectionNodes";
 import { passContextOverrides } from "./FrameUniforms";
 import type { FrameUniforms } from "./FrameUniforms";
-import { OBJECT_FRAME_VEC4S, type ObjectFrameState } from "./ObjectFrameState";
+import {
+  ACCUMULATED_VEC4S,
+  type CloudAccumulationStage,
+} from "./CloudAccumulationStage";
 import type { AntialiasMode } from "./types";
 
 type OverrideMap = Map<any, () => any>;
 
-const sourceAccessors = new Set<Node>([
+const worldAccessors = new Set<Node>([
   ...passContextNodes,
   gaussianIndex,
-  gaussianObjectId,
-  gaussianPositionLocal,
-  gaussianScale,
-  gaussianRotation,
-  gaussianOpacity,
-  gaussianObjectMatrix,
-  gaussianObjectVisible,
-]);
-const worldAccessors = new Set<Node>([
-  ...sourceAccessors,
   gaussianPositionWorld,
-  gaussianViewDirection,
+  gaussianOpacity,
 ]);
 const rootAccessors = new Set<Node>([
   ...worldAccessors,
@@ -117,27 +93,20 @@ export class ProjectionStage {
 
   private readonly attributes = new AttributePool();
   private computeNode: ComputeNode | null = null;
-  private readonly objectOffset = uniform(0, "uint");
-  private readonly activeSlotOffset = uniform(0, "uint");
-  private readonly shDegree = uniform(0, "uint");
-  private activeVersion = -1;
-  private firstActiveChange = Infinity;
-  private lastActiveChange = -1;
-  private unsubscribeActiveSlots: () => void;
-
   constructor(
     private data: GaussianData,
     private readonly frame: FrameUniforms,
-    private readonly objects: ObjectFrameState,
+    private readonly accumulated: CloudAccumulationStage,
     private readonly antialiasMode: AntialiasMode,
     nodes: GaussianProjectionNodeSlots,
     private readonly subpixelSampleCulling = true,
     bindings = new StorageBindings(),
   ) {
     this.attributes.bindings = bindings;
-    data.retain();
-    this.updateRuntimeParameters();
-    this.projectedMean = objects.attribute;
+    this.projectedMean = this.attributes.createFloat(
+      "3dgs.projected-mean",
+      data.count,
+    );
     this.projectedConic = this.attributes.createFloat(
       "3dgs.projected-conic",
       data.count,
@@ -150,72 +119,20 @@ export class ProjectionStage {
       "3dgs.tile-counts",
       data.count,
     );
-    this.unsubscribeActiveSlots = data.subscribeActiveSlots((range) => {
-      if (range.count === 0) return;
-      this.firstActiveChange = Math.min(this.firstActiveChange, range.start);
-      this.lastActiveChange = Math.max(
-        this.lastActiveChange,
-        range.start + range.count,
-      );
-    });
     this.rebuild(nodes);
   }
 
-  compatible(data: GaussianData): boolean {
-    return (
-      data.geometryFormat === this.data.geometryFormat &&
-      data.shFormat === this.data.shFormat &&
-      Boolean(data.activeSlots) === Boolean(this.data.activeSlots)
-    );
+  compatible(_data: GaussianData): boolean {
+    return true;
   }
 
-  updateData(data: GaussianData, nodes?: GaussianProjectionNodeSlots): void {
-    const variantChanged = !this.compatible(data);
-    if (variantChanged && !nodes)
-      throw new TypeError("Projection schema requires a shader variant");
-    const previous = this.data;
-    if (previous !== data) {
-      data.retain();
-      this.unsubscribeActiveSlots();
-      for (const key of [
-        "means",
-        "scalesOpacity",
-        "rotations",
-        "shCoefficients",
-      ] as const) {
-        if (
-          previous[key].itemSize === data[key].itemSize &&
-          previous[key].array.constructor === data[key].array.constructor
-        )
-          this.attributes.bindings.replace(previous[key], data[key]);
-      }
-      this.data = data;
-      this.activeVersion = -1;
-      this.firstActiveChange = Infinity;
-      this.lastActiveChange = -1;
-      this.unsubscribeActiveSlots = data.subscribeActiveSlots((range) => {
-        this.firstActiveChange = Math.min(this.firstActiveChange, range.start);
-        this.lastActiveChange = Math.max(
-          this.lastActiveChange,
-          range.start + range.count,
-        );
-      });
-      this.attributes.bindings.afterSubmittedWork(() => previous.release());
-    }
-    this.projectedMean = this.objects.attribute;
+  updateData(data: GaussianData, _nodes?: GaussianProjectionNodeSlots): void {
+    this.data = data;
+    this.projectedMean = this.attributes.grow(this.projectedMean, data.count);
     this.projectedConic = this.attributes.grow(this.projectedConic, data.count);
     this.projectedColor = this.attributes.grow(this.projectedColor, data.count);
     this.tileCounts = this.attributes.grow(this.tileCounts, data.count);
     if (this.computeNode) this.computeNode.count = data.count;
-    this.updateRuntimeParameters();
-    if (variantChanged) this.rebuild(nodes!);
-  }
-
-  private updateRuntimeParameters(): void {
-    this.objectOffset.value = this.objects.slotCapacity;
-    this.activeSlotOffset.value =
-      this.data.count * this.data.shCoefficientCount;
-    this.shDegree.value = this.data.shDegree;
   }
 
   getComputeNodes(): ComputeNode[] {
@@ -225,10 +142,6 @@ export class ProjectionStage {
   rebuild(nodes: GaussianProjectionNodeSlots): void {
     for (const node of [
       nodes.gaussianProjectionNode,
-      nodes.gaussianPositionLocalNode,
-      nodes.gaussianPositionWorldNode,
-      nodes.gaussianScaleNode,
-      nodes.gaussianRotationNode,
       nodes.gaussianOpacityNode,
       nodes.gaussianColorNode,
       nodes.gaussianVisibilityNode,
@@ -240,18 +153,6 @@ export class ProjectionStage {
       rootAccessors,
       "gaussianProjectionNode",
     );
-    validateGaussianNodeAccess(
-      nodes.gaussianPositionLocalNode,
-      sourceAccessors,
-      "gaussianPositionLocalNode",
-    );
-    for (const [field, node] of [
-      ["gaussianPositionWorldNode", nodes.gaussianPositionWorldNode],
-      ["gaussianScaleNode", nodes.gaussianScaleNode],
-      ["gaussianRotationNode", nodes.gaussianRotationNode],
-    ] as const) {
-      validateGaussianNodeAccess(node, worldAccessors, field);
-    }
     validateGaussianNodeAccess(
       nodes.gaussianOpacityNode,
       projectedAccessors,
@@ -276,87 +177,26 @@ export class ProjectionStage {
     if (this.computeNode === null) {
       throw new Error("ProjectionStage has no compute node");
     }
-    this.updateActiveSlots();
-    // Bind attributes even with an empty draw cut: ACK-paced initial batches
-    // must reach GPU memory before the final activation transaction commits.
+
+    // A zero-count cut must still clear the downstream dispatch state.
     renderer.compute(this.computeNode, [
-      Math.max(1, Math.ceil(this.data.activeCount / WORKGROUP_SIZE)),
+      Math.max(1, Math.ceil(this.accumulated.count / WORKGROUP_SIZE)),
       1,
       1,
     ]);
   }
 
   dispose(): void {
-    this.unsubscribeActiveSlots();
-    const data = this.data;
-    this.attributes.bindings.afterSubmittedWork(() => data.release());
     this.computeNode?.dispose();
     this.computeNode = null;
     this.attributes.dispose();
   }
 
-  private updateActiveSlots(): void {
-    const { data } = this;
-    if (!data.activeSlots || this.activeVersion === data.activeVersion) return;
-    const base =
-      data.count *
-      data.shCoefficientCount *
-      (data.shFormat === "rgb8e8" ? 1 : 4);
-    const start =
-      this.activeVersion < 0
-        ? 0
-        : Math.min(this.firstActiveChange, data.activeCount);
-    const end =
-      this.activeVersion < 0
-        ? data.activeCount
-        : Math.min(this.lastActiveChange, data.activeCount);
-    const bits = new Uint32Array(data.shCoefficients.array.buffer);
-    if (data.shFormat === "rgb8e8")
-      bits.set(
-        data.activeSlots.subarray(start, Math.max(start, end)),
-        base + start,
-      );
-    else
-      for (let ordinal = start; ordinal < end; ordinal++)
-        bits[base + ordinal] = data.activeSlots[ordinal]! ^ ACTIVE_SLOT_TAG;
-    if (end > start) {
-      data.shCoefficients.addUpdateRange(base + start, end - start);
-      data.shCoefficients.needsUpdate = true;
-    }
-    this.firstActiveChange = Infinity;
-    this.lastActiveChange = -1;
-    this.activeVersion = data.activeVersion;
-  }
-
   private createComputeNode(nodes: GaussianProjectionNodeSlots): ComputeNode {
     const { data, frame } = this;
-    const means = this.attributes
-      .storage(data.means, "vec4", data.count)
+    const world = this.attributes
+      .storage(this.accumulated.attribute, "vec4")
       .toReadOnly();
-    const scalesOpacity = this.attributes
-      .storage(
-        data.scalesOpacity,
-        data.geometryFormat === "compact" ? "uvec2" : "vec4",
-        data.count,
-      )
-      .toReadOnly();
-    const rotations = this.attributes
-      .storage(
-        data.rotations,
-        data.geometryFormat === "compact" ? "uint" : "vec4",
-        data.count,
-      )
-      .toReadOnly();
-    const decodeScaleOpacity = wgslFn<any>(compactScaleOpacityWGSL);
-    const decodeRotation = wgslFn<any>(compactRotationWGSL);
-    const shCoefficients =
-      data.shFormat === "rgb8e8"
-        ? this.attributes
-            .storage(data.shCoefficients, "uint", data.shCoefficients.count)
-            .toReadOnly()
-        : this.attributes
-            .storage(data.shCoefficients, "vec4", data.shCoefficients.count)
-            .toReadOnly();
     const projectedMean = this.attributes.storage(
       this.projectedMean,
       "vec4",
@@ -378,7 +218,6 @@ export class ProjectionStage {
       data.count,
     );
     const projectionIsValid = wgslFn<any>(projectionIsValidWGSL);
-    const evaluateSh = wgslFn<any>(evaluateShWGSL(data.shFormat));
     const countTiles = wgslFn<any>(countContributingTilesWGSL());
     const subpixelHasSample = wgslFn<any>(subpixelHasSampleWGSL);
 
@@ -390,111 +229,38 @@ export class ProjectionStage {
       tileCounts.element(gid).assign(uint(0));
       projectedMean.element(gid).assign(vec4(0));
 
-      const sourceSlot = data.activeSlots
-        ? (data.shFormat === "rgb8e8"
-            ? shCoefficients.element(this.activeSlotOffset.add(gid))
-            : (decodeActiveSlot({
-                value: (
-                  shCoefficients.element(
-                    this.activeSlotOffset.add(gid.div(uint(4))),
-                  ) as any
-                ).element(gid.mod(uint(4))),
-              }) as any)
-          ).toVar("gaussianSourceSlot")
-        : gid;
-      const meanObject = means.element(sourceSlot);
-      // Sparse backend slots use a negative object id for unoccupied records.
-      // Reject them before object-buffer access or user material overrides.
-      If(meanObject.w.lessThan(0), () => {
-        Return();
-      });
-      const sourceLocal = meanObject.xyz;
-      const objectId = uint(meanObject.w);
-      const sourceScaleOpacity =
-        data.geometryFormat === "compact"
-          ? (
-              decodeScaleOpacity({
-                packed: scalesOpacity.element(sourceSlot),
-              }) as any
-            ).toVar("gaussianShape")
-          : scalesOpacity.element(sourceSlot);
-      const sourceScale = sourceScaleOpacity.xyz;
-      const sourceOpacity = sourceScaleOpacity.w;
-      const sourceRotation =
-        data.geometryFormat === "compact"
-          ? (
-              decodeRotation({ packed: rotations.element(sourceSlot) }) as any
-            ).toVar("gaussianQuaternion")
-          : rotations.element(sourceSlot);
-      const objectBase = this.objectOffset.add(
-        objectId.mul(uint(OBJECT_FRAME_VEC4S)),
+      const base = gid.mul(ACCUMULATED_VEC4S);
+      const mean = world.element(base);
+      const covA = world.element(base.add(1));
+      const covB = world.element(base.add(2));
+      const sourceSlot = (decodeActiveSlot({ value: covB.z }) as any).toVar(
+        "gaussianSourceSlot",
       );
-      const objectMatrix = mat4(
-        projectedMean.element(objectBase),
-        projectedMean.element(objectBase.add(1)),
-        projectedMean.element(objectBase.add(2)),
-        projectedMean.element(objectBase.add(3)),
+      const positionWorld = mean.xyz;
+      const viewPosition = frame.view
+        .mul(vec4(positionWorld, 1))
+        .toVar("gaussianViewPosition");
+      const covarianceWorld = mat3(
+        covA.xyz,
+        vec3(covA.y, covA.w, covB.x),
+        vec3(covA.z, covB.x, covB.y),
       );
-      const modelView = mat4(
-        projectedMean.element(objectBase.add(4)),
-        projectedMean.element(objectBase.add(5)),
-        projectedMean.element(objectBase.add(6)),
-        projectedMean.element(objectBase.add(7)),
+      const viewLinear = mat3(
+        (frame.view as any).element(0).xyz,
+        (frame.view as any).element(1).xyz,
+        (frame.view as any).element(2).xyz,
       );
-      const cameraLocal = projectedMean.element(objectBase.add(8)).xyz;
-      const objectVisible = projectedMean
-        .element(objectBase.add(9))
-        .x.greaterThan(0);
-      If(objectVisible.not(), () => {
-        Return();
-      });
-      const sourceOverrides: OverrideMap = new Map<any, () => any>([
+      const covarianceView = viewLinear
+        .mul(covarianceWorld)
+        .mul(transpose(viewLinear))
+        .toVar("gaussianCovarianceViewValue");
+      const worldOverrides: OverrideMap = new Map<any, () => any>([
         ...passContextOverrides(frame),
         [gaussianIndex, () => sourceSlot],
-        [gaussianObjectId, () => objectId],
-        [gaussianPositionLocal, () => sourceLocal],
-        [gaussianScale, () => sourceScale],
-        [gaussianRotation, () => sourceRotation],
-        [gaussianOpacity, () => sourceOpacity],
-        [gaussianObjectMatrix, () => objectMatrix],
-        [gaussianObjectVisible, () => objectVisible],
+        [gaussianPositionWorld, () => positionWorld],
+        [gaussianOpacity, () => mean.w],
       ]);
-      const positionLocal = resolveNode(
-        nodes.gaussianPositionLocalNode,
-        sourceOverrides,
-      ).toVar("gaussianPositionLocalValue");
-      const standardWorld = objectMatrix.mul(vec4(positionLocal, 1)).xyz;
-      const worldOverrides = new Map(sourceOverrides);
-      worldOverrides.set(gaussianPositionWorld, () => standardWorld);
-      const viewDirection = normalize(positionLocal.sub(cameraLocal));
-      worldOverrides.set(gaussianViewDirection, () => viewDirection);
-
-      const positionWorld =
-        nodes.gaussianPositionWorldNode === gaussianPositionWorld
-          ? standardWorld
-          : resolveNode(nodes.gaussianPositionWorldNode, worldOverrides).toVar(
-              "gaussianPositionWorldValue",
-            );
-      let viewPosition: any =
-        nodes.gaussianPositionWorldNode === gaussianPositionWorld
-          ? modelView.mul(vec4(positionLocal, 1))
-          : frame.view.mul(vec4(positionWorld, 1));
-      viewPosition = viewPosition.toVar("gaussianViewPosition");
-      const scale = resolveNode(nodes.gaussianScaleNode, worldOverrides).toVar(
-        "gaussianScaleValue",
-      );
-      const rotation = resolveNode(
-        nodes.gaussianRotationNode,
-        worldOverrides,
-      ).toVar("gaussianRotationValue");
-      const covarianceView = (
-        gaussianViewCovariance(scale, rotation, modelView) as any
-      ).toVar("gaussianCovarianceViewValue");
       const rootOverrides = new Map(worldOverrides);
-      rootOverrides.set(gaussianPositionLocal, () => positionLocal);
-      rootOverrides.set(gaussianPositionWorld, () => positionWorld);
-      rootOverrides.set(gaussianScale, () => scale);
-      rootOverrides.set(gaussianRotation, () => rotation);
       rootOverrides.set(gaussianPositionView, () => viewPosition.xyz);
       rootOverrides.set(gaussianCovarianceView, () => covarianceView);
       const projected = resolveNode(
@@ -602,12 +368,7 @@ export class ProjectionStage {
         tileMax.y.assign(maxTile.y);
       });
 
-      const standardColor = evaluateSh({
-        gid: sourceSlot,
-        sh_degree: this.shDegree,
-        direction: viewDirection,
-        sh_coefficients: shCoefficients,
-      });
+      const standardColor = world.element(base.add(3)).xyz;
       const derivedOverrides = new Map(projectedOverrides);
       derivedOverrides.set(gaussianColor, () => standardColor);
       derivedOverrides.set(gaussianScreenBoundsMin, () => boundsMin);

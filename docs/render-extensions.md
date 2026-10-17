@@ -44,7 +44,7 @@ secondary.rasterOutputDepthNode = rasterOutputDepth;
 
 The application updates the shared store through its owner/main pass first. The secondary pass consumes that current **active draw set**, which may omit data outside the owner's view. `dataMode: "external"` never calls `setFrontendCapabilities` or `updateLod`, including construction, rendering, resize and camera changes. It still subscribes to shared-data changes. This mode does not implement independent backend selection.
 
-Passes share source attributes, but own their view/object transforms, projected buffers, sorting workspaces, output textures and caches. Disposing a pass does not dispose the store. A generic `Camera` is accepted with a custom projection and explicit `depthRange`; the default graph requires `PerspectiveCamera`.
+Passes share the CPU backend snapshot, but own cloud-local GPU inputs, accumulated world attributes, projected buffers, sorting workspaces, output textures and caches. See [cloud-materials.md](cloud-materials.md) for per-cloud compute materials. Disposing a pass does not dispose the store. A generic `Camera` is accepted with a custom projection and explicit `depthRange`; the default graph requires `PerspectiveCamera`.
 
 `fixedSize` is in exact pixels and ignores drawing-buffer size, aspect ratio, DPR and `setResolutionScale()`. Change it with `setFixedSize(width, height)`, or return to canvas sizing with `useDrawingBufferSize()`. `setSize()` cannot override an active fixed size. Output textures keep their identity when resized; consumers must update dispatch dimensions.
 
@@ -61,11 +61,25 @@ Passes share source attributes, but own their view/object transforms, projected 
 
 Use `gaussianProjectionResult(center, scalar, covariance[, filterVariance])` to add the filter, stabilize eigenvalues, compute the inverse conic and preserve the unfiltered determinant for opacity compensation. Covariance is `(xx, xy, yy)` in image pixels squared. The default variance is `gaussianPassFilterVariance` (pass property `filterVariance`, default `0.3`); zero disables this additive filter, while numerical stabilization remains. Eigenvalues are clamped to `[1e-6, 1e4]`, and degenerate/non-finite results are rejected. Raw custom mat4 roots must return matching finite, positive-definite covariance/conic/determinants, with diagonal covariance at most `1e4` to fit the packed nine-bit support radii.
 
-The root receives **resolved** `gaussianPositionLocal`, `gaussianPositionWorld`, `gaussianScale` and `gaussianRotation`. `gaussianPositionView` reflects a world-position override; `gaussianCovarianceView` incorporates resolved shape and object-to-view transform, computed once. A position warp does not automatically warp shape: provide corresponding shape overrides or transform covariance in the root when needed. `gaussianViewCovariance(scale, rotation, modelView)` is also exported for constructing a transformed covariance.
+The root receives world-space `gaussianPositionWorld`, view-space
+`gaussianPositionView`, `gaussianCovarianceView`, source-slot `gaussianIndex`,
+accumulated `gaussianOpacity` and pass context. World position/covariance are
+prepared by per-cloud materials before projection. A position warp does not
+automatically warp shape. `gaussianViewCovariance(scale, rotation, matrix)` is
+also exported for constructing a transformed covariance.
 
-Pass context: `gaussianPassViewMatrix`, `gaussianPassProjectionMatrix`, `gaussianPassViewport` (actual pixels), `gaussianPassDepthRange` and `gaussianPassFilterVariance`. Pass context is also available in raster and final-output graphs. The root may read identity, object visibility/matrix, source opacity and the existing local-space SH `gaussianViewDirection`. It cannot read its own derived screen/depth/bounds/color results, raster candidates or final outputs.
+Pass context: `gaussianPassViewMatrix`, `gaussianPassProjectionMatrix`,
+`gaussianPassViewport` (actual pixels), `gaussianPassDepthRange` and
+`gaussianPassFilterVariance`. These are also available in raster and final-output
+graphs. A root cannot read its own derived screen/depth/bounds/color results,
+raster candidates or final outputs.
 
-Earlier source slots retain their existing bindings: local-position override reads the source local position; world-position/shape overrides receive source shape and the world position computed from resolved local position. Opacity/color/visibility graphs retain their existing staged meanings; new resolved view/covariance inputs are additionally available. Context/domain validation rejects accessors unavailable at each point.
+Local position, shape and object uniform accessors now belong to
+[cloud material preprocessing](cloud-materials.md). Existing pass-wide
+local/world-position and shape hooks are applied during that preprocessing.
+Pass opacity/color/visibility hooks run after projection, using the material's
+opacity and evaluated color as their base inputs. Object-id-based raster effects
+must move to `cloud.material`.
 
 The selected root drives `gaussianScreenPosition`, `gaussianViewDepth`, projected sigma/area and unwrapped footprint bounds. The historical `gaussianViewDepth` and `rasterViewDepth` names mean positive perspective view depth by default, or the custom root's scalar otherwise. That scalar is sorted and accumulated unchanged. `depthRange` supplies default perspective clipping and packed16 normalization in the same units; float32 sorting uses the finite positive scalar directly. Packed16 does not guarantee exact ordering inside a bin.
 

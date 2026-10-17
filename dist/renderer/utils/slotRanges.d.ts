@@ -6,3 +6,7 @@ export interface SlotRange {
 export declare function mergeSlotRanges(slots: number[], maxGapSlots: number, maxExpansion: number): SlotRange[];
 export declare function rangeSlotCount(ranges: readonly SlotRange[]): number;
 export declare function markSlotRangesUpdated(attribute: StorageBufferAttribute, ranges: readonly SlotRange[], componentsPerSlot: number): void;
+/** CPU snapshots need not be GPU-bound by GaussianPass. Bound retained upload
+ * metadata for external consumers and for hidden per-cloud source buffers.
+ */
+export declare function coalescePendingRanges(attribute: StorageBufferAttribute): void;

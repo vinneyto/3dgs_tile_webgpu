@@ -21,6 +21,7 @@
     "dist",
     "README.md",
     "docs/render-extensions.md",
+    "docs/cloud-materials.md",
     "docs/dynamic-intersections.md",
     "docs/stable-pipeline.md",
     "docs/lod-stabilization.md",

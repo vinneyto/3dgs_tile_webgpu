@@ -6,6 +6,7 @@ import { perspectiveGaussianProjection } from "./GaussianProjectionNodes";
 // Projection-domain accessors. gaussianIndex is the current packed
 // GaussianStore slot, not a persistent source-data identifier.
 export const gaussianIndex = property("uint", "gaussianIndex");
+/** Cloud-material uniform; unavailable after accumulation. */
 export const gaussianObjectId = property("uint", "gaussianObjectId");
 export const gaussianPositionLocal = property("vec3", "gaussianPositionLocal");
 export const gaussianPositionWorld = property("vec3", "gaussianPositionWorld");
@@ -13,6 +14,7 @@ export const gaussianScale = property("vec3", "gaussianScale");
 export const gaussianRotation = property("vec4", "gaussianRotation");
 export const gaussianOpacity = property("float", "gaussianOpacity");
 export const gaussianColor = property("vec3", "gaussianColor");
+/** Cloud-material matrixWorld uniform; unavailable in projection/raster. */
 export const gaussianObjectMatrix = property("mat4", "gaussianObjectMatrix");
 export const gaussianObjectVisible = property("bool", "gaussianObjectVisible");
 export const gaussianViewDirection = property("vec3", "gaussianViewDirection");
@@ -37,6 +39,7 @@ export const gaussianProjectedArea = property("float", "gaussianProjectedArea");
 
 // Raster-domain accessors.
 export const rasterGaussianIndex = property("uint", "rasterGaussianIndex");
+/** @deprecated Unavailable: use GaussianCloud.material for per-cloud effects. */
 export const rasterObjectId = property("uint", "rasterObjectId");
 export const rasterPixelCoordinate = property("uvec2", "rasterPixelCoordinate");
 export const rasterScreenPosition = property("vec2", "rasterScreenPosition");

@@ -14,7 +14,6 @@ export declare class TileRasterizer {
     private gaussianCount;
     private intersectionCapacity;
     private readonly mode;
-    private meansAttribute;
     private projectedMeanAttribute;
     private projectedConicAttribute;
     private projectedColorAttribute;
@@ -38,8 +37,8 @@ export declare class TileRasterizer {
     private compositeNode;
     private metrics;
     private readonly clearMetrics;
-    constructor(renderer: WebGPURenderer, gaussianCount: number, intersectionCapacity: number, mode: DepthSortMode, meansAttribute: StorageBufferAttribute, projectedMeanAttribute: StorageBufferAttribute, projectedConicAttribute: StorageBufferAttribute, projectedColorAttribute: StorageBufferAttribute, sortedRecordsAttribute: StorageBufferAttribute, tileOffsetsAttribute: StorageBufferAttribute, colorTexture: StorageTexture, depthTexture: StorageTexture | null, frame: FrameUniforms, maxSplatsPerTile: number | null, rasterChunkSize: number | null, tileCapacity: number, nodes: GaussianRasterNodeSlots, rasterStats?: boolean, transmittanceThreshold?: number, depthAlphaThreshold?: number, chunkWorkspace?: RasterChunkWorkspace, completeDispatch?: IndirectStorageBufferAttribute | undefined, bindings?: StorageBindings);
-    resize(gaussians: number, intersections: number, tiles: number, means: StorageBufferAttribute, projectedMean: StorageBufferAttribute, projectedConic: StorageBufferAttribute, projectedColor: StorageBufferAttribute, offsets: StorageBufferAttribute): void;
+    constructor(renderer: WebGPURenderer, gaussianCount: number, intersectionCapacity: number, mode: DepthSortMode, projectedMeanAttribute: StorageBufferAttribute, projectedConicAttribute: StorageBufferAttribute, projectedColorAttribute: StorageBufferAttribute, sortedRecordsAttribute: StorageBufferAttribute, tileOffsetsAttribute: StorageBufferAttribute, colorTexture: StorageTexture, depthTexture: StorageTexture | null, frame: FrameUniforms, maxSplatsPerTile: number | null, rasterChunkSize: number | null, tileCapacity: number, nodes: GaussianRasterNodeSlots, rasterStats?: boolean, transmittanceThreshold?: number, depthAlphaThreshold?: number, chunkWorkspace?: RasterChunkWorkspace, completeDispatch?: IndirectStorageBufferAttribute | undefined, bindings?: StorageBindings);
+    resize(gaussians: number, intersections: number, tiles: number, projectedMean: StorageBufferAttribute, projectedConic: StorageBufferAttribute, projectedColor: StorageBufferAttribute, offsets: StorageBufferAttribute): void;
     setSortedRecords(next: StorageBufferAttribute): void;
     getComputeNodes(): ComputeNode[];
     rebuild(nodes: GaussianRasterNodeSlots): void;

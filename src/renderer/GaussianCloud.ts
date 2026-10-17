@@ -8,6 +8,8 @@ import {
   type Raycaster,
 } from "three/webgpu";
 
+import { GaussianCloudMaterial } from "./GaussianCloudMaterial";
+
 import type { GaussianRaycastIndex } from "./GaussianRaycastIndex";
 
 /** Actions the scene object delegates to its owning client store. */
@@ -20,6 +22,8 @@ export interface GaussianCloudOwner {
 /** A transformable Three.js scene object backed by a range in a GaussianStore. */
 export class GaussianCloud extends Object3D {
   readonly isGaussianCloud = true;
+  /** Per-cloud TSL preprocessing, dispatched by GaussianPass. */
+  material = new GaussianCloudMaterial();
   readonly objectId: number;
   /** Ignore coarse snapshot Gaussians below this opacity. */
   minRaycastOpacity = 0.2;

@@ -886,6 +886,7 @@ export class GaussianPass extends PassNode {
         this.pipeline === null ||
         (this.pipeline === this.warmupPipeline &&
           this.pipeline.getShaderGeneration() === this.warmupGeneration &&
+          !this.pipeline.accumulation.hasPendingMaterialChanges() &&
           this.dirtyStages === DirtyStage.None))
     )
       return this.warmupPromise;
@@ -972,6 +973,7 @@ export class GaussianPass extends PassNode {
     device.pushErrorScope("out-of-memory");
     try {
       await pipeline.warmup(() => this.disposed || this.pipeline !== pipeline);
+      this.warmupGeneration = pipeline.getShaderGeneration();
     } finally {
       const errors = await Promise.all([
         device.popErrorScope(),
@@ -1215,6 +1217,8 @@ export class GaussianPass extends PassNode {
       cloud.updateWorldMatrix(true, false);
       if (
         previous.cloud !== cloud ||
+        previous.material !== cloud.material ||
+        previous.materialVersion !== cloud.material.version ||
         previous.visible !== isEffectivelyVisible(cloud, camera) ||
         !matrixEquals(previous.matrixWorld, cloud.matrixWorld.elements)
       ) {
@@ -1244,6 +1248,8 @@ export class GaussianPass extends PassNode {
         cloud.updateWorldMatrix(true, false);
         return {
           cloud,
+          material: cloud.material,
+          materialVersion: cloud.material.version,
           visible: isEffectivelyVisible(cloud, camera),
           matrixWorld: [...cloud.matrixWorld.elements],
         };
@@ -1265,6 +1271,8 @@ interface AutoRedrawSnapshot {
 }
 
 interface AutoCloudSnapshot {
+  readonly material: GaussianRenderStore["clouds"][number]["material"];
+  readonly materialVersion: number;
   readonly cloud: GaussianRenderStore["clouds"][number];
   readonly visible: boolean;
   readonly matrixWorld: readonly number[];
