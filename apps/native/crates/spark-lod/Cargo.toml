@@ -1,0 +1,12 @@
+[package]
+name = "spark-lod"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+spark-lib = { path = "../../../../rust/vendor/spark-lib", default-features = false, features = ["gsplat", "ply", "spz", "antisplat", "ksplat", "sogs", "rad", "tiny_lod"] }
