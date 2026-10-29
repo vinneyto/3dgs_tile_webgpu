@@ -4,3 +4,5 @@ sandbox-dist/
 coverage/
 *.log
 rust/target/
+
+vendor/spark/rust/target/

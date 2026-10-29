@@ -84,7 +84,9 @@ export const DEFAULT_BACKEND_CONFIG: BackendConfig = {
 export class GaussianStore implements GaussianRenderStore {
   readonly attributes = new GaussianStoreAttributes();
   readonly scheduler: RequestScheduler;
-  readonly packedShFormat = "rgb8e8" as const;
+  get packedShFormat() {
+    return this.data?.shFormat ?? "rgb8e8";
+  }
   private readonly cloudMap = new Map<string, ClientCloud>();
   private readonly cloudIds = new Map<GaussianCloud, string>();
   private readonly pendingLoads = new Map<string, PendingCloud>();
@@ -864,7 +866,8 @@ export class GaussianStore implements GaussianRenderStore {
               ? new Uint32Array(event.activeSlots)
               : undefined,
             shDegree: event.shDegree,
-            shFormat: "rgb8e8",
+            shFormat: event.shFormat,
+            sparkLodOpacity: event.sparkLodOpacity,
             geometryFormat:
               required("scalesOpacity").format === "u32"
                 ? "compact"

@@ -1,2 +1,6 @@
 # Keep Spark's vendored sources byte-for-byte identical to the upstream commit.
 rust/vendor/** -whitespace
+
+vendor/spark/** -text linguist-vendored whitespace=-trailing-space,-blank-at-eof
+src/spark-backend/generated/** linguist-generated
+dist/** linguist-generated

@@ -3,7 +3,7 @@ export interface GaussianSource {
   readonly count: number;
   readonly shDegree: 0 | 1 | 2 | 3;
   readonly shCoefficientCount: number;
-  readonly shFormat: "float32" | "rgb8e8";
+  readonly shFormat: "float32" | "rgb8e8" | "spark-rgb8e8";
   readonly means: { readonly array: ArrayLike<number> };
   readonly scalesOpacity: { readonly array: ArrayLike<number> };
   readonly rotations: { readonly array: ArrayLike<number> };

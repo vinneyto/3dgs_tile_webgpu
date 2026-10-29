@@ -3,3 +3,6 @@ dist/
 rust/vendor/
 rust/target/
 src/wasm-backend/generated/
+
+vendor/spark/
+src/spark-backend/generated/

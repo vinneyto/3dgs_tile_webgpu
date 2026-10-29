@@ -6,4 +6,6 @@ export interface FrontendCapabilities {
   supportsPartialBufferUpdates: boolean;
   /** Decode fp16 log scales/opacity and Spark oct101012 rotations on the GPU. */
   supportsCompactGaussians?: boolean;
+  /** Native Spark SH encoding and encoded LOD opacity are understood by the renderer. */
+  supportsSparkSplats?: boolean;
 }

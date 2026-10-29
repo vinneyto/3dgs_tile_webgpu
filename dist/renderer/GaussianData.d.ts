@@ -22,6 +22,7 @@ export interface GaussianDataOptions {
     shDegree?: 0 | 1 | 2 | 3;
     /** float32 uses vec4<f32>; rgb8e8 uses one packed u32 per RGB coefficient. Defaults to float32. */
     shFormat?: GaussianShFormat;
+    sparkLodOpacity?: boolean;
     /** Dispose the supplied Three.js attributes with this object. Defaults to false. */
     ownsBuffers?: boolean;
     /** Compact geometry keeps float32 means; shape uses u32x2 + u32. */
@@ -38,6 +39,7 @@ export declare class GaussianData {
     readonly shDegree: 0 | 1 | 2 | 3;
     readonly shCoefficientCount: number;
     readonly shFormat: GaussianShFormat;
+    readonly sparkLodOpacity: boolean;
     readonly means: StorageBufferAttribute;
     readonly scalesOpacity: StorageBufferAttribute;
     readonly rotations: StorageBufferAttribute;

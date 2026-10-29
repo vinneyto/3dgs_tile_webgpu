@@ -26,6 +26,7 @@ export interface GaussianDataOptions {
   shDegree?: 0 | 1 | 2 | 3;
   /** float32 uses vec4<f32>; rgb8e8 uses one packed u32 per RGB coefficient. Defaults to float32. */
   shFormat?: GaussianShFormat;
+  sparkLodOpacity?: boolean;
   /** Dispose the supplied Three.js attributes with this object. Defaults to false. */
   ownsBuffers?: boolean;
   /** Compact geometry keeps float32 means; shape uses u32x2 + u32. */
@@ -43,6 +44,7 @@ export class GaussianData {
   readonly shDegree: 0 | 1 | 2 | 3;
   readonly shCoefficientCount: number;
   readonly shFormat: GaussianShFormat;
+  readonly sparkLodOpacity: boolean;
   readonly means: StorageBufferAttribute;
   readonly scalesOpacity: StorageBufferAttribute;
   readonly rotations: StorageBufferAttribute;
@@ -99,7 +101,12 @@ export class GaussianData {
     this.shDegree = shDegree;
     this.shCoefficientCount = (shDegree + 1) ** 2;
     this.shFormat = options.shFormat ?? "float32";
-    if (this.shFormat !== "float32" && this.shFormat !== "rgb8e8") {
+    this.sparkLodOpacity = options.sparkLodOpacity ?? false;
+    if (
+      this.shFormat !== "float32" &&
+      this.shFormat !== "rgb8e8" &&
+      this.shFormat !== "spark-rgb8e8"
+    ) {
       throw new RangeError("GaussianData shFormat must be float32 or rgb8e8");
     }
     this.means = buffers.means;
@@ -112,7 +119,7 @@ export class GaussianData {
     const sourceScalars =
       this.count *
       this.shCoefficientCount *
-      (this.shFormat === "rgb8e8" ? 1 : 4);
+      (this.shFormat !== "float32" ? 1 : 4);
     const requiredShLength =
       sourceScalars +
       Math.ceil(this.count / sourceSh.itemSize) * sourceSh.itemSize;
@@ -121,7 +128,7 @@ export class GaussianData {
         sourceScalars +
         Math.ceil(this.count / sourceSh.itemSize) * sourceSh.itemSize;
       const values =
-        this.shFormat === "rgb8e8"
+        this.shFormat !== "float32"
           ? new Uint32Array(length)
           : new Float32Array(length);
       values.set(sourceSh.array.subarray(0, sourceScalars));
@@ -296,14 +303,14 @@ export class GaussianData {
         "GaussianData shCoefficients must be a Three.js StorageBufferAttribute",
       );
     }
-    const itemSize = this.shFormat === "rgb8e8" ? 1 : 4;
+    const itemSize = this.shFormat !== "float32" ? 1 : 4;
     if (attribute.itemSize !== itemSize) {
       throw new RangeError(
         `GaussianData ${this.shFormat} shCoefficients itemSize is ${attribute.itemSize}; expected ${itemSize}`,
       );
     }
     const validArray =
-      this.shFormat === "rgb8e8"
+      this.shFormat !== "float32"
         ? attribute.array instanceof Uint32Array
         : attribute.array instanceof Float32Array;
     if (!validArray) {

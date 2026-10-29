@@ -71,6 +71,7 @@ import {
   compactScaleOpacityWGSL,
   compactRotationWGSL,
 } from "../kernels/compactGaussians";
+import { gaussianOpacitySupportWGSL } from "../kernels/sparkOpacity";
 import { TILE_SIZE, WORKGROUP_SIZE } from "./constants";
 import { gaussianViewCovariance } from "../nodes/GaussianProjectionNodes";
 import { passContextOverrides } from "./FrameUniforms";
@@ -164,6 +165,7 @@ export class ProjectionStage {
   compatible(data: GaussianData): boolean {
     return (
       data.geometryFormat === this.data.geometryFormat &&
+      data.sparkLodOpacity === this.data.sparkLodOpacity &&
       data.shFormat === this.data.shFormat &&
       Boolean(data.activeSlots) === Boolean(this.data.activeSlots)
     );
@@ -301,7 +303,7 @@ export class ProjectionStage {
     const base =
       data.count *
       data.shCoefficientCount *
-      (data.shFormat === "rgb8e8" ? 1 : 4);
+      (data.shFormat !== "float32" ? 1 : 4);
     const start =
       this.activeVersion < 0
         ? 0
@@ -311,7 +313,7 @@ export class ProjectionStage {
         ? data.activeCount
         : Math.min(this.lastActiveChange, data.activeCount);
     const bits = new Uint32Array(data.shCoefficients.array.buffer);
-    if (data.shFormat === "rgb8e8")
+    if (data.shFormat !== "float32")
       bits.set(
         data.activeSlots.subarray(start, Math.max(start, end)),
         base + start,
@@ -350,7 +352,7 @@ export class ProjectionStage {
     const decodeScaleOpacity = wgslFn<any>(compactScaleOpacityWGSL);
     const decodeRotation = wgslFn<any>(compactRotationWGSL);
     const shCoefficients =
-      data.shFormat === "rgb8e8"
+      data.shFormat !== "float32"
         ? this.attributes
             .storage(data.shCoefficients, "uint", data.shCoefficients.count)
             .toReadOnly()
@@ -391,7 +393,7 @@ export class ProjectionStage {
       projectedMean.element(gid).assign(vec4(0));
 
       const sourceSlot = data.activeSlots
-        ? (data.shFormat === "rgb8e8"
+        ? (data.shFormat !== "float32"
             ? shCoefficients.element(this.activeSlotOffset.add(gid))
             : (decodeActiveSlot({
                 value: (
@@ -419,7 +421,11 @@ export class ProjectionStage {
             ).toVar("gaussianShape")
           : scalesOpacity.element(sourceSlot);
       const sourceScale = sourceScaleOpacity.xyz;
-      const sourceOpacity = sourceScaleOpacity.w;
+      const sourceOpacity = data.sparkLodOpacity
+        ? (wgslFn<any>(
+            `fn decode_spark_lod_opacity(value: f32) -> f32 { if (value <= 1.0) { return value; } return min(value * 4.0 - 3.0, 5.0); }`,
+          )({ value: sourceScaleOpacity.w }) as any)
+        : sourceScaleOpacity.w;
       const sourceRotation =
         data.geometryFormat === "compact"
           ? (
@@ -523,7 +529,7 @@ export class ProjectionStage {
       const opacityBase = resolveNode(
         nodes.gaussianOpacityNode,
         projectedOverrides,
-      ).clamp(0, 1);
+      ).clamp(0, data.sparkLodOpacity ? 65504 : 1);
       const opacity =
         this.antialiasMode === "compensated"
           ? opacityBase.mul(
@@ -533,15 +539,17 @@ export class ProjectionStage {
       If(opacity.lessThan(float(1 / 255)).or(opacity.notEqual(opacity)), () => {
         Return();
       });
-      const powerThreshold = log(opacity.mul(255));
+      const powerThreshold = data.sparkLodOpacity
+        ? (wgslFn<any>(gaussianOpacitySupportWGSL)({ opacity }) as any)
+        : log(opacity.mul(255));
       const extentX = sqrt(
         powerThreshold.mul(2).mul(clamp(covariance.x, 1e-12, 1e4)),
       );
       const extentY = sqrt(
         powerThreshold.mul(2).mul(clamp(covariance.z, 1e-12, 1e4)),
       );
-      const radiusX = ceil(extentX);
-      const radiusY = ceil(extentY);
+      const radiusX = ceil(extentX).min(2047);
+      const radiusY = ceil(extentY).min(2047);
       If(radiusX.lessThanEqual(0).or(radiusY.lessThanEqual(0)), () => {
         Return();
       });
@@ -637,11 +645,10 @@ export class ProjectionStage {
         derivedOverrides,
       ).clamp(0, 1);
       projectedMean.element(gid).assign(vec4(center, depth, opacity));
-      // Both ceil radii fit in nine bits: covariance is capped at 1e4
-      // and opacity <= 1. Keep their exact values when color.w stores the id.
+      // Eleven bits per radius preserve Spark LOD support while the packed pair remains exact in f32.
       projectedConic
         .element(gid)
-        .assign(vec4(conic, radiusX.add(radiusY.mul(512))));
+        .assign(vec4(conic, radiusX.add(radiusY.mul(2048))));
       projectedColor
         .element(gid)
         .assign(vec4(color, encodeActiveSlot({ slot: sourceSlot }) as any));

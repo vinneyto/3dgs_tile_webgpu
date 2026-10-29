@@ -5,6 +5,7 @@ import {
   TILE_SIZE,
   WORKGROUP_SIZE,
 } from "../pipeline/constants";
+import { gaussianOpacitySupportWGSL } from "./sparkOpacity";
 import { boundaryTileContributionWGSL } from "./tileContribution";
 
 export const prepareDispatchWGSL = /* wgsl */ `
@@ -62,9 +63,9 @@ fn emit_intersections(
   let mean = (*projected_mean)[gaussian_id];
   let conic = (*projected_conic)[gaussian_id];
   let packed_radius = u32(conic.w);
-  let radius = vec2<f32>(f32(packed_radius % 512u), f32(packed_radius / 512u));
+  let radius = vec2<f32>(f32(packed_radius % 2048u), f32(packed_radius / 2048u));
   let center = mean.xy;
-  let power_threshold = log(mean.w * 255.0);
+  let power_threshold = gaussian_opacity_support(mean.w);
   let max_tile_x = i32(tiles.x) - 1;
   let max_tile_y = i32(tiles.y) - 1;
   var tile_min = vec2<i32>(
@@ -107,6 +108,7 @@ fn emit_intersections(
   return 0u;
 }
 ${boundaryTileContributionWGSL()}
+${gaussianOpacitySupportWGSL}
 `;
 })();
 

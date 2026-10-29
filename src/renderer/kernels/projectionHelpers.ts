@@ -116,9 +116,9 @@ fn gaussian_projection_is_valid(p: mat4x4<f32>) -> bool {
 `;
 
 export function evaluateShWGSL(format: GaussianShFormat): string {
-  const coefficientType = format === "rgb8e8" ? "u32" : "vec4<f32>";
+  const coefficientType = format !== "float32" ? "u32" : "vec4<f32>";
   const decode =
-    format === "rgb8e8"
+    format !== "float32"
       ? /* wgsl */ `
 fn decode_sh_rgb8e8(packed: u32) -> vec3<f32> {
   let mantissa = unpack4x8snorm(packed).xyz;
@@ -126,14 +126,26 @@ fn decode_sh_rgb8e8(packed: u32) -> vec3<f32> {
   return mantissa * exp2(f32(exponent));
 }`
       : "";
+  const effectiveDecode =
+    format === "spark-rgb8e8"
+      ? `
+fn decode_sh_rgb8e8(packed: u32) -> vec3<f32> {
+  let divisor = exp2(f32(i32(packed >> 27u) - 15)) / 255.0;
+  var rgb = vec3<f32>(f32(packed & 255u), f32((packed >> 8u) & 255u), f32((packed >> 16u) & 255u)) * divisor;
+  if ((packed & 0x1000000u) != 0u) { rgb.x = -rgb.x; }
+  if ((packed & 0x2000000u) != 0u) { rgb.y = -rgb.y; }
+  if ((packed & 0x4000000u) != 0u) { rgb.z = -rgb.z; }
+  return rgb;
+}`
+      : decode;
   const coefficient = (offset: number): string => {
     const index = offset === 0 ? "base" : `base + ${offset}u`;
-    return format === "rgb8e8"
+    return format !== "float32"
       ? `decode_sh_rgb8e8((*sh_coefficients)[${index}])`
       : `(*sh_coefficients)[${index}].xyz`;
   };
   return /* wgsl */ `
-fn evaluate_gaussian_sh_${format}(
+fn evaluate_gaussian_sh_${format.replaceAll("-", "_")}(
   gid: u32,
   sh_degree: u32,
   direction: vec3<f32>,
@@ -144,7 +156,7 @@ fn evaluate_gaussian_sh_${format}(
   let z = direction.z;
   let coefficient_count = (sh_degree + 1u) * (sh_degree + 1u);
   let base = gid * coefficient_count;
-  var color = 0.28209479177387814 * ${coefficient(0)};
+  var color = ${format === "spark-rgb8e8" ? `${coefficient(0)} - vec3<f32>(0.5)` : `0.28209479177387814 * ${coefficient(0)}`};
   if (sh_degree >= 1u) {
     color += (-0.4886025119029199 * y) * ${coefficient(1)};
     color += ( 0.4886025119029199 * z) * ${coefficient(2)};
@@ -174,7 +186,7 @@ fn evaluate_gaussian_sh_${format}(
   }
   return clamp(color + vec3<f32>(0.5), vec3<f32>(0.0), vec3<f32>(1.0));
 }
-${decode}
+${effectiveDecode}
 `;
 }
 

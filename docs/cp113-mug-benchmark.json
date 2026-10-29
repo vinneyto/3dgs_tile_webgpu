@@ -1,0 +1,1147 @@
+{
+  "spark": {
+    "backend": "upstream-spark",
+    "fixture": "mug.ply",
+    "sha256": "5c08a0433451f76d8315e87c17bec30989b19b92ae605614514dad72f2f24a4e",
+    "sourceCount": 479751,
+    "snapshotNodes": 34590,
+    "bounds": [
+      -10.78991413116455,
+      -4.584010124206543,
+      -8.518455505371094,
+      4.540193557739258,
+      3.667126178741455,
+      4.238584995269775
+    ],
+    "loadMs": 1139.210792,
+    "handshakeMs": 103.903458,
+    "resident": 652218,
+    "drawCount": 336912,
+    "viewMedianMs": 50.87620900000002,
+    "viewP95Ms": 59.808917000000065,
+    "viewBytes": 229416,
+    "viewLayoutReplacements": 0,
+    "stationary": {
+      "ms": 54.588416999999936,
+      "metrics": {
+        "computeMs": 0,
+        "selectionMs": 46.83816700000034,
+        "slotMappingMs": 7.707999999999629,
+        "packingMs": 0,
+        "streamCopyMs": 0,
+        "uploadWaitMs": 0,
+        "uploadedBytes": 0,
+        "uploadBatches": 0,
+        "residentGaussians": 652218,
+        "activeGaussians": 336912,
+        "pinnedGaussians": 0,
+        "cacheHits": 336912,
+        "cacheMisses": 0,
+        "evictedGaussians": 0
+      },
+      "payloads": []
+    },
+    "samples": [
+      {
+        "ms": 49.76641699999982,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 41.915500000000065,
+          "slotMappingMs": 7.808457999999973,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.002375000000029104,
+          "uploadedBytes": 80176,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 314528,
+          "pinnedGaussians": 0,
+          "cacheHits": 310585,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 47.401791,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 41.583834000000024,
+          "slotMappingMs": 5.780334000000039,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.002165999999988344,
+          "uploadedBytes": 8840,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 315868,
+          "pinnedGaussians": 0,
+          "cacheHits": 314093,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 47.89645799999994,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 42.07550000000015,
+          "slotMappingMs": 5.785000000000082,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.0018749999999272404,
+          "uploadedBytes": 9548,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 317329,
+          "pinnedGaussians": 0,
+          "cacheHits": 315405,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 53.44645799999989,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 43.100083999999924,
+          "slotMappingMs": 10.304041999999981,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.0028749999999035936,
+          "uploadedBytes": 8876,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 318674,
+          "pinnedGaussians": 0,
+          "cacheHits": 316892,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 48.728417000000036,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 42.793542000000116,
+          "slotMappingMs": 5.89120899999989,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.0022910000000138098,
+          "uploadedBytes": 8496,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 319976,
+          "pinnedGaussians": 0,
+          "cacheHits": 318263,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 48.1762920000001,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 42.99916700000017,
+          "slotMappingMs": 5.130292000000281,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.002415999999811902,
+          "uploadedBytes": 8868,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 321335,
+          "pinnedGaussians": 0,
+          "cacheHits": 319547,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 47.99420800000007,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 42.72733399999993,
+          "slotMappingMs": 5.224165999999968,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.002292000000124972,
+          "uploadedBytes": 7944,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 322531,
+          "pinnedGaussians": 0,
+          "cacheHits": 320940,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 54.955584000000044,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 44.189750000000004,
+          "slotMappingMs": 10.709041999999954,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.0031249999999545253,
+          "uploadedBytes": 8080,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 323745,
+          "pinnedGaussians": 0,
+          "cacheHits": 322128,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 49.70945800000004,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 43.69641700000011,
+          "slotMappingMs": 5.972625000000107,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.0020419999998466665,
+          "uploadedBytes": 7804,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 324906,
+          "pinnedGaussians": 0,
+          "cacheHits": 323350,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 53.65475000000015,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 48.528291999999965,
+          "slotMappingMs": 5.096082999999908,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.002375000000029104,
+          "uploadedBytes": 7952,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 326096,
+          "pinnedGaussians": 0,
+          "cacheHits": 324507,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 51.79399999999987,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 46.51649999999995,
+          "slotMappingMs": 5.251166000000012,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.002334000000018932,
+          "uploadedBytes": 7984,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 327280,
+          "pinnedGaussians": 0,
+          "cacheHits": 325690,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 59.808917000000065,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 48.4937080000002,
+          "slotMappingMs": 11.27579199999991,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.003000000000156433,
+          "uploadedBytes": 7180,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 328317,
+          "pinnedGaussians": 0,
+          "cacheHits": 326901,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 50.77649999999994,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 44.54054200000019,
+          "slotMappingMs": 6.208708000000115,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.002250000000003638,
+          "uploadedBytes": 8044,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 329516,
+          "pinnedGaussians": 0,
+          "cacheHits": 327911,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 50.23174999999992,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 44.927875000000085,
+          "slotMappingMs": 5.2753319999997075,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.002084000000195374,
+          "uploadedBytes": 6784,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 330516,
+          "pinnedGaussians": 0,
+          "cacheHits": 329168,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 50.11729199999991,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 44.85374999999976,
+          "slotMappingMs": 5.237916000000041,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.002292000000124972,
+          "uploadedBytes": 6988,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 331531,
+          "pinnedGaussians": 0,
+          "cacheHits": 330150,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 56.826874999999745,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 46.0949999999998,
+          "slotMappingMs": 10.695999999999913,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.0028750000001309672,
+          "uploadedBytes": 7508,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 332672,
+          "pinnedGaussians": 0,
+          "cacheHits": 331163,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 51.32704199999989,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 45.42933300000004,
+          "slotMappingMs": 5.873249000000214,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.0020839999997406267,
+          "uploadedBytes": 7380,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 333787,
+          "pinnedGaussians": 0,
+          "cacheHits": 332307,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 50.87620900000002,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 45.595417,
+          "slotMappingMs": 5.25670799999989,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.002375000000029104,
+          "uploadedBytes": 7424,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 334869,
+          "pinnedGaussians": 0,
+          "cacheHits": 333400,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 51.24958400000014,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 45.89899999999989,
+          "slotMappingMs": 5.328292000000147,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.0017079999997804407,
+          "uploadedBytes": 7172,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 335936,
+          "pinnedGaussians": 0,
+          "cacheHits": 334506,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 51.30879199999981,
+        "metrics": {
+          "computeMs": 0,
+          "selectionMs": 46.21025000000009,
+          "slotMappingMs": 5.080124999999498,
+          "packingMs": 0,
+          "streamCopyMs": 0,
+          "uploadWaitMs": 0.001625000000331056,
+          "uploadedBytes": 6368,
+          "uploadBatches": 1,
+          "residentGaussians": 652218,
+          "activeGaussians": 336912,
+          "pinnedGaussians": 0,
+          "cacheHits": 335628,
+          "cacheMisses": 0,
+          "evictedGaussians": 0
+        },
+        "payloads": [
+          "buffers-activated"
+        ]
+      }
+    ]
+  },
+  "rust": {
+    "backend": "resident-rust",
+    "fixture": "mug.ply",
+    "sha256": "5c08a0433451f76d8315e87c17bec30989b19b92ae605614514dad72f2f24a4e",
+    "sourceCount": 479751,
+    "snapshotNodes": 33026,
+    "bounds": [
+      -10.174470901489258,
+      -4.301776885986328,
+      -8.453592300415039,
+      4.491596221923828,
+      3.6574947834014893,
+      3.564981460571289
+    ],
+    "loadMs": 1209.919833,
+    "handshakeMs": 383.75408300000004,
+    "resident": 395237,
+    "drawCount": 399093,
+    "viewMedianMs": 113.97716699999955,
+    "viewP95Ms": 122.65591700000004,
+    "viewBytes": 1743364,
+    "viewLayoutReplacements": 0,
+    "stationary": {
+      "ms": 127.06779199999983,
+      "metrics": {
+        "computeMs": 127.0027500000001,
+        "selectionMs": 77.92295899999999,
+        "slotMappingMs": 31.091042000000016,
+        "packingMs": 17.933750000000146,
+        "residentGaussians": 412508,
+        "activeGaussians": 399093,
+        "pinnedGaussians": 20381,
+        "cacheHits": 399093,
+        "cacheMisses": 0,
+        "evictedGaussians": 0,
+        "prefetchPending": true,
+        "cameraRevision": 22,
+        "candidateRevision": 22,
+        "candidateCameraRevision": 22,
+        "publishedCutRevision": 21,
+        "publishedCuts": 0,
+        "selectionReason": "camera",
+        "selectionBudget": 652218,
+        "lodRecheckAfterMs": 278.4588749999998,
+        "streamCopyMs": 0.004249999999956344,
+        "uploadWaitMs": 0,
+        "uploadedBytes": 0,
+        "uploadBatches": 0
+      },
+      "payloads": []
+    },
+    "samples": [
+      {
+        "ms": 113.335417,
+        "metrics": {
+          "computeMs": 99.04095900000016,
+          "selectionMs": 51.18362500000012,
+          "slotMappingMs": 29.149124999999913,
+          "packingMs": 18.591417000000092,
+          "residentGaussians": 395259,
+          "activeGaussians": 385899,
+          "pinnedGaussians": 20381,
+          "cacheHits": 385877,
+          "cacheMisses": 22,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 2,
+          "candidateRevision": 2,
+          "candidateCameraRevision": 2,
+          "publishedCutRevision": 2,
+          "publishedCuts": 1,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "streamCopyMs": 11.811583999999812,
+          "uploadWaitMs": 2.3732920000002196,
+          "uploadedBytes": 2244,
+          "uploadBatches": 2
+        },
+        "payloads": [
+          "buffers-patched",
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 94.04816699999992,
+        "metrics": {
+          "computeMs": 93.98420800000008,
+          "selectionMs": 49.77999999999997,
+          "slotMappingMs": 27.97654200000011,
+          "packingMs": 16.13016700000003,
+          "residentGaussians": 395259,
+          "activeGaussians": 385899,
+          "pinnedGaussians": 20381,
+          "cacheHits": 385899,
+          "cacheMisses": 0,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 3,
+          "candidateRevision": 3,
+          "candidateCameraRevision": 3,
+          "publishedCutRevision": 2,
+          "publishedCuts": 0,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "streamCopyMs": 0.001042000000097687,
+          "uploadWaitMs": 0,
+          "uploadedBytes": 0,
+          "uploadBatches": 0
+        },
+        "payloads": []
+      },
+      {
+        "ms": 93.83462499999996,
+        "metrics": {
+          "computeMs": 93.75904199999991,
+          "selectionMs": 49.34566700000005,
+          "slotMappingMs": 28.502791000000116,
+          "packingMs": 15.827334000000064,
+          "residentGaussians": 395259,
+          "activeGaussians": 385899,
+          "pinnedGaussians": 20381,
+          "cacheHits": 385899,
+          "cacheMisses": 0,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 4,
+          "candidateRevision": 4,
+          "candidateCameraRevision": 4,
+          "publishedCutRevision": 2,
+          "publishedCuts": 0,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "streamCopyMs": 0.0015410000000883883,
+          "uploadWaitMs": 0,
+          "uploadedBytes": 0,
+          "uploadBatches": 0
+        },
+        "payloads": []
+      },
+      {
+        "ms": 93.17341699999974,
+        "metrics": {
+          "computeMs": 93.09279200000014,
+          "selectionMs": 49.16770799999972,
+          "slotMappingMs": 27.90774999999985,
+          "packingMs": 15.94058300000006,
+          "residentGaussians": 395259,
+          "activeGaussians": 385899,
+          "pinnedGaussians": 20381,
+          "cacheHits": 385899,
+          "cacheMisses": 0,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 5,
+          "candidateRevision": 5,
+          "candidateCameraRevision": 5,
+          "publishedCutRevision": 2,
+          "publishedCuts": 0,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "streamCopyMs": 0.0014169999999467109,
+          "uploadWaitMs": 0,
+          "uploadedBytes": 0,
+          "uploadBatches": 0
+        },
+        "payloads": []
+      },
+      {
+        "ms": 93.64674999999988,
+        "metrics": {
+          "computeMs": 93.55870899999991,
+          "selectionMs": 49.255125000000135,
+          "slotMappingMs": 28.19316600000002,
+          "packingMs": 16.03458300000011,
+          "residentGaussians": 395259,
+          "activeGaussians": 385899,
+          "pinnedGaussians": 20381,
+          "cacheHits": 385899,
+          "cacheMisses": 0,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 6,
+          "candidateRevision": 6,
+          "candidateCameraRevision": 6,
+          "publishedCutRevision": 2,
+          "publishedCuts": 0,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "streamCopyMs": 0.001457999999729509,
+          "uploadWaitMs": 0,
+          "uploadedBytes": 0,
+          "uploadBatches": 0
+        },
+        "payloads": []
+      },
+      {
+        "ms": 93.14354200000025,
+        "metrics": {
+          "computeMs": 93.06191600000011,
+          "selectionMs": 48.980375000000095,
+          "slotMappingMs": 27.56658299999981,
+          "packingMs": 16.44916699999976,
+          "residentGaussians": 395259,
+          "activeGaussians": 385899,
+          "pinnedGaussians": 20381,
+          "cacheHits": 385899,
+          "cacheMisses": 0,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 7,
+          "candidateRevision": 7,
+          "candidateCameraRevision": 7,
+          "publishedCutRevision": 2,
+          "publishedCuts": 0,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "streamCopyMs": 0.0008339999999407155,
+          "uploadWaitMs": 0,
+          "uploadedBytes": 0,
+          "uploadBatches": 0
+        },
+        "payloads": []
+      },
+      {
+        "ms": 96.89145899999994,
+        "metrics": {
+          "computeMs": 96.80945799999972,
+          "selectionMs": 49.95066599999973,
+          "slotMappingMs": 30.034166999999798,
+          "packingMs": 16.729291999999987,
+          "residentGaussians": 395259,
+          "activeGaussians": 385899,
+          "pinnedGaussians": 20381,
+          "cacheHits": 385899,
+          "cacheMisses": 0,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 8,
+          "candidateRevision": 8,
+          "candidateCameraRevision": 8,
+          "publishedCutRevision": 2,
+          "publishedCuts": 0,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "streamCopyMs": 0.0009159999999610591,
+          "uploadWaitMs": 0,
+          "uploadedBytes": 0,
+          "uploadBatches": 0
+        },
+        "payloads": []
+      },
+      {
+        "ms": 99.64862499999981,
+        "metrics": {
+          "computeMs": 99.48804100000007,
+          "selectionMs": 53.2468329999997,
+          "slotMappingMs": 28.991207999999915,
+          "packingMs": 17.16304100000025,
+          "residentGaussians": 395259,
+          "activeGaussians": 385899,
+          "pinnedGaussians": 20381,
+          "cacheHits": 385899,
+          "cacheMisses": 0,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 9,
+          "candidateRevision": 9,
+          "candidateCameraRevision": 9,
+          "publishedCutRevision": 2,
+          "publishedCuts": 0,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 399.9976660000002,
+          "streamCopyMs": 0.003957999999784079,
+          "uploadWaitMs": 0,
+          "uploadedBytes": 0,
+          "uploadBatches": 0
+        },
+        "payloads": []
+      },
+      {
+        "ms": 97.39270799999986,
+        "metrics": {
+          "computeMs": 97.32991700000002,
+          "selectionMs": 50.81162499999982,
+          "slotMappingMs": 29.031167000000096,
+          "packingMs": 17.40816700000005,
+          "residentGaussians": 395259,
+          "activeGaussians": 385899,
+          "pinnedGaussians": 20381,
+          "cacheHits": 385899,
+          "cacheMisses": 0,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 10,
+          "candidateRevision": 10,
+          "candidateCameraRevision": 10,
+          "publishedCutRevision": 2,
+          "publishedCuts": 0,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 399.9973749999999,
+          "streamCopyMs": 0.0053339999999479915,
+          "uploadWaitMs": 0,
+          "uploadedBytes": 0,
+          "uploadBatches": 0
+        },
+        "payloads": []
+      },
+      {
+        "ms": 98.63616700000011,
+        "metrics": {
+          "computeMs": 98.57441699999981,
+          "selectionMs": 51.92783299999974,
+          "slotMappingMs": 29.211041999999907,
+          "packingMs": 17.35799999999972,
+          "residentGaussians": 395259,
+          "activeGaussians": 385899,
+          "pinnedGaussians": 20381,
+          "cacheHits": 385899,
+          "cacheMisses": 0,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 11,
+          "candidateRevision": 11,
+          "candidateCameraRevision": 11,
+          "publishedCutRevision": 2,
+          "publishedCuts": 0,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 399.99775,
+          "streamCopyMs": 0.0015000000003055902,
+          "uploadWaitMs": 0,
+          "uploadedBytes": 0,
+          "uploadBatches": 0
+        },
+        "payloads": []
+      },
+      {
+        "ms": 116.70391599999994,
+        "metrics": {
+          "computeMs": 102.4669170000002,
+          "selectionMs": 54.635291999999936,
+          "slotMappingMs": 30.024332999999842,
+          "packingMs": 17.750540999999885,
+          "residentGaussians": 396222,
+          "activeGaussians": 386649,
+          "pinnedGaussians": 20381,
+          "cacheHits": 385686,
+          "cacheMisses": 963,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 12,
+          "candidateRevision": 12,
+          "candidateCameraRevision": 12,
+          "publishedCutRevision": 12,
+          "publishedCuts": 1,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 284.63274999999976,
+          "streamCopyMs": 11.690207999999984,
+          "uploadWaitMs": 2.411207999999988,
+          "uploadedBytes": 97152,
+          "uploadBatches": 2
+        },
+        "payloads": [
+          "buffers-patched",
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 122.65591700000004,
+        "metrics": {
+          "computeMs": 108.31420900000012,
+          "selectionMs": 51.98666699999967,
+          "slotMappingMs": 35.47233300000016,
+          "packingMs": 20.793916999999965,
+          "residentGaussians": 398046,
+          "activeGaussians": 388044,
+          "pinnedGaussians": 20381,
+          "cacheHits": 386220,
+          "cacheMisses": 1824,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 13,
+          "candidateRevision": 13,
+          "candidateCameraRevision": 13,
+          "publishedCutRevision": 13,
+          "publishedCuts": 1,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 278.656833,
+          "streamCopyMs": 11.778291999999965,
+          "uploadWaitMs": 2.4475829999996677,
+          "uploadedBytes": 184116,
+          "uploadBatches": 2
+        },
+        "payloads": [
+          "buffers-patched",
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 120.50795799999969,
+        "metrics": {
+          "computeMs": 106.11158299999988,
+          "selectionMs": 54.564708999999766,
+          "slotMappingMs": 32.165750000000116,
+          "packingMs": 19.32558300000028,
+          "residentGaussians": 399899,
+          "activeGaussians": 389462,
+          "pinnedGaussians": 20381,
+          "cacheHits": 387609,
+          "cacheMisses": 1853,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 14,
+          "candidateRevision": 14,
+          "candidateCameraRevision": 14,
+          "publishedCutRevision": 14,
+          "publishedCuts": 1,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 280.8287089999999,
+          "streamCopyMs": 11.88608400000021,
+          "uploadWaitMs": 2.4144999999998618,
+          "uploadedBytes": 187040,
+          "uploadBatches": 2
+        },
+        "payloads": [
+          "buffers-patched",
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 113.97716699999955,
+        "metrics": {
+          "computeMs": 99.64295799999991,
+          "selectionMs": 51.615999999999985,
+          "slotMappingMs": 29.865708999999697,
+          "packingMs": 18.075209000000086,
+          "residentGaussians": 401718,
+          "activeGaussians": 390861,
+          "pinnedGaussians": 20381,
+          "cacheHits": 389042,
+          "cacheMisses": 1819,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 15,
+          "candidateRevision": 15,
+          "candidateCameraRevision": 15,
+          "publishedCutRevision": 15,
+          "publishedCuts": 1,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 287.3415409999998,
+          "streamCopyMs": 11.849916000000121,
+          "uploadWaitMs": 2.399500999999873,
+          "uploadedBytes": 183580,
+          "uploadBatches": 2
+        },
+        "payloads": [
+          "buffers-patched",
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 115.20229199999994,
+        "metrics": {
+          "computeMs": 100.91158399999995,
+          "selectionMs": 52.15229199999976,
+          "slotMappingMs": 29.79333299999962,
+          "packingMs": 18.91050000000041,
+          "residentGaussians": 403614,
+          "activeGaussians": 392311,
+          "pinnedGaussians": 20381,
+          "cacheHits": 390415,
+          "cacheMisses": 1896,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 16,
+          "candidateRevision": 16,
+          "candidateCameraRevision": 16,
+          "publishedCutRevision": 16,
+          "publishedCuts": 1,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 286.08275000000003,
+          "streamCopyMs": 11.812124999999924,
+          "uploadWaitMs": 2.3950000000004366,
+          "uploadedBytes": 191384,
+          "uploadBatches": 2
+        },
+        "payloads": [
+          "buffers-patched",
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 115.78595799999994,
+        "metrics": {
+          "computeMs": 102.70679199999995,
+          "selectionMs": 51.4582919999998,
+          "slotMappingMs": 32.38558400000011,
+          "packingMs": 18.772707999999966,
+          "residentGaussians": 405565,
+          "activeGaussians": 393811,
+          "pinnedGaussians": 20381,
+          "cacheHits": 391860,
+          "cacheMisses": 1951,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 17,
+          "candidateRevision": 17,
+          "candidateCameraRevision": 17,
+          "publishedCutRevision": 17,
+          "publishedCuts": 1,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 284.3641669999997,
+          "streamCopyMs": 11.73383400000057,
+          "uploadWaitMs": 1.2726259999994909,
+          "uploadedBytes": 196904,
+          "uploadBatches": 2
+        },
+        "payloads": [
+          "buffers-patched",
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 116.28720900000008,
+        "metrics": {
+          "computeMs": 101.90575000000035,
+          "selectionMs": 51.07408299999997,
+          "slotMappingMs": 31.57574999999997,
+          "packingMs": 19.051500000000033,
+          "residentGaussians": 407382,
+          "activeGaussians": 395193,
+          "pinnedGaussians": 20381,
+          "cacheHits": 393376,
+          "cacheMisses": 1817,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 18,
+          "candidateRevision": 18,
+          "candidateCameraRevision": 18,
+          "publishedCutRevision": 18,
+          "publishedCuts": 1,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 285.14320799999996,
+          "streamCopyMs": 11.93954099999928,
+          "uploadWaitMs": 2.3560419999998885,
+          "uploadedBytes": 183440,
+          "uploadBatches": 2
+        },
+        "payloads": [
+          "buffers-patched",
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 121.8740829999997,
+        "metrics": {
+          "computeMs": 107.3606249999998,
+          "selectionMs": 54.05929100000003,
+          "slotMappingMs": 34.60008300000027,
+          "packingMs": 18.630584,
+          "residentGaussians": 409038,
+          "activeGaussians": 396448,
+          "pinnedGaussians": 20381,
+          "cacheHits": 394792,
+          "cacheMisses": 1656,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 19,
+          "candidateRevision": 19,
+          "candidateCameraRevision": 19,
+          "publishedCutRevision": 19,
+          "publishedCuts": 1,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 279.5129999999999,
+          "streamCopyMs": 11.970751000000291,
+          "uploadWaitMs": 2.4374579999998787,
+          "uploadedBytes": 167204,
+          "uploadBatches": 2
+        },
+        "payloads": [
+          "buffers-patched",
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 117.294625,
+        "metrics": {
+          "computeMs": 102.63133299999981,
+          "selectionMs": 51.558708000000024,
+          "slotMappingMs": 31.61712499999976,
+          "packingMs": 19.39008300000023,
+          "residentGaussians": 410710,
+          "activeGaussians": 397712,
+          "pinnedGaussians": 20381,
+          "cacheHits": 396040,
+          "cacheMisses": 1672,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 20,
+          "candidateRevision": 20,
+          "candidateCameraRevision": 20,
+          "publishedCutRevision": 20,
+          "publishedCuts": 1,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 284.02145900000005,
+          "streamCopyMs": 12.15195900000026,
+          "uploadWaitMs": 2.4202919999997903,
+          "uploadedBytes": 168832,
+          "uploadBatches": 2
+        },
+        "payloads": [
+          "buffers-patched",
+          "buffers-activated"
+        ]
+      },
+      {
+        "ms": 121.81349999999975,
+        "metrics": {
+          "computeMs": 107.36045800000011,
+          "selectionMs": 52.60329199999978,
+          "slotMappingMs": 33.22466700000041,
+          "packingMs": 21.17620799999986,
+          "residentGaussians": 412508,
+          "activeGaussians": 399093,
+          "pinnedGaussians": 20381,
+          "cacheHits": 397295,
+          "cacheMisses": 1798,
+          "evictedGaussians": 0,
+          "prefetchPending": true,
+          "cameraRevision": 21,
+          "candidateRevision": 21,
+          "candidateCameraRevision": 21,
+          "publishedCutRevision": 21,
+          "publishedCuts": 1,
+          "selectionReason": "camera",
+          "selectionBudget": 652218,
+          "lodRecheckAfterMs": 279.8694580000001,
+          "streamCopyMs": 11.883499999999913,
+          "uploadWaitMs": 2.4661670000000413,
+          "uploadedBytes": 181468,
+          "uploadBatches": 2
+        },
+        "payloads": [
+          "buffers-patched",
+          "buffers-activated"
+        ]
+      }
+    ]
+  }
+}
