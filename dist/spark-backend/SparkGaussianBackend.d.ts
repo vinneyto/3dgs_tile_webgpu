@@ -1,0 +1,43 @@
+import type { GaussianBackend } from "../streaming-backend/GaussianBackend";
+import type { BackendConfig } from "../streaming-backend/BackendConfig";
+import type { BackendCommand } from "../streaming-backend/commands/BackendCommand";
+import type { BackendResponse, BackendFailure } from "../streaming-backend/BackendResponse";
+import type { SparkBackendOptions } from "./SparkWasmContract";
+/** Explicit worker-side adapter. All decoding, merging and LOD selection use Spark exports. */
+export declare class SparkGaussianBackend implements GaussianBackend {
+    private readonly config;
+    private readonly afterUpload?;
+    private readonly options;
+    private readonly ready;
+    private readonly listeners;
+    private readonly failures;
+    private readonly clouds;
+    private active;
+    private disposed;
+    private capabilities;
+    private world;
+    private projection;
+    private viewportHeight;
+    private sceneRevision;
+    private cameraRevision;
+    private layoutVersion;
+    private contentVersion;
+    private nextObjectId;
+    private activeSlots;
+    private capacity;
+    private membership;
+    private epoch;
+    private dirty;
+    private metrics;
+    constructor(config?: BackendConfig, afterUpload?: (() => Promise<void>) | undefined, options?: SparkBackendOptions);
+    subscribe(listener: (response: BackendResponse) => void): () => void;
+    onFailure(listener: (failure: BackendFailure) => void): () => void;
+    dispatch(command: BackendCommand): void;
+    abort(id: string): void;
+    dispose(): void;
+    private execute;
+    private required;
+    private boundsOf;
+    private update;
+    private activate;
+}

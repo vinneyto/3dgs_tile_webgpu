@@ -1,4 +1,4 @@
-export type GaussianShFormat = "float32" | "rgb8e8";
+export type GaussianShFormat = "float32" | "rgb8e8" | "spark-rgb8e8";
 export declare const FLOAT32_SH_BYTES_PER_COEFFICIENT = 16;
 export declare const RGB8E8_SH_BYTES_PER_COEFFICIENT = 4;
 /** Pack one signed RGB SH coefficient into three snorm8 mantissas and a shared exponent. */

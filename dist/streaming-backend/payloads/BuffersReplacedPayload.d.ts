@@ -13,7 +13,8 @@ export interface BuffersReplacedPayload {
     capacity: number;
     objectCapacity: number;
     shDegree: 0 | 1 | 2 | 3;
-    shFormat: "rgb8e8";
+    shFormat: "rgb8e8" | "spark-rgb8e8";
+    sparkLodOpacity?: boolean;
     attributes: readonly PackedAttributeBuffer[];
     clouds: readonly CloudRenderState[];
 }

@@ -21,7 +21,7 @@ export declare const DEFAULT_BACKEND_CONFIG: BackendConfig;
 export declare class GaussianStore implements GaussianRenderStore {
     readonly attributes: GaussianStoreAttributes;
     readonly scheduler: RequestScheduler;
-    readonly packedShFormat: "rgb8e8";
+    get packedShFormat(): import("..").GaussianShFormat;
     private readonly cloudMap;
     private readonly cloudIds;
     private readonly pendingLoads;

@@ -35,6 +35,8 @@ import {
   type GaussianPass,
   GaussianStore,
 } from "../../src/index";
+import { SparkGaussianBackend } from "../../src/spark-backend/SparkGaussianBackend";
+import { WorkerSparkGaussianBackend } from "../../src/spark-backend/WorkerSparkGaussianBackend";
 import { WasmGaussianBackend } from "../../src/wasm-backend/WasmGaussianBackend";
 import { DEFAULT_BACKEND_CONFIG } from "../../src/renderer/GaussianStore";
 import { WorkerWasmGaussianBackend } from "../../src/wasm-backend/WorkerWasmGaussianBackend";
@@ -417,9 +419,13 @@ export class GaussianSandbox {
       },
     };
     return new GaussianStore(
-      this.options.workerBackend
-        ? new WorkerWasmGaussianBackend(config)
-        : new WasmGaussianBackend(config),
+      new URLSearchParams(location.search).get("backend") === "spark"
+        ? new WorkerSparkGaussianBackend(config)
+        : new URLSearchParams(location.search).get("backend") === "spark-main"
+          ? new SparkGaussianBackend(config)
+          : this.options.workerBackend
+            ? new WorkerWasmGaussianBackend(config)
+            : new WasmGaussianBackend(config),
     );
   }
 

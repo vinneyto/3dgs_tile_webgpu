@@ -1,3 +1,4 @@
+import { gaussianOpacitySupportWGSL } from "../kernels/sparkOpacity";
 import { StorageBindings } from "./StorageBindings";
 import type {
   ComputeNode,
@@ -576,9 +577,14 @@ export class TileRasterizer {
             const mean = projectedMean.element(gaussianId);
             const conic = projectedConic.element(gaussianId);
             sharedMean.element(localIndex).assign(mean);
-            sharedConic
-              .element(localIndex)
-              .assign(vec4(conic.xyz, mean.w.mul(255).log()));
+            sharedConic.element(localIndex).assign(
+              vec4(
+                conic.xyz,
+                wgslFn<any>(gaussianOpacitySupportWGSL)({
+                  opacity: mean.w,
+                }) as any,
+              ),
+            );
             sharedColor
               .element(localIndex)
               .assign(projectedColor.element(gaussianId));

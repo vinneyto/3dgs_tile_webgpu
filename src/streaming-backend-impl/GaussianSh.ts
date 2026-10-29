@@ -1,4 +1,4 @@
-export type GaussianShFormat = "float32" | "rgb8e8";
+export type GaussianShFormat = "float32" | "rgb8e8" | "spark-rgb8e8";
 
 export const FLOAT32_SH_BYTES_PER_COEFFICIENT = 16;
 export const RGB8E8_SH_BYTES_PER_COEFFICIENT = 4;
@@ -35,7 +35,7 @@ export function unpackShRgb8e8(
 }
 
 export function shBytesPerCoefficient(format: GaussianShFormat): number {
-  return format === "rgb8e8"
+  return format !== "float32"
     ? RGB8E8_SH_BYTES_PER_COEFFICIENT
     : FLOAT32_SH_BYTES_PER_COEFFICIENT;
 }

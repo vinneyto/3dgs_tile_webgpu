@@ -1,6 +1,7 @@
 import type { Node } from "three/webgpu";
-import { bool, exp, float, property, clamp } from "three/tsl";
+import { bool, float, property, clamp, wgslFn } from "three/tsl";
 
+import { gaussianAlphaWGSL } from "../kernels/sparkOpacity";
 import { perspectiveGaussianProjection } from "./GaussianProjectionNodes";
 
 // Projection-domain accessors. gaussianIndex is the current packed
@@ -140,7 +141,10 @@ export function createDefaultGaussianNodeSlots(): GaussianNodeSlots {
     rasterPixelValueNode: float(0),
     rasterBreakNode: bool(false),
     rasterColorNode: rasterGaussianColor,
-    rasterAlphaNode: rasterGaussianOpacity.mul(exp(rasterPower)),
+    rasterAlphaNode: wgslFn<any>(gaussianAlphaWGSL)({
+      opacity: rasterGaussianOpacity,
+      power: rasterPower,
+    }),
     rasterDiscardNode: bool(false),
   };
 }
